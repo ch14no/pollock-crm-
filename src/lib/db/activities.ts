@@ -54,6 +54,31 @@ export async function upsertTaskMeta(activityId: string, urgency: boolean, impor
   if (error) throw error
 }
 
+export async function fetchActivitiesByContactIds(contactIds: string[]): Promise<Activity[]> {
+  if (contactIds.length === 0) return []
+  const { data, error } = await getSupabase()
+    .from('activities')
+    .select('*, users:user_id(id,name,email,role,created_at)')
+    .eq('target_type', 'contact')
+    .in('target_id', contactIds)
+    .order('action_date', { ascending: false })
+    .limit(500)
+  if (error) throw error
+  return (data ?? []).map(toActivity)
+}
+
+export async function deleteActivity(id: string): Promise<void> {
+  const { error } = await getSupabase().from('activities').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function updateActivityFields(id: string, updates: {
+  title?: string | null; memo?: string | null; due_date?: string | null
+}): Promise<void> {
+  const { error } = await getSupabase().from('activities').update(updates).eq('id', id)
+  if (error) throw error
+}
+
 function toActivity(r: Record<string, unknown>): Activity {
   return {
     id: r.id as string,

@@ -6,10 +6,12 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { ContactPicker } from '@/components/ui/ContactPicker'
 import { useAppStore } from '@/store/appStore'
-import { MOCK_TEAM_MEMBERS } from '@/lib/mock-data'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { createActivity } from '@/lib/db/activities'
+import { fetchDivisionUsers } from '@/lib/db/users'
 import { getInitials, cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
-import type { Activity, ActivityType } from '@/types/database'
+import type { Activity, ActivityType, User } from '@/types/database'
 
 const ACTIVITY_TYPES: { value: ActivityType; label: string; icon: React.ElementType; color: string }[] = [
   { value: 'call',    label: '電話',   icon: Phone,       color: 'bg-blue-100 text-blue-600 ring-blue-400' },
@@ -40,47 +42,44 @@ export function ActivityModal() {
   const [taskUrgency, setTaskUrgency] = useState(false)
   const [taskImportance, setTaskImportance] = useState(false)
   const [taskScope, setTaskScope] = useState<'personal' | 'team'>('personal')
+  const [divisionMembers, setDivisionMembers] = useState<User[]>([])
 
   const isManager = currentUser?.role === 'manager' || currentUser?.role === 'super_admin'
 
   const [form, setForm] = useState<ActivityFormState>({
-    type: 'call',
-    title: '',
-    memo: '',
-    contactId: '',
+    type: 'call', title: '', memo: '', contactId: '',
     assigneeId: currentUser?.id ?? '',
-    actionDate: todayStr(),
-    dueDate: '',
-    status: 'todo',
+    actionDate: todayStr(), dueDate: '', status: 'todo',
   })
 
   useEffect(() => {
-    if (activityModal.isOpen) {
-      setForm({
-        type: 'call',
-        title: '',
-        memo: '',
-        contactId: activityModal.prefillContactId ?? '',
-        assigneeId: currentUser?.id ?? '',
-        actionDate: todayStr(),
-        dueDate: '',
-        status: 'todo',
-      })
-      setTaskUrgency(false)
-      setTaskImportance(false)
-      setTaskScope('personal')
+    if (!activityModal.isOpen) return
+    setForm({
+      type: 'call', title: '', memo: '',
+      contactId: activityModal.prefillContactId ?? '',
+      assigneeId: currentUser?.id ?? '',
+      actionDate: todayStr(), dueDate: '', status: 'todo',
+    })
+    setTaskUrgency(false)
+    setTaskImportance(false)
+    setTaskScope('personal')
+
+    // 事業部メンバーを取得（マネージャーのタスク割り当て用）
+    if (isManager && activeDivisionId && isSupabaseConfigured()) {
+      fetchDivisionUsers(activeDivisionId).then(setDivisionMembers)
     }
-  }, [activityModal.isOpen, activityModal.prefillContactId, currentUser?.id])
+  }, [activityModal.isOpen, activityModal.prefillContactId, currentUser?.id, isManager, activeDivisionId])
 
   const isTask = form.type === 'task'
-  const assignee = MOCK_TEAM_MEMBERS.find((m) => m.id === form.assigneeId)
   const isSelfAssigned = form.assigneeId === currentUser?.id
+  const assignee = divisionMembers.find((m) => m.id === form.assigneeId)
+    ?? (form.assigneeId === currentUser?.id ? currentUser : null)
 
   const handleSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault()
 
     const targetContactId = form.contactId || activityModal.prefillContactId
-    const targetDealId = activityModal.prefillDealId
+    const targetDealId    = activityModal.prefillDealId
 
     if (!targetContactId && !targetDealId) {
       toast.error('対象顧客または商談を選択してください')
@@ -92,38 +91,65 @@ export function ActivityModal() {
     }
 
     setLoading(true)
-    await new Promise((r) => setTimeout(r, 400))
+    const now = new Date().toISOString()
+    const localId = `act-local-${Date.now()}`
 
-    const newActivity: Activity = {
-      id: `act-local-${Date.now()}`,
-      target_type: targetDealId ? 'deal' : 'contact',
-      target_id: targetDealId ?? targetContactId ?? '',
-      user_id: form.assigneeId || currentUser?.id,
-      activity_type: form.type,
-      title: form.title.trim() || undefined,
-      memo: form.memo.trim() || undefined,
-      due_date: isTask && form.dueDate ? new Date(form.dueDate).toISOString() : undefined,
-      status: form.status,
-      action_date: new Date(form.actionDate).toISOString(),
-      created_at: new Date().toISOString(),
-      users: currentUser ?? undefined,
-    }
-    addActivity(newActivity)
+    try {
+      let savedId = localId
+      if (isSupabaseConfigured()) {
+        savedId = await createActivity({
+          targetType:   targetDealId ? 'deal' : 'contact',
+          targetId:     targetDealId ?? targetContactId ?? '',
+          userId:       form.assigneeId || currentUser?.id,
+          activityType: form.type,
+          title:        form.title.trim() || undefined,
+          memo:         form.memo.trim() || undefined,
+          dueDate:      isTask && form.dueDate ? new Date(form.dueDate).toISOString() : undefined,
+          status:       form.status,
+          actionDate:   new Date(form.actionDate).toISOString(),
+        })
+      }
 
-    if (isTask) {
-      setTaskMeta(newActivity.id, { urgency: taskUrgency, importance: taskImportance, scope: taskScope })
-    }
+      const newActivity: Activity = {
+        id: savedId,
+        target_type:   targetDealId ? 'deal' : 'contact',
+        target_id:     targetDealId ?? targetContactId ?? '',
+        user_id:       form.assigneeId || currentUser?.id,
+        activity_type: form.type,
+        title:         form.title.trim() || undefined,
+        memo:          form.memo.trim() || undefined,
+        due_date:      isTask && form.dueDate ? new Date(form.dueDate).toISOString() : undefined,
+        status:        form.status,
+        action_date:   new Date(form.actionDate).toISOString(),
+        created_at:    now,
+        users:         currentUser ?? undefined,
+      }
+      addActivity(newActivity)
 
-    setLoading(false)
-    closeActivityModal()
+      if (isTask) {
+        setTaskMeta(savedId, { urgency: taskUrgency, importance: taskImportance, scope: taskScope })
+      }
 
-    const typeLabel = ACTIVITY_TYPES.find((t) => t.value === form.type)?.label ?? ''
-    if (isTask && !isSelfAssigned) {
-      toast.success(`タスク「${form.title}」を${assignee?.name ?? ''}さんに割り当てました`, { duration: 4000 })
-    } else {
-      toast.success(isTask ? `タスク「${form.title}」を作成しました` : `${typeLabel}を記録しました`)
+      closeActivityModal()
+      const typeLabel = ACTIVITY_TYPES.find((t) => t.value === form.type)?.label ?? ''
+      if (isTask && !isSelfAssigned) {
+        toast.success(`タスク「${form.title}」を${assignee?.name ?? ''}さんに割り当てました`, { duration: 4000 })
+      } else {
+        toast.success(isTask ? `タスク「${form.title}」を作成しました` : `${typeLabel}を記録しました`)
+      }
+    } catch {
+      toast.error('保存に失敗しました。もう一度お試しください。')
+    } finally {
+      setLoading(false)
     }
   }
+
+  // 表示するメンバーリスト（自分を必ず含む）
+  const memberOptions: User[] = (() => {
+    if (!currentUser) return divisionMembers
+    const hasSelf = divisionMembers.some((m) => m.id === currentUser.id)
+    return hasSelf ? divisionMembers : [currentUser, ...divisionMembers]
+  })()
 
   return (
     <Modal isOpen={activityModal.isOpen} onClose={closeActivityModal} title="活動を記録" size="md">
@@ -167,7 +193,7 @@ export function ActivityModal() {
           />
         </div>
 
-        {/* 対象顧客（ContactPicker） */}
+        {/* 対象顧客 */}
         {!activityModal.prefillContactId && !activityModal.prefillDealId && (
           <ContactPicker
             label="対象顧客"
@@ -178,7 +204,6 @@ export function ActivityModal() {
             onClear={() => setForm((f) => ({ ...f, contactId: '' }))}
           />
         )}
-
         {(activityModal.prefillContactId || activityModal.prefillDealId) && (
           <div className="flex items-center gap-2 px-3 py-2 bg-orange-50 border border-orange-100 rounded-lg text-sm">
             <span className="text-xs text-orange-400 font-medium flex-shrink-0">
@@ -222,14 +247,14 @@ export function ActivityModal() {
         {/* タスク専用フィールド */}
         {isTask && (
           <div className="space-y-3 pt-1 border-t border-gray-100">
-            {/* 担当者（マネージャーのみ） */}
-            {isManager && (
+            {/* 担当者（マネージャーのみ・メンバーが複数いる場合） */}
+            {isManager && memberOptions.length > 1 && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
                   <UserCircle size={14} />担当者を割り当てる
                 </label>
                 <div className="grid grid-cols-2 gap-2">
-                  {MOCK_TEAM_MEMBERS.map((member) => {
+                  {memberOptions.map((member) => {
                     const isSelected = form.assigneeId === member.id
                     const isSelf = member.id === currentUser?.id
                     return (
