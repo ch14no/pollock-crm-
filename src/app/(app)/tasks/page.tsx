@@ -1,74 +1,118 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Zap, Target, Users, User, Plus, Check, X, Trash2,
+  Users, User, Plus, Check, X, Trash2,
   AlertCircle, ChevronDown, CheckSquare, Layers,
 } from 'lucide-react'
-import { MOCK_ACTIVITIES, MOCK_CONTACTS, MOCK_TEAM_MEMBERS } from '@/lib/mock-data'
 import { useAppStore } from '@/store/appStore'
 import type { Challenge, TaskMeta } from '@/store/appStore'
 import { cn, formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity } from '@/lib/db/activities'
+import { fetchContactsByDivision } from '@/lib/db/contacts'
+import { fetchChallenges, createChallenge, updateChallengeStatus, deleteChallenge } from '@/lib/db/challenges'
+import type { Activity, Contact } from '@/types/database'
 import toast from 'react-hot-toast'
 
 // ─── 象限設定 ─────────────────────────────────────────────────────
 const QUADRANTS = [
-  { q: 1, label: 'Q1 今すぐやる',    sub: '緊急 × 重要',     bg: 'bg-red-50',    border: 'border-red-200',    badge: 'bg-red-100 text-red-700',    dot: 'bg-red-500'   },
-  { q: 2, label: 'Q2 計画的に',      sub: '非緊急 × 重要',   bg: 'bg-blue-50',   border: 'border-blue-200',   badge: 'bg-blue-100 text-blue-700',  dot: 'bg-blue-500'  },
-  { q: 3, label: 'Q3 委任・素早く',  sub: '緊急 × 非重要',   bg: 'bg-yellow-50', border: 'border-yellow-200', badge: 'bg-yellow-100 text-yellow-700', dot: 'bg-yellow-500' },
-  { q: 4, label: 'Q4 後回し・削除',  sub: '非緊急 × 非重要', bg: 'bg-gray-50',   border: 'border-gray-200',   badge: 'bg-gray-100 text-gray-500',  dot: 'bg-gray-400'  },
+  { q: 1, label: 'Q1 今すぐやる',    sub: '緊急 × 重要',     bg: 'bg-red-50',    border: 'border-red-200',    badge: 'bg-red-100 text-red-700',    dot: 'bg-red-500',    urgency: true,  importance: true  },
+  { q: 2, label: 'Q2 計画的に',      sub: '非緊急 × 重要',   bg: 'bg-blue-50',   border: 'border-blue-200',   badge: 'bg-blue-100 text-blue-700',  dot: 'bg-blue-500',   urgency: false, importance: true  },
+  { q: 3, label: 'Q3 委任・素早く',  sub: '緊急 × 非重要',   bg: 'bg-yellow-50', border: 'border-yellow-200', badge: 'bg-yellow-100 text-yellow-700', dot: 'bg-yellow-500', urgency: true,  importance: false },
+  { q: 4, label: 'Q4 後回し・削除',  sub: '非緊急 × 非重要', bg: 'bg-gray-50',   border: 'border-gray-200',   badge: 'bg-gray-100 text-gray-500',  dot: 'bg-gray-400',   urgency: false, importance: false },
 ] as const
 
 function getQuadrant(meta: TaskMeta | undefined): 1 | 2 | 3 | 4 {
   if (!meta) return 1
-  if (meta.urgency && meta.importance)   return 1
-  if (!meta.urgency && meta.importance)  return 2
-  if (meta.urgency && !meta.importance)  return 3
+  if (meta.urgency && meta.importance)  return 1
+  if (!meta.urgency && meta.importance) return 2
+  if (meta.urgency && !meta.importance) return 3
   return 4
 }
 
 // ─── メインページ ─────────────────────────────────────────────────
 export default function TasksPage() {
   const router = useRouter()
-  const currentUser      = useAppStore((s) => s.currentUser)
-  const activeDivisionId = useAppStore((s) => s.activeDivisionId)
-  const localActivities  = useAppStore((s) => s.localActivities)
-  const taskStatuses     = useAppStore((s) => s.taskStatuses)
-  const setTaskStatus    = useAppStore((s) => s.setTaskStatus)
-  const taskMeta         = useAppStore((s) => s.taskMeta)
-  const localChallenges  = useAppStore((s) => s.localChallenges)
-  const addChallenge     = useAppStore((s) => s.addChallenge)
-  const updateChallenge  = useAppStore((s) => s.updateChallenge)
-  const removeChallenge  = useAppStore((s) => s.removeChallenge)
+  const currentUser       = useAppStore((s) => s.currentUser)
+  const activeDivisionId  = useAppStore((s) => s.activeDivisionId)
+  const localActivities   = useAppStore((s) => s.localActivities)
+  const taskStatuses      = useAppStore((s) => s.taskStatuses)
+  const setTaskStatus     = useAppStore((s) => s.setTaskStatus)
+  const taskMeta          = useAppStore((s) => s.taskMeta)
+  const removeLocalActivity = useAppStore((s) => s.removeLocalActivity)
   const openActivityModal = useAppStore((s) => s.openActivityModal)
+  const activityModalIsOpen = useAppStore((s) => s.activityModal.isOpen)
 
-  const isManager = currentUser?.role === 'manager' || currentUser?.role === 'super_admin'
-
-  const [tab, setTab] = useState<'tasks' | 'challenges'>('tasks')
+  const [tab, setTab]     = useState<'tasks' | 'challenges'>('tasks')
   const [scope, setScope] = useState<'personal' | 'team'>('team')
-  const [showChallengeForm, setShowChallengeForm] = useState(false)
-  const [challengeForm, setChallengeForm] = useState({ title: '', description: '', scope: 'personal' as 'personal' | 'team', deadline: '' })
   const [expandedQ, setExpandedQ] = useState<Set<number>>(new Set([1, 2, 3, 4]))
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
-  // 全タスク（MOCK + local）
-  const allActivities = useMemo(() => [...MOCK_ACTIVITIES, ...localActivities], [localActivities])
+  // ─── Supabase データ ─────────────────────────────────────────────
+  const [dbTasks, setDbTasks]         = useState<Activity[]>([])
+  const [contactsMap, setContactsMap] = useState<Record<string, Contact>>({})
+  const [dbChallenges, setDbChallenges] = useState<Challenge[]>([])
+  const [loading, setLoading]         = useState(false)
+  const prevModalOpen = useRef(false)
 
-  const pendingTasks = useMemo(() => allActivities.filter((a) => {
-    if (a.activity_type !== 'task') return false
+  const loadTasks = async () => {
+    if (!activeDivisionId || !isSupabaseConfigured() || !currentUser) return
+    setLoading(true)
+    try {
+      const contacts = await fetchContactsByDivision(activeDivisionId)
+      const cMap: Record<string, Contact> = {}
+      contacts.forEach((c) => { cMap[c.id] = c })
+      setContactsMap(cMap)
+
+      const contactIds = contacts.map((c) => c.id)
+      const rawActs = scope === 'personal'
+        ? await fetchActivitiesByUser(currentUser.id)
+        : await fetchActivitiesByContactIds(contactIds)
+
+      setDbTasks(rawActs.filter((a) => a.activity_type === 'task'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadChallenges = async () => {
+    if (!activeDivisionId || !isSupabaseConfigured()) return
+    const challenges = await fetchChallenges(activeDivisionId)
+    setDbChallenges(challenges)
+  }
+
+  useEffect(() => {
+    loadTasks()
+    loadChallenges()
+  }, [activeDivisionId, scope, currentUser?.id]) // eslint-disable-line
+
+  // アクティビティモーダルが閉じたら再取得
+  useEffect(() => {
+    if (prevModalOpen.current && !activityModalIsOpen) loadTasks()
+    prevModalOpen.current = activityModalIsOpen
+  }, [activityModalIsOpen]) // eslint-disable-line
+
+  // ─── タスクリスト（DB + ローカル楽観的更新） ────────────────────
+  const allTasks = useMemo((): Activity[] => {
+    const base = isSupabaseConfigured() ? dbTasks : localActivities.filter((a) => a.activity_type === 'task')
+    const dbIds = new Set(base.map((a) => a.id))
+    const onlyLocal = localActivities.filter((a) => a.activity_type === 'task' && !dbIds.has(a.id))
+    return [...onlyLocal, ...base]
+  }, [dbTasks, localActivities])
+
+  const pendingTasks = useMemo(() => allTasks.filter((a) => {
     const effectiveStatus = taskStatuses[a.id] ?? a.status
     return effectiveStatus !== 'done'
-  }), [allActivities, taskStatuses])
+  }), [allTasks, taskStatuses])
 
-  // スコープフィルター
   const filteredTasks = useMemo(() => {
-    if (scope === 'team') return pendingTasks  // チーム = 全件表示
-    // 個人 = 自分に割り当てられたタスクのみ
+    if (scope === 'team') return pendingTasks
     return pendingTasks.filter((t) => t.user_id === currentUser?.id)
   }, [pendingTasks, scope, currentUser?.id])
 
-  // 象限別グループ
   const byQuadrant = useMemo(() => {
     const map: Record<number, typeof filteredTasks> = { 1: [], 2: [], 3: [], 4: [] }
     filteredTasks.forEach((t) => {
@@ -78,38 +122,108 @@ export default function TasksPage() {
     return map
   }, [filteredTasks, taskMeta])
 
-  // 課題フィルター
-  const filteredChallenges = useMemo(() => {
-    const divChallenges = localChallenges.filter((c) => !c.divisionId || c.divisionId === activeDivisionId)
-    if (scope === 'team') return divChallenges  // チーム = 全件表示
-    return divChallenges.filter((c) => c.userId === currentUser?.id)
-  }, [localChallenges, scope, activeDivisionId, currentUser?.id])
-
-  const resolveTarget = (t: typeof pendingTasks[0]) => {
-    if (t.target_type === 'contact') {
-      const c = MOCK_CONTACTS.find((c) => c.id === t.target_id)
-      return c ? `${c.name}（${c.companies?.name ?? ''}）` : null
-    }
-    return null
+  const resolveTarget = (t: Activity): string | null => {
+    if (t.target_type !== 'contact') return null
+    const c = contactsMap[t.target_id]
+    return c ? `${c.name}${c.companies?.name ? `（${c.companies.name}）` : ''}` : null
   }
 
-  const handleAddChallenge = () => {
-    if (!challengeForm.title.trim()) { toast.error('タイトルを入力してください'); return }
-    const challenge: Challenge = {
-      id: `challenge-${Date.now()}`,
-      title: challengeForm.title.trim(),
-      description: challengeForm.description.trim() || undefined,
-      scope: challengeForm.scope,
-      deadline: challengeForm.deadline || undefined,
-      createdAt: new Date().toISOString(),
-      userId: currentUser?.id ?? '',
-      status: 'open',
-      divisionId: activeDivisionId ?? undefined,
+  // ─── タスク操作 ──────────────────────────────────────────────────
+  const handleComplete = async (id: string) => {
+    setTaskStatus(id, 'done')
+    if (isSupabaseConfigured() && !id.startsWith('act-local-')) {
+      updateActivityStatus(id, 'done').catch(() => {
+        toast.error('ステータス更新に失敗しました')
+      })
     }
-    addChallenge(challenge)
-    toast.success(`課題「${challenge.title}」を追加しました`)
-    setChallengeForm({ title: '', description: '', scope: 'personal', deadline: '' })
-    setShowChallengeForm(false)
+    toast.success('タスクを完了しました')
+  }
+
+  const handleDelete = async (id: string) => {
+    if (isSupabaseConfigured() && !id.startsWith('act-local-')) {
+      try {
+        await deleteActivity(id)
+        setDbTasks((prev) => prev.filter((t) => t.id !== id))
+      } catch {
+        toast.error('削除に失敗しました')
+        setDeleteConfirmId(null)
+        return
+      }
+    }
+    removeLocalActivity(id)
+    setDeleteConfirmId(null)
+    toast.success('タスクを削除しました')
+  }
+
+  // ─── 課題データ ──────────────────────────────────────────────────
+  const challenges = isSupabaseConfigured() ? dbChallenges : []
+  const filteredChallenges = useMemo(() => {
+    const divChallenges = challenges.filter((c) => !c.divisionId || c.divisionId === activeDivisionId)
+    if (scope === 'team') return divChallenges
+    return divChallenges.filter((c) => c.userId === currentUser?.id)
+  }, [challenges, scope, activeDivisionId, currentUser?.id])
+
+  // ─── 課題フォーム ────────────────────────────────────────────────
+  const [showChallengeForm, setShowChallengeForm] = useState(false)
+  const [challengeForm, setChallengeForm] = useState({ title: '', description: '', scope: 'personal' as 'personal' | 'team', deadline: '' })
+  const [challengeSaving, setChallengeSaving] = useState(false)
+
+  const handleAddChallenge = async () => {
+    if (!challengeForm.title.trim()) { toast.error('タイトルを入力してください'); return }
+    setChallengeSaving(true)
+    try {
+      const now = new Date().toISOString()
+      let id = `challenge-${Date.now()}`
+      if (isSupabaseConfigured() && currentUser) {
+        id = await createChallenge({
+          userId: currentUser.id,
+          divisionId: activeDivisionId ?? undefined,
+          title: challengeForm.title.trim(),
+          description: challengeForm.description.trim() || undefined,
+          scope: challengeForm.scope,
+          deadline: challengeForm.deadline || undefined,
+        })
+      }
+      const challenge: Challenge = {
+        id,
+        title: challengeForm.title.trim(),
+        description: challengeForm.description.trim() || undefined,
+        scope: challengeForm.scope,
+        deadline: challengeForm.deadline || undefined,
+        createdAt: now,
+        userId: currentUser?.id ?? '',
+        status: 'open',
+        divisionId: activeDivisionId ?? undefined,
+      }
+      setDbChallenges((prev) => [challenge, ...prev])
+      toast.success(`課題「${challenge.title}」を追加しました`)
+      setChallengeForm({ title: '', description: '', scope: 'personal', deadline: '' })
+      setShowChallengeForm(false)
+    } catch {
+      toast.error('保存に失敗しました')
+    } finally {
+      setChallengeSaving(false)
+    }
+  }
+
+  const handleChallengeStatusChange = async (id: string, status: Challenge['status']) => {
+    setDbChallenges((prev) => prev.map((c) => c.id === id ? { ...c, status } : c))
+    if (isSupabaseConfigured() && !id.startsWith('challenge-')) {
+      updateChallengeStatus(id, status).catch(() => toast.error('更新に失敗しました'))
+    }
+  }
+
+  const handleDeleteChallenge = async (id: string) => {
+    if (isSupabaseConfigured() && !id.startsWith('challenge-')) {
+      try {
+        await deleteChallenge(id)
+      } catch {
+        toast.error('削除に失敗しました')
+        return
+      }
+    }
+    setDbChallenges((prev) => prev.filter((c) => c.id !== id))
+    toast.success('課題を削除しました')
   }
 
   const CHALLENGE_STATUS = {
@@ -118,6 +232,8 @@ export default function TasksPage() {
     done:        { label: '完了',   color: 'bg-green-100 text-green-700' },
   }
 
+  const openCount = filteredChallenges.filter((c) => c.status !== 'done').length
+
   return (
     <div className="w-full space-y-4">
       {/* ヘッダー */}
@@ -125,7 +241,7 @@ export default function TasksPage() {
         <div>
           <h1 className="text-2xl font-black text-gray-800">タスク管理</h1>
           <p className="text-sm text-gray-500">
-            未完了 {pendingTasks.length}件 · 課題 {localChallenges.filter((c) => c.status !== 'done').length}件
+            {loading ? '読み込み中...' : `未完了 ${pendingTasks.length}件 · 課題 ${openCount}件`}
           </p>
         </div>
         <Button icon={<Plus size={16} />} onClick={() => openActivityModal()}>
@@ -136,7 +252,7 @@ export default function TasksPage() {
       {/* タブ + スコープ */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex bg-gray-100 p-1 rounded-xl">
-          {([['tasks', <CheckSquare size={14} />, 'タスク'], ['challenges', <Layers size={14} />, '課題']] as const).map(([t, icon, label]) => (
+          {([['tasks', <CheckSquare size={14} key="t" />, 'タスク'], ['challenges', <Layers size={14} key="c" />, '課題']] as const).map(([t, icon, label]) => (
             <button key={t} onClick={() => setTab(t as typeof tab)}
               className={cn('flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
                 tab === t ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700')}>
@@ -158,7 +274,7 @@ export default function TasksPage() {
       {/* ─── タスク4象限ビュー ─── */}
       {tab === 'tasks' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {QUADRANTS.map(({ q, label, sub, bg, border, badge, dot }) => {
+          {QUADRANTS.map(({ q, label, sub, bg, border, badge, dot, urgency, importance }) => {
             const tasks = byQuadrant[q] ?? []
             const isExpanded = expandedQ.has(q)
             return (
@@ -186,41 +302,76 @@ export default function TasksPage() {
                       <p className="text-xs text-gray-400 text-center py-4">タスクなし</p>
                     ) : tasks.map((task) => {
                       const target = resolveTarget(task)
-                      const assignee = MOCK_TEAM_MEMBERS.find((m) => m.id === task.user_id)
+                      const assigneeName = task.users?.name ?? null
                       const isMyTask = task.user_id === currentUser?.id
+                      const daysLeft = task.due_date
+                        ? Math.ceil((new Date(task.due_date).getTime() - Date.now()) / 86400000)
+                        : null
+                      const isOverdue = daysLeft !== null && daysLeft < 0
+                      const isConfirmingDelete = deleteConfirmId === task.id
+
                       return (
                         <div key={task.id}
-                          className="bg-white rounded-xl p-3 border border-white/80 shadow-sm cursor-pointer hover:shadow-md transition-all"
-                          onClick={() => target && router.push(`/contacts/${task.target_id}`)}>
+                          className={cn(
+                            'bg-white rounded-xl p-3 border shadow-sm transition-all',
+                            isOverdue ? 'border-red-300' : 'border-white/80',
+                            !isConfirmingDelete && 'hover:shadow-md'
+                          )}>
                           <div className="flex items-start gap-2">
+                            {/* チェックボックス */}
                             <button
-                              onClick={(e) => { e.stopPropagation(); if (isMyTask) setTaskStatus(task.id, 'done') }}
+                              onClick={() => isMyTask && handleComplete(task.id)}
                               disabled={!isMyTask}
                               className={cn('mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors',
-                                isMyTask ? 'border-gray-300 hover:border-orange-400 cursor-pointer' : 'border-gray-200 cursor-not-allowed opacity-50')}
+                                isMyTask ? 'border-gray-300 hover:border-orange-400 cursor-pointer' : 'border-gray-200 cursor-not-allowed opacity-40')}
                               title={isMyTask ? '完了にする' : '自分のタスクではありません'}
                             />
-                            <div className="flex-1 min-w-0">
+                            <div className="flex-1 min-w-0"
+                              onClick={() => !isConfirmingDelete && target && router.push(`/contacts/${task.target_id}`)}>
                               <p className="text-sm font-medium text-gray-700 truncate">{task.title ?? 'タスク'}</p>
                               {target && <p className="text-xs text-gray-400 truncate">{target}</p>}
-                              <div className="flex items-center gap-2 mt-1">
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
                                 {task.due_date && (
-                                  <span className="text-xs text-gray-400">{formatDate(task.due_date)}</span>
+                                  <span className={cn('text-xs', isOverdue ? 'text-red-500 font-medium' : 'text-gray-400')}>
+                                    {isOverdue ? `期限切れ ${Math.abs(daysLeft!)}日` : formatDate(task.due_date)}
+                                  </span>
                                 )}
-                                {assignee && !isMyTask && (
+                                {assigneeName && !isMyTask && (
                                   <span className="text-xs bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded-full">
-                                    {assignee.name}
+                                    {assigneeName}
                                   </span>
                                 )}
                               </div>
                             </div>
+
+                            {/* 削除ボタン */}
+                            {isMyTask && !isConfirmingDelete && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(task.id) }}
+                                className="text-gray-200 hover:text-red-400 transition-colors flex-shrink-0 p-0.5"
+                                title="削除">
+                                <Trash2 size={12} />
+                              </button>
+                            )}
                           </div>
+
+                          {/* 削除確認 */}
+                          {isConfirmingDelete && (
+                            <div className="mt-2 flex items-center gap-2 p-2 bg-red-50 rounded-lg">
+                              <span className="text-xs text-red-600 flex-1">このタスクを削除しますか？</span>
+                              <button onClick={() => handleDelete(task.id)}
+                                className="text-xs text-red-600 font-bold hover:text-red-700 px-2 py-1 bg-red-100 rounded-lg">削除</button>
+                              <button onClick={() => setDeleteConfirmId(null)}
+                                className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">キャンセル</button>
+                            </div>
+                          )}
                         </div>
                       )
                     })}
-                    {/* 象限内タスク追加ショートカット */}
+
+                    {/* 象限内タスク追加（象限に応じた urgency/importance をプリセット） */}
                     <button
-                      onClick={() => openActivityModal()}
+                      onClick={() => openActivityModal({ taskUrgency: urgency, taskImportance: importance })}
                       className="w-full flex items-center justify-center gap-1 py-2 text-xs text-gray-400 hover:text-orange-500 hover:bg-white/60 rounded-xl transition-colors">
                       <Plus size={13} />追加
                     </button>
@@ -235,21 +386,21 @@ export default function TasksPage() {
       {/* ─── 課題管理ビュー ─── */}
       {tab === 'challenges' && (
         <div className="space-y-4">
-          {/* 追加ボタン */}
           <div className="flex justify-end">
             <Button size="sm" variant="secondary" icon={<Plus size={14} />} onClick={() => setShowChallengeForm((v) => !v)}>
               課題を追加
             </Button>
           </div>
 
-          {/* 追加フォーム */}
           {showChallengeForm && (
             <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-3 shadow-sm">
               <p className="text-sm font-bold text-gray-700">新しい課題を追加</p>
-              <input type="text" value={challengeForm.title} onChange={(e) => setChallengeForm((f) => ({ ...f, title: e.target.value }))}
+              <input type="text" value={challengeForm.title}
+                onChange={(e) => setChallengeForm((f) => ({ ...f, title: e.target.value }))}
                 placeholder="課題のタイトル（例：エンジニアのスキルシート格納フォルダを作る）"
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
-              <textarea value={challengeForm.description} onChange={(e) => setChallengeForm((f) => ({ ...f, description: e.target.value }))}
+              <textarea value={challengeForm.description}
+                onChange={(e) => setChallengeForm((f) => ({ ...f, description: e.target.value }))}
                 placeholder="詳細・背景（任意）" rows={2}
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none" />
               <div className="grid grid-cols-2 gap-3">
@@ -267,20 +418,24 @@ export default function TasksPage() {
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">期限（任意）</label>
-                  <input type="date" value={challengeForm.deadline} onChange={(e) => setChallengeForm((f) => ({ ...f, deadline: e.target.value }))}
+                  <input type="date" value={challengeForm.deadline}
+                    onChange={(e) => setChallengeForm((f) => ({ ...f, deadline: e.target.value }))}
                     className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
                 </div>
               </div>
               <div className="flex gap-2 justify-end">
                 <button onClick={() => setShowChallengeForm(false)}
-                  className="flex items-center gap-1 text-xs text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100"><X size={12} />キャンセル</button>
-                <button onClick={handleAddChallenge}
-                  className="flex items-center gap-1 text-xs text-white bg-orange-500 px-3 py-1.5 rounded-lg hover:bg-orange-600 font-medium"><Check size={12} />追加</button>
+                  className="flex items-center gap-1 text-xs text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100">
+                  <X size={12} />キャンセル
+                </button>
+                <button onClick={handleAddChallenge} disabled={challengeSaving}
+                  className="flex items-center gap-1 text-xs text-white bg-orange-500 px-3 py-1.5 rounded-lg hover:bg-orange-600 font-medium disabled:opacity-50">
+                  <Check size={12} />{challengeSaving ? '保存中...' : '追加'}
+                </button>
               </div>
             </div>
           )}
 
-          {/* 課題一覧 */}
           {filteredChallenges.length === 0 ? (
             <div className="bg-white border border-gray-100 rounded-2xl p-12 text-center">
               <AlertCircle size={32} className="mx-auto text-gray-300 mb-3" />
@@ -305,10 +460,14 @@ export default function TasksPage() {
                           <p className={cn('text-sm font-medium text-gray-800', challenge.status === 'done' && 'line-through text-gray-400')}>
                             {challenge.title}
                           </p>
-                          <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', statusCfg.color)}>{statusCfg.label}</span>
+                          <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', statusCfg.color)}>
+                            {statusCfg.label}
+                          </span>
                           <span className={cn('text-xs px-2 py-0.5 rounded-full border font-medium',
                             challenge.scope === 'team' ? 'border-blue-200 text-blue-600 bg-blue-50' : 'border-gray-200 text-gray-500')}>
-                            {challenge.scope === 'team' ? <span className="flex items-center gap-1"><Users size={10} />チーム</span> : <span className="flex items-center gap-1"><User size={10} />個人</span>}
+                            {challenge.scope === 'team'
+                              ? <span className="flex items-center gap-1"><Users size={10} />チーム</span>
+                              : <span className="flex items-center gap-1"><User size={10} />個人</span>}
                           </span>
                           {isOverdue && <span className="text-xs text-red-600 font-medium">期限超過</span>}
                         </div>
@@ -320,12 +479,11 @@ export default function TasksPage() {
                         )}
                       </div>
 
-                      {/* ステータス変更 + 削除 */}
                       {isOwn && (
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <select
                             value={challenge.status}
-                            onChange={(e) => updateChallenge(challenge.id, { status: e.target.value as Challenge['status'] })}
+                            onChange={(e) => handleChallengeStatusChange(challenge.id, e.target.value as Challenge['status'])}
                             onClick={(e) => e.stopPropagation()}
                             className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
                           >
@@ -333,7 +491,8 @@ export default function TasksPage() {
                             <option value="in_progress">対応中</option>
                             <option value="done">完了</option>
                           </select>
-                          <button onClick={() => { removeChallenge(challenge.id); toast.success('課題を削除しました') }}
+                          <button
+                            onClick={() => handleDeleteChallenge(challenge.id)}
                             className="p-1 text-gray-300 hover:text-red-500 rounded-lg transition-colors">
                             <Trash2 size={13} />
                           </button>

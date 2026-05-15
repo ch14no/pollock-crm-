@@ -134,8 +134,14 @@ interface AppState {
     prefillContactName?: string
     prefillDealId?: string
     prefillDealTitle?: string
+    prefillTaskUrgency?: boolean
+    prefillTaskImportance?: boolean
   }
-  openActivityModal: (prefill?: { contactId?: string; contactName?: string; dealId?: string; dealTitle?: string }) => void
+  openActivityModal: (prefill?: {
+    contactId?: string; contactName?: string
+    dealId?: string; dealTitle?: string
+    taskUrgency?: boolean; taskImportance?: boolean
+  }) => void
   closeActivityModal: () => void
 
   // Deal modal
@@ -278,6 +284,8 @@ export const useAppStore = create<AppState>()(
             prefillContactName: prefill?.contactName,
             prefillDealId: prefill?.dealId,
             prefillDealTitle: prefill?.dealTitle,
+            prefillTaskUrgency: prefill?.taskUrgency,
+            prefillTaskImportance: prefill?.taskImportance,
           },
         }),
       closeActivityModal: () => set({ activityModal: { isOpen: false } }),

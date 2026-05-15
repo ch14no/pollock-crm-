@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { ContactPicker } from '@/components/ui/ContactPicker'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { createActivity } from '@/lib/db/activities'
+import { createActivity, upsertTaskMeta } from '@/lib/db/activities'
 import { fetchDivisionUsers } from '@/lib/db/users'
 import { getInitials, cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
@@ -60,15 +60,16 @@ export function ActivityModal() {
       assigneeId: currentUser?.id ?? '',
       actionDate: todayStr(), dueDate: '', status: 'todo',
     })
-    setTaskUrgency(false)
-    setTaskImportance(false)
+    setTaskUrgency(activityModal.prefillTaskUrgency ?? false)
+    setTaskImportance(activityModal.prefillTaskImportance ?? false)
     setTaskScope('personal')
 
     // 事業部メンバーを取得（マネージャーのタスク割り当て用）
     if (isManager && activeDivisionId && isSupabaseConfigured()) {
       fetchDivisionUsers(activeDivisionId).then(setDivisionMembers)
     }
-  }, [activityModal.isOpen, activityModal.prefillContactId, currentUser?.id, isManager, activeDivisionId])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityModal.isOpen])
 
   const isTask = form.type === 'task'
   const isSelfAssigned = form.assigneeId === currentUser?.id
@@ -108,6 +109,9 @@ export function ActivityModal() {
           status:       form.status,
           actionDate:   new Date(form.actionDate).toISOString(),
         })
+        if (isTask) {
+          await upsertTaskMeta(savedId, taskUrgency, taskImportance, taskScope).catch(() => {})
+        }
       }
 
       const newActivity: Activity = {
