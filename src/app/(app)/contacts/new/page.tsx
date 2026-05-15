@@ -8,11 +8,13 @@ import {
   Users, Building2, Globe, Home,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { MOCK_CONTACTS } from '@/lib/mock-data'
 import { LOCATIONS } from '@/lib/config'
 import { getInitials, cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 import { useAppStore } from '@/store/appStore'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { createContact } from '@/lib/db/contacts'
+import { findOrCreateCompany } from '@/lib/db/companies'
 import { Activity } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -59,14 +61,10 @@ async function simulateOcr(): Promise<OcrField[]> {
   ]
 }
 
-// ─── Duplicate check ──────────────────────────────────────────────────────────
+// ─── Duplicate check（Supabase モードでは常に null） ──────────────────────────
 
-function findDuplicate(fields: Partial<ContactFields>) {
-  if (!fields.name && !fields.company) return null
-  return MOCK_CONTACTS.find(
-    (c) => (fields.name && c.name === fields.name) ||
-           (fields.company && c.companies?.name === fields.company)
-  ) ?? null
+function findDuplicate(_fields: Partial<ContactFields>): { name: string; companies?: { name: string } | null; id: string } | null {
+  return null
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -222,10 +220,39 @@ export default function NewContactPage() {
 
   const handleSave = async () => {
     setSaving(true)
-    await new Promise((r) => setTimeout(r, 800))
-    setSaving(false)
-    setStep('done')
-    toast.success(`${fields.name}さんを登録しました！`)
+    try {
+      const tags: string[] = [
+        ...(location ? [location] : []),
+        ...customTags.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean),
+      ]
+      const customAttributes: Record<string, unknown> = {}
+      if (fields.mobile)        customAttributes.mobile = fields.mobile
+      if (fields.address)       customAttributes.address = fields.address
+      if (fields.website)       customAttributes.website = fields.website
+      if (meetingContext)       customAttributes.meeting_context = meetingContext
+
+      if (isSupabaseConfigured() && activeDivision) {
+        const companyId = fields.company
+          ? (await findOrCreateCompany(fields.company)) ?? undefined
+          : undefined
+        await createContact({
+          divisionId: activeDivision.id,
+          name: fields.name,
+          email: fields.email || undefined,
+          phone: fields.phone || undefined,
+          position: fields.position || undefined,
+          companyId,
+          tags,
+          customAttributes,
+        })
+      }
+      setStep('done')
+      toast.success(`${fields.name}さんを登録しました！`)
+    } catch {
+      toast.error('保存に失敗しました。もう一度お試しください。')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleContinue = () => {

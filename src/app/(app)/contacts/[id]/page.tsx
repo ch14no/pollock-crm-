@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Building2, Phone, Mail, Rocket,
@@ -8,7 +8,11 @@ import {
   Users, FileText, ChevronDown, ExternalLink, UserCircle,
   Edit2, Check, X,
 } from 'lucide-react'
-import { MOCK_CONTACTS, MOCK_ACTIVITIES, MOCK_DEALS, MOCK_TEAM_MEMBERS, DEFAULT_DIVISION_CUSTOM_FIELDS } from '@/lib/mock-data'
+import { MOCK_DEALS, DEFAULT_DIVISION_CUSTOM_FIELDS } from '@/lib/mock-data'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { fetchContactById, updateContact, fetchContactCustomValues } from '@/lib/db/contacts'
+import { fetchActivitiesByTarget } from '@/lib/db/activities'
+import type { Contact, Activity } from '@/types/database'
 import { getLocationConfig, sortTags } from '@/lib/config'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -83,11 +87,33 @@ export default function ContactDetailPage() {
   const localContactEdits    = useAppStore((s) => s.localContactEdits)
   const setLocalContactEdit  = useAppStore((s) => s.setLocalContactEdit)
 
-  // 事業部別フィールド定義（ストア上書きがあればそちらを使用）
+  // Supabase から顧客・活動を読み込む
+  const [dbContact, setDbContact] = useState<Contact | null>(null)
+  const [contactLoading, setContactLoading] = useState(true)
+  const [dbActivities, setDbActivities] = useState<Activity[]>([])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured()) { setContactLoading(false); return }
+    Promise.all([
+      fetchContactById(id),
+      fetchActivitiesByTarget('contact', id),
+      fetchContactCustomValues(id),
+    ]).then(([c, acts, customVals]) => {
+      setDbContact(c)
+      setDbActivities(acts)
+      Object.entries(customVals).forEach(([fieldId, value]) => {
+        setContactCustomValue(id, fieldId, value)
+      })
+    }).finally(() => setContactLoading(false))
+  }, [id, setContactCustomValue])
+
+  const contact: Contact | null = dbContact
+
+  // 事業部別フィールド定義
   const divFields = useMemo(() => {
-    const divId = MOCK_CONTACTS.find((c) => c.id === id)?.division_id ?? ''
+    const divId = contact?.division_id ?? ''
     return divisionCustomFields[divId] ?? DEFAULT_DIVISION_CUSTOM_FIELDS[divId] ?? []
-  }, [divisionCustomFields, id])
+  }, [divisionCustomFields, contact?.division_id])
 
   const divValues = contactCustomValues[id] ?? {}
 
@@ -101,7 +127,13 @@ export default function ContactDetailPage() {
   const [editingInfo, setEditingInfo] = useState(false)
   const [infoForm, setInfoForm] = useState({ name: '', position: '', phone: '', email: '', tags: [] as string[], tagInput: '' })
 
-  const contact = MOCK_CONTACTS.find((c) => c.id === id)
+  if (contactLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
   if (!contact) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
@@ -118,7 +150,8 @@ export default function ContactDetailPage() {
   // このコンタクトのアクティブなステータス
   const activeStatuses = contactStatuses[id] ?? []
 
-  const assignee = MOCK_TEAM_MEMBERS.find((m) => m.id === contact.assigned_user_id)
+  // 担当者（joinされた users フィールドを使用）
+  const assignee = contact.users ?? null
 
   // 編集モードを開く
   const openInfoEdit = () => {
@@ -133,14 +166,24 @@ export default function ContactDetailPage() {
     setEditingInfo(true)
   }
 
-  const saveInfoEdit = () => {
-    setLocalContactEdit(id, {
+  const saveInfoEdit = async () => {
+    const updates = {
       name: infoForm.name.trim() || contact.name,
-      position: infoForm.position.trim() || undefined,
-      phone: infoForm.phone.trim() || undefined,
-      email: infoForm.email.trim() || undefined,
+      position: infoForm.position.trim() || null,
+      phone: infoForm.phone.trim() || null,
+      email: infoForm.email.trim() || null,
       tags: infoForm.tags,
+    }
+    setLocalContactEdit(id, {
+      name: updates.name,
+      position: updates.position ?? undefined,
+      phone: updates.phone ?? undefined,
+      email: updates.email ?? undefined,
+      tags: updates.tags,
     })
+    if (isSupabaseConfigured()) {
+      await updateContact(id, updates).catch(() => {})
+    }
     setEditingInfo(false)
   }
 
@@ -153,15 +196,9 @@ export default function ContactDetailPage() {
     }
   }
 
-  // MOCK + ローカル追加分をマージ
-  const allActivities = useMemo(
-    () => [...MOCK_ACTIVITIES, ...localActivities],
-    [localActivities]
-  )
-  const allDeals = useMemo(
-    () => [...MOCK_DEALS, ...localDeals],
-    [localDeals]
-  )
+  // DB活動 + ローカル追加分をマージ
+  const allActivities = [...dbActivities, ...localActivities]
+  const allDeals = [...MOCK_DEALS, ...localDeals]
 
   const activities = allActivities
     .filter((a) => a.target_type === 'contact' && a.target_id === id)
@@ -565,9 +602,7 @@ export default function ContactDetailPage() {
                         const canEdit = isLocal && !isMyTask
                         const isLocked = !isMyTask && !isLocal
                         const isEditingThis = editingTaskId === task.id
-                        const assigneeName = !isMyTask
-                          ? (MOCK_TEAM_MEMBERS.find((m) => m.id === task.user_id)?.name ?? task.users?.name)
-                          : null
+                        const assigneeName = !isMyTask ? (task.users?.name ?? null) : null
 
                         return (
                           <div key={task.id} className={cn(
