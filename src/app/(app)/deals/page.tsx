@@ -1,24 +1,52 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { KanbanBoard } from '@/components/deals/KanbanBoard'
-import { MOCK_DEALS } from '@/lib/mock-data'
 import { Button } from '@/components/ui/Button'
 import { Plus, Lock } from 'lucide-react'
 import { useAppStore, selectIsOwnDivision } from '@/store/appStore'
 import { formatCurrency } from '@/lib/utils'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { fetchDealsByDivision } from '@/lib/db/deals'
+import type { Deal } from '@/types/database'
 
 export default function DealsPage() {
   const activeDivisionId = useAppStore((s) => s.activeDivisionId)
   const activeDivision   = useAppStore((s) => s.activeDivision)
   const isOwnDivision    = useAppStore(selectIsOwnDivision)
   const openDealModal    = useAppStore((s) => s.openDealModal)
+  const dealModalIsOpen  = useAppStore((s) => s.dealModal.isOpen)
   const localDeals       = useAppStore((s) => s.localDeals)
 
-  const divisionDeals = useMemo(
-    () => [...MOCK_DEALS, ...localDeals].filter((d) => d.division_id === activeDivisionId),
-    [activeDivisionId, localDeals]
-  )
+  const [dbDeals, setDbDeals] = useState<Deal[]>([])
+  const [loading, setLoading] = useState(false)
+  const prevModalOpen = useRef(false)
+
+  const loadDeals = async () => {
+    if (!activeDivisionId || !isSupabaseConfigured()) return
+    setLoading(true)
+    try {
+      const data = await fetchDealsByDivision(activeDivisionId)
+      setDbDeals(data)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 事業部変更時に再取得
+  useEffect(() => { loadDeals() }, [activeDivisionId]) // eslint-disable-line
+
+  // モーダルが閉じたタイミングで再取得（追加・編集・失注後の反映）
+  useEffect(() => {
+    if (prevModalOpen.current && !dealModalIsOpen) {
+      loadDeals()
+    }
+    prevModalOpen.current = dealModalIsOpen
+  }, [dealModalIsOpen]) // eslint-disable-line
+
+  const divisionDeals: Deal[] = isSupabaseConfigured()
+    ? dbDeals
+    : localDeals.filter((d) => d.division_id === activeDivisionId)
 
   const activeDeals = divisionDeals.filter((d) => d.stage_id !== '受注' && d.stage_id !== '失注')
   const pipelineTotal = activeDeals.reduce((sum, d) => sum + d.amount, 0)
@@ -29,8 +57,9 @@ export default function DealsPage() {
         <div>
           <h1 className="text-2xl font-black text-gray-800">商談カンバン</h1>
           <p className="text-sm text-gray-500">
-            {activeDivision?.name} · 進行中 {activeDeals.length}件
-            · 見込み額合計 <span className="font-medium text-gray-700">{formatCurrency(pipelineTotal)}</span>
+            {activeDivision?.name}
+            {loading ? ' · 読み込み中...' : ` · 進行中 ${activeDeals.length}件 · 見込み額合計 `}
+            {!loading && <span className="font-medium text-gray-700">{formatCurrency(pipelineTotal)}</span>}
             {!isOwnDivision && ' · 閲覧のみ'}
           </p>
         </div>
@@ -52,7 +81,11 @@ export default function DealsPage() {
         </div>
       )}
 
-      <KanbanBoard key={divisionDeals.length} initialDeals={divisionDeals} readOnly={!isOwnDivision} />
+      <KanbanBoard
+        key={`${activeDivisionId}-${divisionDeals.length}`}
+        initialDeals={divisionDeals}
+        readOnly={!isOwnDivision}
+      />
     </div>
   )
 }

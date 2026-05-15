@@ -13,7 +13,9 @@ import { CSS } from '@dnd-kit/utilities'
 import { Plus, AlertCircle, Lock, ChevronDown } from 'lucide-react'
 import { formatCurrency, getStaleDays, getInitials, cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
-import { MOCK_TEAM_MEMBERS, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
+import { DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { updateDealStage } from '@/lib/db/deals'
 import type { Deal } from '@/types/database'
 import toast from 'react-hot-toast'
 import Confetti from './Confetti'
@@ -71,8 +73,7 @@ function DealCard({
     opacity: isDragging ? 0.4 : 1,
   }
 
-  // 担当者を取得（localDeals は users フィールド付き、MOCK_DEALS は assigned_user_id で引く）
-  const assignee = deal.users ?? MOCK_TEAM_MEMBERS.find((m) => m.id === (deal as Deal & { assigned_user_id?: string }).assigned_user_id)
+  const assignee = deal.users ?? null
 
   return (
     <div
@@ -198,7 +199,12 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
       next[toStage] = [...next[toStage], { ...deal, stage_id: toStage, updated_at: updatedAt }]
       return next
     })
-    // ローカル商談はストアにも反映してページ遷移後も保持
+    // DB 商談はSupabaseへ反映、ローカル商談はストアへ反映
+    if (isSupabaseConfigured() && !deal.id.startsWith('deal-local-')) {
+      updateDealStage(deal.id, toStage).catch(() => {
+        toast.error('ステージの更新に失敗しました')
+      })
+    }
     if (deal.id.startsWith('deal-local-')) {
       updateLocalDeal(deal.id, { stage_id: toStage, updated_at: updatedAt })
     }

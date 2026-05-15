@@ -5,7 +5,9 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { ContactPicker } from '@/components/ui/ContactPicker'
 import { useAppStore } from '@/store/appStore'
-import { MOCK_CONTACTS, MOCK_STAGES } from '@/lib/mock-data'
+import { DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { createDeal, updateDeal, updateDealStage } from '@/lib/db/deals'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -18,51 +20,65 @@ interface DealFormState {
   description: string
 }
 
+const FALLBACK_STAGES = [
+  { id: 'リード',       name: 'リード',       isWon: false },
+  { id: '初回面談',     name: '初回面談',     isWon: false },
+  { id: '提案中',       name: '提案中',       isWon: false },
+  { id: 'クロージング', name: 'クロージング', isWon: false },
+  { id: '受注',         name: '受注 🎉',      isWon: true  },
+]
 
 export function DealModal() {
-  const { dealModal, closeDealModal, activeDivisionId, addDeal, currentUser } = useAppStore()
+  const {
+    dealModal, closeDealModal, activeDivisionId,
+    addDeal, updateLocalDeal, currentUser, divisionStages,
+  } = useAppStore()
+
   const [loading, setLoading] = useState(false)
   const [amountDisplay, setAmountDisplay] = useState('')
-
   const isEdit = !!dealModal.deal
 
   const [form, setForm] = useState<DealFormState>({
-    title: '',
-    contactId: '',
-    amount: '',
-    stageId: 'リード',
-    closeDate: '',
-    description: '',
+    title: '', contactId: '', amount: '', stageId: 'リード', closeDate: '', description: '',
   })
 
-  useEffect(() => {
-    if (dealModal.isOpen) {
-      if (dealModal.deal) {
-        const d = dealModal.deal
-        setForm({
-          title: d.title,
-          contactId: d.contact_id ?? '',
-          amount: String(d.amount),
-          stageId: d.stage_id,
-          closeDate: d.close_date ? d.close_date.slice(0, 10) : '',
-          description: d.description ?? '',
-        })
-        setAmountDisplay(d.amount > 0 ? d.amount.toLocaleString('ja-JP') : '')
-      } else {
-        setForm({
-          title: '',
-          contactId: dealModal.prefillContactId ?? '',
-          amount: '',
-          stageId: dealModal.prefillStageId ?? 'リード',
-          closeDate: '',
-          description: '',
-        })
-        setAmountDisplay('')
-      }
-    }
-  }, [dealModal.isOpen, dealModal.deal, dealModal.prefillContactId, dealModal.prefillStageId])
+  // ステージリスト（事業部別設定 or フォールバック、失注を除く）
+  const activeStages = (() => {
+    const divId = activeDivisionId ?? ''
+    const raw = divisionStages[divId] ?? DEFAULT_DIVISION_STAGES[divId]
+    if (!raw) return FALLBACK_STAGES
+    return raw
+      .filter((s) => !s.isLost)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((s) => ({ id: s.id, name: s.isWon ? `${s.name} 🎉` : s.name, isWon: s.isWon }))
+  })()
 
-  const selectedContact = MOCK_CONTACTS.find((c) => c.id === form.contactId)
+  useEffect(() => {
+    if (!dealModal.isOpen) return
+    if (dealModal.deal) {
+      const d = dealModal.deal
+      setForm({
+        title: d.title,
+        contactId: d.contact_id ?? '',
+        amount: String(d.amount),
+        stageId: d.stage_id,
+        closeDate: d.close_date ? d.close_date.slice(0, 10) : '',
+        description: d.description ?? '',
+      })
+      setAmountDisplay(d.amount > 0 ? d.amount.toLocaleString('ja-JP') : '')
+    } else {
+      setForm({
+        title: '',
+        contactId: dealModal.prefillContactId ?? '',
+        amount: '',
+        stageId: dealModal.prefillStageId ?? activeStages[0]?.id ?? 'リード',
+        closeDate: '',
+        description: '',
+      })
+      setAmountDisplay('')
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dealModal.isOpen, dealModal.deal, dealModal.prefillContactId, dealModal.prefillStageId])
 
   const handleAmountChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value.replace(/[^0-9]/g, '')
@@ -72,56 +88,97 @@ export function DealModal() {
 
   const handleSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!form.title.trim()) {
-      toast.error('商談名を入力してください')
-      return
-    }
-    if (!form.contactId) {
-      toast.error('対象顧客を選択してください')
-      return
-    }
-    const amount = parseInt(form.amount, 10)
-    if (isNaN(amount) || amount < 0) {
-      toast.error('見込み額を正しく入力してください')
-      return
-    }
+    if (!form.title.trim()) { toast.error('商談名を入力してください'); return }
+    if (!form.contactId)    { toast.error('対象顧客を選択してください'); return }
+    const amount = parseInt(form.amount || '0', 10)
+    if (isNaN(amount) || amount < 0) { toast.error('見込み額を正しく入力してください'); return }
+
     setLoading(true)
-    await new Promise((r) => setTimeout(r, 400))
-
-    if (!isEdit) {
-      const newDeal = {
-        id: `deal-local-${Date.now()}`,
-        contact_id: form.contactId || undefined,
-        division_id: activeDivisionId ?? '',
-        assigned_user_id: currentUser?.id,
-        title: form.title.trim(),
-        amount,
-        stage_id: form.stageId,
-        close_date: form.closeDate || undefined,
-        description: form.description.trim() || undefined,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        contacts: selectedContact,
-        users: currentUser ?? undefined,
+    const now = new Date().toISOString()
+    try {
+      if (isEdit && dealModal.deal) {
+        // ── 編集 ──
+        if (isSupabaseConfigured()) {
+          await updateDeal(dealModal.deal.id, {
+            title: form.title.trim(),
+            amount,
+            stageId: form.stageId,
+            closeDate: form.closeDate || null,
+            description: form.description.trim() || null,
+          })
+        }
+        updateLocalDeal(dealModal.deal.id, {
+          title: form.title.trim(),
+          amount,
+          stage_id: form.stageId,
+          close_date: form.closeDate || undefined,
+          description: form.description.trim() || undefined,
+          updated_at: now,
+        })
+        toast.success(`「${form.title}」を更新しました`)
+      } else {
+        // ── 新規作成 ──
+        let dealId = `deal-local-${Date.now()}`
+        if (isSupabaseConfigured() && activeDivisionId) {
+          dealId = await createDeal({
+            divisionId: activeDivisionId,
+            contactId: form.contactId || undefined,
+            assignedUserId: currentUser?.id,
+            title: form.title.trim(),
+            amount,
+            stageId: form.stageId,
+            closeDate: form.closeDate || undefined,
+            description: form.description.trim() || undefined,
+          })
+        }
+        addDeal({
+          id: dealId,
+          contact_id: form.contactId || undefined,
+          division_id: activeDivisionId ?? '',
+          assigned_user_id: currentUser?.id,
+          title: form.title.trim(),
+          amount,
+          stage_id: form.stageId,
+          close_date: form.closeDate || undefined,
+          description: form.description.trim() || undefined,
+          created_at: now,
+          updated_at: now,
+          users: currentUser ?? undefined,
+        })
+        toast.success(`商談「${form.title}」を作成しました`)
       }
-      addDeal(newDeal)
+      closeDealModal()
+    } catch {
+      toast.error('保存に失敗しました。もう一度お試しください。')
+    } finally {
+      setLoading(false)
     }
-
-    setLoading(false)
-    closeDealModal()
-    toast.success(isEdit ? `「${form.title}」を更新しました` : `商談「${form.title}」を作成しました`)
   }
 
-  const handleClose = () => {
-    closeDealModal()
+  const handleLoseDeal = async () => {
+    if (!dealModal.deal) return
+    if (!window.confirm(`「${form.title}」を失注として記録しますか？\nこの操作は取り消せません。`)) return
+    setLoading(true)
+    try {
+      if (isSupabaseConfigured()) {
+        await updateDealStage(dealModal.deal.id, '失注')
+      }
+      updateLocalDeal(dealModal.deal.id, { stage_id: '失注', updated_at: new Date().toISOString() })
+      closeDealModal()
+      toast.success(`「${form.title}」を失注として記録しました`)
+    } catch {
+      toast.error('失敗しました。もう一度お試しください。')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const activeStages = MOCK_STAGES.filter((s) => !s.id.includes('失注'))
+  const amountInMan = form.amount ? Math.floor(parseInt(form.amount, 10) / 10000) : 0
 
   return (
     <Modal
       isOpen={dealModal.isOpen}
-      onClose={handleClose}
+      onClose={closeDealModal}
       title={isEdit ? '商談を編集' : '商談を登録'}
       size="md"
     >
@@ -153,7 +210,7 @@ export function DealModal() {
           disabled={isEdit}
         />
 
-        {/* 見込み額 + ステージ */}
+        {/* 見込み額 + クロージング予定日 */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -171,10 +228,8 @@ export function DealModal() {
                   focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
               />
             </div>
-            {amountDisplay && (
-              <p className="text-xs text-gray-400 mt-0.5">
-                {(parseInt(form.amount, 10) / 10000).toFixed(0)}万円
-              </p>
+            {amountDisplay && amountInMan > 0 && (
+              <p className="text-xs text-gray-400 mt-0.5">{amountInMan.toLocaleString()}万円</p>
             )}
           </div>
           <div>
@@ -182,6 +237,7 @@ export function DealModal() {
             <input
               type="date"
               value={form.closeDate}
+              min={new Date().toISOString().slice(0, 10)}
               onChange={(e) => setForm((f) => ({ ...f, closeDate: e.target.value }))}
               className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
                 focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
@@ -201,14 +257,13 @@ export function DealModal() {
                 className={cn(
                   'px-3 py-1.5 rounded-lg text-xs font-medium border-2 transition-all',
                   form.stageId === stage.id
-                    ? stage.id === '受注'
+                    ? stage.isWon
                       ? 'bg-green-500 text-white border-green-500'
                       : 'bg-orange-500 text-white border-orange-500'
                     : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300'
                 )}
               >
                 {stage.name}
-                {stage.id === '受注' && ' 🎉'}
               </button>
             ))}
           </div>
@@ -227,17 +282,15 @@ export function DealModal() {
           />
         </div>
 
-        {/* 失注ボタン（編集時のみ） */}
+        {/* 失注ボタン（編集中・受注/失注以外） */}
         {isEdit && dealModal.deal?.stage_id !== '受注' && dealModal.deal?.stage_id !== '失注' && (
-          <div className="flex items-center justify-between pt-1 border-t border-gray-100">
+          <div className="flex items-center justify-between pt-2 border-t border-gray-100">
             <span className="text-xs text-gray-400">この商談を失注として処理する場合</span>
             <button
               type="button"
-              onClick={() => {
-                closeDealModal()
-                toast.success('商談を失注として記録しました', { icon: '📋' })
-              }}
-              className="text-xs text-red-500 hover:text-red-700 font-medium px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors"
+              onClick={handleLoseDeal}
+              disabled={loading}
+              className="text-xs text-red-500 hover:text-red-700 font-medium px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
             >
               失注にする
             </button>

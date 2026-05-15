@@ -41,3 +41,17 @@ export async function updateDealStage(id: string, stageId: string): Promise<void
     .from('deals').update({ stage_id: stageId }).eq('id', id)
   if (error) throw error
 }
+
+export async function updateDeal(id: string, updates: {
+  title?: string; amount?: number; stageId?: string
+  closeDate?: string | null; description?: string | null
+}): Promise<void> {
+  const patch: Record<string, unknown> = {}
+  if (updates.title !== undefined) patch.title = updates.title
+  if (updates.amount !== undefined) patch.amount = updates.amount
+  if (updates.stageId !== undefined) patch.stage_id = updates.stageId
+  if (updates.closeDate !== undefined) patch.close_date = updates.closeDate
+  if (updates.description !== undefined) patch.description = updates.description
+  const { error } = await getSupabase().from('deals').update(patch).eq('id', id)
+  if (error) throw error
+}
