@@ -52,3 +52,45 @@ export async function fetchPipelineStages(divisionId: string) {
   if (error) throw error
   return data ?? []
 }
+
+export async function upsertPipelineStages(
+  divisionId: string,
+  stages: { name: string; sort_order: number; is_won: boolean; is_lost: boolean }[]
+): Promise<void> {
+  await getSupabase().from('pipeline_stages').delete().eq('division_id', divisionId)
+  if (stages.length === 0) return
+  const { error } = await getSupabase().from('pipeline_stages').insert(
+    stages.map((s) => ({ division_id: divisionId, name: s.name, sort_order: s.sort_order, is_won: s.is_won, is_lost: s.is_lost }))
+  )
+  if (error) throw error
+}
+
+export async function createDivisionCustomField(input: {
+  divisionId: string; name: string; label: string
+  fieldType: string; options?: string[]; sortOrder: number
+}): Promise<string> {
+  const { data, error } = await getSupabase()
+    .from('division_custom_fields')
+    .insert({
+      division_id: input.divisionId, name: input.name, label: input.label,
+      field_type: input.fieldType, options: input.options ?? null, sort_order: input.sortOrder,
+    })
+    .select('id').single()
+  if (error) throw error
+  return data.id as string
+}
+
+export async function updateDivisionCustomField(id: string, input: {
+  label: string; fieldType: string; options?: string[]; sortOrder: number
+}): Promise<void> {
+  const { error } = await getSupabase()
+    .from('division_custom_fields')
+    .update({ label: input.label, field_type: input.fieldType, options: input.options ?? null, sort_order: input.sortOrder })
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function deleteDivisionCustomField(id: string): Promise<void> {
+  const { error } = await getSupabase().from('division_custom_fields').delete().eq('id', id)
+  if (error) throw error
+}
