@@ -81,6 +81,23 @@ export async function updateContact(id: string, updates: {
   if (error) throw error
 }
 
+export async function fetchContactsCustomValues(contactIds: string[]): Promise<Record<string, Record<string, string>>> {
+  if (contactIds.length === 0) return {}
+  const { data, error } = await getSupabase()
+    .from('contact_custom_values')
+    .select('contact_id, field_id, value')
+    .in('contact_id', contactIds)
+  if (error) return {}
+  const result: Record<string, Record<string, string>> = {}
+  for (const row of (data ?? [])) {
+    const cid = row.contact_id as string
+    const fid = row.field_id as string
+    if (!result[cid]) result[cid] = {}
+    result[cid][fid] = (row.value as string) ?? ''
+  }
+  return result
+}
+
 export async function deleteContact(id: string): Promise<void> {
   const { error } = await getSupabase().from('contacts').delete().eq('id', id)
   if (error) throw error

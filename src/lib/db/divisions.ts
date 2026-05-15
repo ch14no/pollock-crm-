@@ -1,5 +1,24 @@
 import { getSupabase } from './client'
 import type { Division } from '@/types/database'
+import type { DivisionCustomField } from '@/store/appStore'
+
+export async function fetchDivisionCustomFields(divisionId: string): Promise<DivisionCustomField[]> {
+  const { data, error } = await getSupabase()
+    .from('division_custom_fields')
+    .select('*')
+    .eq('division_id', divisionId)
+    .order('sort_order', { ascending: true })
+  if (error) return []
+  return (data ?? []).map((r) => ({
+    id: r.id as string,
+    name: r.name as string,
+    label: r.label as string,
+    fieldType: r.field_type as DivisionCustomField['fieldType'],
+    options: Array.isArray(r.options) ? (r.options as string[]) : undefined,
+    required: (r.required as boolean) ?? false,
+    sortOrder: (r.sort_order as number) ?? 0,
+  }))
+}
 
 export async function fetchDivisions(): Promise<Division[]> {
   const { data, error } = await getSupabase()
