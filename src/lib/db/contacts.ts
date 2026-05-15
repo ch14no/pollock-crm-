@@ -81,6 +81,16 @@ export async function updateContact(id: string, updates: {
   if (error) throw error
 }
 
+export async function deleteContact(id: string): Promise<void> {
+  const { error } = await getSupabase().from('contacts').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function deleteContacts(ids: string[]): Promise<void> {
+  const { error } = await getSupabase().from('contacts').delete().in('id', ids)
+  if (error) throw error
+}
+
 // カスタムフィールド値
 export async function upsertContactCustomValue(contactId: string, fieldId: string, value: string): Promise<void> {
   const { error } = await getSupabase()

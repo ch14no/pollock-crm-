@@ -159,10 +159,6 @@ interface AppState {
   taskStatuses: Record<string, ActivityStatus>
   setTaskStatus: (id: string, status: ActivityStatus) => void
 
-  // デモ用アクティブユーザーID
-  activeDemoUserId: string | null
-  setDemoUserId: (id: string | null) => void
-
   // ─── 管理者データ ───────────────────────────────────────────────
   // 追加アカウント
   adminUsers: AdminUserRecord[]
@@ -314,9 +310,6 @@ export const useAppStore = create<AppState>()(
       setTaskStatus: (id, status) =>
         set((state) => ({ taskStatuses: { ...state.taskStatuses, [id]: status } })),
 
-      activeDemoUserId: null,
-      setDemoUserId: (id) => set({ activeDemoUserId: id }),
-
       // 管理者データ
       adminUsers: [],
       addAdminUser: (user) =>
@@ -435,7 +428,6 @@ export const useAppStore = create<AppState>()(
         localActivities: state.localActivities,
         localDeals: state.localDeals,
         taskStatuses: state.taskStatuses,
-        activeDemoUserId: state.activeDemoUserId,
         adminUsers: state.adminUsers,
         roleOverrides: state.roleOverrides,
         userDivisionMap: state.userDivisionMap,

@@ -2,16 +2,13 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Rocket, Eye, EyeOff, Shield } from 'lucide-react'
+import { Rocket, Eye, EyeOff } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/Button'
-import { useAppStore } from '@/store/appStore'
-import { MOCK_ADMIN_USER } from '@/lib/mock-data'
 import toast from 'react-hot-toast'
 
 export default function LoginPage() {
   const router = useRouter()
-  const setDemoUserId = useAppStore((s) => s.setDemoUserId)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
@@ -27,20 +24,6 @@ export default function LoginPage() {
       toast.error('メールアドレスまたはパスワードが正しくありません')
       return
     }
-    router.push('/dashboard')
-    router.refresh()
-  }
-
-  const handleDemoLogin = () => {
-    setDemoUserId('user-1')
-    document.cookie = 'pollock-demo-session=1; path=/; max-age=86400'
-    router.push('/dashboard')
-    router.refresh()
-  }
-
-  const handleAdminDemoLogin = () => {
-    setDemoUserId(MOCK_ADMIN_USER.id)
-    document.cookie = 'pollock-demo-session=1; path=/; max-age=86400'
     router.push('/dashboard')
     router.refresh()
   }
@@ -102,22 +85,6 @@ export default function LoginPage() {
               ログイン
             </Button>
           </form>
-
-          <div className="mt-4 pt-4 border-t border-gray-100 space-y-2">
-            <button
-              onClick={handleDemoLogin}
-              className="w-full text-sm text-orange-600 hover:text-orange-700 font-medium py-2 rounded-lg hover:bg-orange-50 transition-colors"
-            >
-              デモモードで体験する（営業）→
-            </button>
-            <button
-              onClick={handleAdminDemoLogin}
-              className="w-full flex items-center justify-center gap-1.5 text-sm text-purple-600 hover:text-purple-700 font-medium py-2 rounded-lg hover:bg-purple-50 transition-colors"
-            >
-              <Shield size={14} />
-              管理者アカウントでデモ →
-            </button>
-          </div>
         </div>
 
         <p className="text-center text-xs text-gray-400 mt-4">

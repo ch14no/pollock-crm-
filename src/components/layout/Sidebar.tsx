@@ -22,14 +22,14 @@ const NAV_ITEMS = [
   { href: '/tasks',       label: 'タスク管理',   icon: CheckSquare },
   { href: '/tossups',     label: 'トスアップ',   icon: ArrowLeftRight },
   { href: '/analysis',    label: '分析',         icon: BarChart2 },
-  { href: '/import',      label: 'CSVインポート', icon: Upload },
+  { href: '/import',      label: 'インポート・エクスポート', icon: Upload },
   { href: '/settings',    label: '設定',         icon: Settings },
 ]
 
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { activeDivision, divisions, setActiveDivision, openTossupModal, currentUser, setDemoUserId, localTossups, tossupStatuses } = useAppStore()
+  const { activeDivision, divisions, setActiveDivision, openTossupModal, currentUser, localTossups, tossupStatuses } = useAppStore()
 
   // 自分の事業部宛の未読トスアップ数
   const unreadTossupCount = useMemo(() => {
@@ -41,9 +41,6 @@ export function Sidebar() {
   }, [localTossups, tossupStatuses, activeDivision?.id])
 
   const handleLogout = async () => {
-    // デモセッションクッキーをクリア
-    document.cookie = 'pollock-demo-session=; path=/; max-age=0'
-    setDemoUserId(null)
     const supabase = createClient()
     await supabase.auth.signOut()
     toast.success('ログアウトしました')
