@@ -45,6 +45,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '必須項目が不足しています' }, { status: 400 })
   }
 
+  // サービスロールキーの診断
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!serviceKey || serviceKey.length < 50) {
+    return NextResponse.json({
+      error: 'サーバー設定エラー: SUPABASE_SERVICE_ROLE_KEY がVercelに設定されていません。Vercel → Settings → Environment Variables で追加してください。'
+    }, { status: 500 })
+  }
+
   const admin = createAdminClient()
   const { data: authData, error: authError } = await admin.auth.admin.createUser({
     email,
