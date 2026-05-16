@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Building2, Phone, Mail, Rocket,
@@ -11,8 +11,9 @@ import {
 import { MOCK_DEALS, DEFAULT_DIVISION_CUSTOM_FIELDS } from '@/lib/mock-data'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchContactById, updateContact, fetchContactCustomValues } from '@/lib/db/contacts'
-import { fetchActivitiesByTarget } from '@/lib/db/activities'
-import type { Contact, Activity } from '@/types/database'
+import { fetchActivitiesByTarget, updateActivityStatus } from '@/lib/db/activities'
+import { fetchDealsByContact } from '@/lib/db/deals'
+import type { Contact, Activity, Deal } from '@/types/database'
 import { getLocationConfig, sortTags } from '@/lib/config'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -68,8 +69,11 @@ export default function ContactDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const { openTossupModal, openActivityModal, openDealModal } = useAppStore()
-  const isOwnDivision = useAppStore(selectIsOwnDivision)
+  const isOwnDivision  = useAppStore(selectIsOwnDivision)
   const activeDivision = useAppStore((s) => s.activeDivision)
+  const divisionStages = useAppStore((s) => s.divisionStages)
+  const activityModal  = useAppStore((s) => s.activityModal)
+  const dealModal      = useAppStore((s) => s.dealModal)
 
   // ストアからローカル状態を取得
   const currentUser = useAppStore((s) => s.currentUser)
@@ -87,25 +91,47 @@ export default function ContactDetailPage() {
   const localContactEdits    = useAppStore((s) => s.localContactEdits)
   const setLocalContactEdit  = useAppStore((s) => s.setLocalContactEdit)
 
-  // Supabase から顧客・活動を読み込む
-  const [dbContact, setDbContact] = useState<Contact | null>(null)
+  // Supabase から顧客・活動・商談を読み込む
+  const [dbContact,    setDbContact]    = useState<Contact | null>(null)
   const [contactLoading, setContactLoading] = useState(true)
   const [dbActivities, setDbActivities] = useState<Activity[]>([])
+  const [dbDeals,      setDbDeals]      = useState<Deal[]>([])
+  const prevActivityModalOpen = useRef(false)
+  const prevDealModalOpen     = useRef(false)
 
-  useEffect(() => {
+  const loadContactData = async () => {
     if (!isSupabaseConfigured()) { setContactLoading(false); return }
-    Promise.all([
+    const [c, acts, customVals, dealsData] = await Promise.all([
       fetchContactById(id),
       fetchActivitiesByTarget('contact', id),
       fetchContactCustomValues(id),
-    ]).then(([c, acts, customVals]) => {
-      setDbContact(c)
-      setDbActivities(acts)
-      Object.entries(customVals).forEach(([fieldId, value]) => {
-        setContactCustomValue(id, fieldId, value)
-      })
-    }).finally(() => setContactLoading(false))
-  }, [id, setContactCustomValue])
+      fetchDealsByContact(id),
+    ])
+    setDbContact(c)
+    setDbActivities(acts)
+    setDbDeals(dealsData)
+    Object.entries(customVals).forEach(([fieldId, value]) => {
+      setContactCustomValue(id, fieldId, value)
+    })
+    setContactLoading(false)
+  }
+
+  useEffect(() => { loadContactData() }, [id]) // eslint-disable-line
+
+  // モーダルが閉じたら活動・商談を再取得
+  useEffect(() => {
+    if (prevActivityModalOpen.current && !activityModal.isOpen && isSupabaseConfigured()) {
+      fetchActivitiesByTarget('contact', id).then(setDbActivities)
+    }
+    prevActivityModalOpen.current = activityModal.isOpen
+  }, [activityModal.isOpen]) // eslint-disable-line
+
+  useEffect(() => {
+    if (prevDealModalOpen.current && !dealModal.isOpen && isSupabaseConfigured()) {
+      fetchDealsByContact(id).then(setDbDeals)
+    }
+    prevDealModalOpen.current = dealModal.isOpen
+  }, [dealModal.isOpen]) // eslint-disable-line
 
   const contact: Contact | null = dbContact
 
@@ -198,19 +224,34 @@ export default function ContactDetailPage() {
 
   // DB活動 + ローカル追加分をマージ
   const allActivities = [...dbActivities, ...localActivities]
-  const allDeals = [...MOCK_DEALS, ...localDeals]
+  const allDeals: Deal[] = isSupabaseConfigured()
+    ? [...dbDeals, ...localDeals.filter((d) => d.contact_id === id && !dbDeals.some((dd) => dd.id === d.id))]
+    : [...(MOCK_DEALS as unknown as Deal[]).filter((d) => d.contact_id === id), ...localDeals.filter((d) => d.contact_id === id)]
 
   const activities = allActivities
     .filter((a) => a.target_type === 'contact' && a.target_id === id)
     .sort((a, b) => new Date(b.action_date).getTime() - new Date(a.action_date).getTime())
 
   const tasks = activities.filter((a) => a.activity_type === 'task')
-  const deals = allDeals.filter((d) => d.contact_id === id)
-  const openDeals = deals.filter((d) => d.stage_id !== '受注' && d.stage_id !== '失注')
+
+  // ステージ定義からwon/lost判定（UUIDステージID対応）
+  const getDealStageName = (deal: Deal): string => {
+    const stages = divisionStages[deal.division_id] ?? null
+    return stages?.find((s) => s.id === deal.stage_id)?.name ?? deal.stage_id
+  }
+  const isDealWon  = (deal: Deal) => (divisionStages[deal.division_id] ?? null)?.some((s) => s.id === deal.stage_id && s.isWon)  ?? deal.stage_id === '受注'
+  const isDealLost = (deal: Deal) => (divisionStages[deal.division_id] ?? null)?.some((s) => s.id === deal.stage_id && s.isLost) ?? deal.stage_id === '失注'
+
+  const deals    = allDeals
+  const openDeals = deals.filter((d) => !isDealWon(d) && !isDealLost(d))
 
   const toggleTask = (actId: string) => {
     const current = taskStatuses[actId] ?? tasks.find((t) => t.id === actId)?.status ?? 'todo'
-    setTaskStatus(actId, current === 'done' ? 'todo' : 'done')
+    const newStatus = current === 'done' ? 'todo' : 'done'
+    setTaskStatus(actId, newStatus)
+    if (isSupabaseConfigured() && !actId.startsWith('act-local-')) {
+      updateActivityStatus(actId, newStatus).catch(() => {})
+    }
   }
 
   const toggleExpand = (actId: string) => {
@@ -746,12 +787,12 @@ export default function ContactDetailPage() {
                   ) : (
                     <div className="space-y-2">
                       {deals.map((deal) => {
-                        const isWon = deal.stage_id === '受注'
-                        const isLost = deal.stage_id === '失注'
+                        const won  = isDealWon(deal)
+                        const lost = isDealLost(deal)
                         return (
                           <div
                             key={deal.id}
-                            onClick={() => router.push('/deals')}
+                            onClick={() => openDealModal({ deal })}
                             className="p-3 bg-gray-50 rounded-xl cursor-pointer hover:bg-orange-50 transition-colors"
                           >
                             <div className="flex items-start justify-between gap-2">
@@ -759,11 +800,11 @@ export default function ContactDetailPage() {
                               <div className="flex items-center gap-1.5 flex-shrink-0">
                                 <span className={cn(
                                   'text-xs px-2 py-0.5 rounded-full font-medium',
-                                  isWon ? 'bg-green-100 text-green-700' :
-                                  isLost ? 'bg-gray-100 text-gray-500' :
+                                  won  ? 'bg-green-100 text-green-700' :
+                                  lost ? 'bg-gray-100 text-gray-500' :
                                   'bg-orange-100 text-orange-700'
                                 )}>
-                                  {deal.stage_id}
+                                  {getDealStageName(deal)}
                                 </span>
                                 <ExternalLink size={12} className="text-gray-400" />
                               </div>

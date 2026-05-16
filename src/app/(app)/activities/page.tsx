@@ -12,10 +12,11 @@ import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { formatRelativeTime, formatDate, cn } from '@/lib/utils'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchActivitiesByUser, fetchActivitiesByContactIds, deleteActivity, updateActivityFields } from '@/lib/db/activities'
+import { fetchActivitiesByUser, fetchActivitiesByContactIds, deleteActivity, updateActivityFields, updateActivityStatus } from '@/lib/db/activities'
 import { fetchContactsByDivision } from '@/lib/db/contacts'
+import { fetchDealsByDivision } from '@/lib/db/deals'
 import { fetchDivisionUsers } from '@/lib/db/users'
-import type { ActivityType, ActivityStatus, Activity } from '@/types/database'
+import type { ActivityType, ActivityStatus, Activity, Deal } from '@/types/database'
 import type { Contact, User } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -64,22 +65,28 @@ export default function ActivitiesPage() {
   // Supabase データ
   const [dbActivities, setDbActivities] = useState<Activity[]>([])
   const [contactsMap, setContactsMap]   = useState<Record<string, Contact>>({})
-  const [divMembers, setDivMembers]     = useState<User[]>([])
-  const [loading, setLoading]           = useState(false)
+  const [dealsMap,    setDealsMap]      = useState<Record<string, Deal>>({})
+  const [divMembers,  setDivMembers]    = useState<User[]>([])
+  const [loading,     setLoading]       = useState(false)
   const prevModalOpen = useRef(false)
 
   const loadData = async () => {
     if (!activeDivisionId || !isSupabaseConfigured() || !currentUser) return
     setLoading(true)
     try {
-      const [contacts, members] = await Promise.all([
+      const [contacts, members, deals] = await Promise.all([
         fetchContactsByDivision(activeDivisionId),
         fetchDivisionUsers(activeDivisionId),
+        fetchDealsByDivision(activeDivisionId),
       ])
       const cMap: Record<string, Contact> = {}
       contacts.forEach((c) => { cMap[c.id] = c })
       setContactsMap(cMap)
       setDivMembers(members)
+
+      const dMap: Record<string, Deal> = {}
+      deals.forEach((d) => { dMap[d.id] = d })
+      setDealsMap(dMap)
 
       const contactIds = contacts.map((c) => c.id)
       if (assigneeFilter === 'mine') {
@@ -119,7 +126,7 @@ export default function ActivitiesPage() {
     return [...onlyLocal, ...dbActivities]
   }, [dbActivities, localActivities])
 
-  // 対象名を解決
+  // 対象名を解決（deal → contact を辿りナビゲーション可能に）
   function resolveTarget(a: Activity): { name: string; contactId?: string } {
     if (a.target_type === 'contact') {
       const c = contactsMap[a.target_id]
@@ -127,7 +134,17 @@ export default function ActivitiesPage() {
         ? { name: `${c.name}${c.companies?.name ? `（${c.companies.name}）` : ''}`, contactId: c.id }
         : { name: '不明' }
     }
-    // deal の場合は contact_id を辿る（deal情報は持っていないのでタイトルのみ）
+    // deal 種別: deal の contact_id → contact 名を取得してナビも可能に
+    const deal = dealsMap[a.target_id]
+    if (deal) {
+      const contactId = deal.contact_id
+      const c = contactId ? contactsMap[contactId] : undefined
+      const contactName = c ? `${c.name}${c.companies?.name ? `（${c.companies.name}）` : ''}` : ''
+      return {
+        name: `${deal.title}${contactName ? ` / ${contactName}` : ''}`,
+        contactId,
+      }
+    }
     return { name: '商談' }
   }
 
@@ -159,6 +176,9 @@ export default function ActivitiesPage() {
   const toggleTask = (id: string, current: ActivityStatus) => {
     const newStatus = current === 'done' ? 'todo' : 'done'
     setTaskStatus(id, newStatus)
+    if (isSupabaseConfigured() && !id.startsWith('act-local-')) {
+      updateActivityStatus(id, newStatus).catch(() => {})
+    }
     if (newStatus === 'done') {
       setJustCompletedTaskId(id)
       setTimeout(() => setJustCompletedTaskId(null), 8000)
