@@ -1,18 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server'
 
+// ユーザー自身のJWTでsuper_admin確認（service_role key不要）
 async function verifySuperAdmin(req: NextRequest): Promise<boolean> {
   try {
     const authHeader = req.headers.get('authorization')
     if (!authHeader?.startsWith('Bearer ')) return false
     const token = authHeader.slice(7)
 
-    const admin = createAdminClient()
-    const { data: { user }, error } = await admin.auth.getUser(token)
-    if (error || !user) return false
+    const supabase = createSupabaseClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${token}` } } }
+    )
 
-    const { data } = await admin.from('users').select('role').eq('id', user.id).single()
-    return data?.role === 'super_admin'
+    // トークンを検証してユーザーを取得
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+    if (authError || !user) return false
+
+    // usersテーブルからroleを確認（RLS: 認証済みユーザーはSELECT可）
+    const { data, error: dbError } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+    if (dbError || !data) return false
+
+    return data.role === 'super_admin'
   } catch {
     return false
   }
