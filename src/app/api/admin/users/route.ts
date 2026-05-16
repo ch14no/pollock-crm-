@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient, createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
 
-async function verifySuperAdmin(): Promise<boolean> {
+async function verifySuperAdmin(req: NextRequest): Promise<boolean> {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return false
+    const authHeader = req.headers.get('authorization')
+    if (!authHeader?.startsWith('Bearer ')) return false
+    const token = authHeader.slice(7)
+
     const admin = createAdminClient()
+    const { data: { user }, error } = await admin.auth.getUser(token)
+    if (error || !user) return false
+
     const { data } = await admin.from('users').select('role').eq('id', user.id).single()
     return data?.role === 'super_admin'
   } catch {
@@ -16,7 +20,7 @@ async function verifySuperAdmin(): Promise<boolean> {
 
 // POST: ユーザー作成
 export async function POST(req: NextRequest) {
-  if (!await verifySuperAdmin()) {
+  if (!await verifySuperAdmin(req)) {
     return NextResponse.json({ error: '権限がありません' }, { status: 403 })
   }
   const { name, email, password, role } = await req.json() as {
@@ -40,7 +44,6 @@ export async function POST(req: NextRequest) {
   const userId = authData.user.id
   const { error: dbError } = await admin.from('users').insert({ id: userId, name, email, role })
   if (dbError) {
-    // ロールバック: auth ユーザーを削除
     await admin.auth.admin.deleteUser(userId)
     return NextResponse.json({ error: dbError.message }, { status: 500 })
   }
@@ -50,7 +53,7 @@ export async function POST(req: NextRequest) {
 
 // PUT: ユーザー更新（名前・ロール・パスワード）
 export async function PUT(req: NextRequest) {
-  if (!await verifySuperAdmin()) {
+  if (!await verifySuperAdmin(req)) {
     return NextResponse.json({ error: '権限がありません' }, { status: 403 })
   }
   const { id, name, role, password } = await req.json() as {
@@ -60,16 +63,14 @@ export async function PUT(req: NextRequest) {
 
   const admin = createAdminClient()
 
-  // Auth 側の更新（パスワード）
   if (password) {
     const { error } = await admin.auth.admin.updateUserById(id, { password })
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
   }
 
-  // users テーブルの更新（名前・ロール）
   const updates: Record<string, string> = {}
-  if (name)  updates.name = name
-  if (role)  updates.role = role
+  if (name) updates.name = name
+  if (role) updates.role = role
   if (Object.keys(updates).length > 0) {
     const { error } = await admin.from('users').update(updates).eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -80,7 +81,7 @@ export async function PUT(req: NextRequest) {
 
 // DELETE: ユーザー削除
 export async function DELETE(req: NextRequest) {
-  if (!await verifySuperAdmin()) {
+  if (!await verifySuperAdmin(req)) {
     return NextResponse.json({ error: '権限がありません' }, { status: 403 })
   }
   const { searchParams } = new URL(req.url)
