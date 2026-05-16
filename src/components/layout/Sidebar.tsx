@@ -46,6 +46,7 @@ export function Sidebar() {
 
   const [dbUnreadCount, setDbUnreadCount] = useState(0)
   const [appsOpen, setAppsOpen] = useState(false)
+  const [logoError, setLogoError] = useState(false)
   const appsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -83,12 +84,29 @@ export function Sidebar() {
   return (
     <aside className="hidden md:flex flex-col w-64 h-screen bg-white border-r border-gray-200 fixed left-0 top-0 z-30">
       {/* Logo */}
-      <div className="px-5 py-5 border-b border-gray-100">
+      <div className="px-4 py-3 border-b border-gray-100">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
-            <Rocket size={16} className="text-white" />
-          </div>
-          <span className="font-black text-gray-800 text-lg tracking-tight">Pollock CRM</span>
+          {/* Pollockロゴ（画像未配置時はロケットにフォールバック） */}
+          {logoError ? (
+            <div className="w-9 h-9 bg-orange-500 rounded-lg flex items-center justify-center flex-shrink-0">
+              <Rocket size={18} className="text-white" />
+            </div>
+          ) : (
+            <img
+              src="/pollock-logo.png"
+              alt="Pollock"
+              className="w-9 h-9 object-contain flex-shrink-0"
+              onError={() => setLogoError(true)}
+            />
+          )}
+          <span className="font-black text-gray-800 text-lg tracking-tight flex-1">Pollock CRM</span>
+          {/* キャラクターマスコット */}
+          <img
+            src="/characters/char-phone.png"
+            alt=""
+            className="w-12 h-12 object-contain drop-shadow-sm flex-shrink-0"
+            onError={(e) => { e.currentTarget.style.display = 'none' }}
+          />
         </div>
       </div>
 
@@ -149,16 +167,6 @@ export function Sidebar() {
           })}
         </ul>
       </nav>
-
-      {/* Character mascot */}
-      <div className="flex justify-center px-4 pb-1">
-        <img
-          src="/characters/char-phone.png"
-          alt=""
-          className="w-20 h-20 object-contain drop-shadow-sm opacity-90"
-          onError={(e) => { e.currentTarget.style.display = 'none' }}
-        />
-      </div>
 
       {/* Tossup CTA */}
       <div className="px-4 pb-3">
