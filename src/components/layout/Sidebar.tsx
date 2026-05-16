@@ -164,7 +164,7 @@ export function Sidebar() {
             text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors"
         >
           <ExternalLink size={15} className="flex-shrink-0 text-gray-400" />
-          <span>会社管理アプリ</span>
+          <span>タレントマネジメントapp</span>
         </a>
       </div>
 
