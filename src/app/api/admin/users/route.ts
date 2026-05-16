@@ -65,7 +65,10 @@ export async function POST(req: NextRequest) {
   }
 
   const userId = authData.user.id
-  const { error: dbError } = await admin.from('users').insert({ id: userId, name, email, role })
+  // トリガーが自動挿入する場合があるため upsert で対応
+  const { error: dbError } = await admin
+    .from('users')
+    .upsert({ id: userId, name, email, role }, { onConflict: 'id' })
   if (dbError) {
     await admin.auth.admin.deleteUser(userId)
     return NextResponse.json({ error: dbError.message }, { status: 500 })
