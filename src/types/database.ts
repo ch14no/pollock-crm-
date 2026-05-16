@@ -114,5 +114,5 @@ export interface Tossup {
   from_division?: Division
   to_division?: Division
   companies?: Company
-  contacts?: Contact
+  contacts?: { id: string; name: string; position?: string; company_id?: string; companies?: { id: string; name: string } | null }
 }

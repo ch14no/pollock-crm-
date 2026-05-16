@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
@@ -11,7 +11,8 @@ import {
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { createClient } from '@/lib/supabase/client'
-import { MOCK_TOSSUPS } from '@/lib/mock-data'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { fetchUnreadTossupCount } from '@/lib/db/tossups'
 import toast from 'react-hot-toast'
 
 const NAV_ITEMS = [
@@ -31,14 +32,20 @@ export function Sidebar() {
   const router = useRouter()
   const { activeDivision, divisions, setActiveDivision, openTossupModal, currentUser, localTossups, tossupStatuses } = useAppStore()
 
-  // 自分の事業部宛の未読トスアップ数
-  const unreadTossupCount = useMemo(() => {
-    const allTossups = [...localTossups, ...MOCK_TOSSUPS]
-    return allTossups.filter(
-      (t) => t.to_division_id === activeDivision?.id &&
-             (tossupStatuses[t.id] ?? t.status) === 'unread'
-    ).length
-  }, [localTossups, tossupStatuses, activeDivision?.id])
+  // Supabase から未読トスアップ数を取得
+  const [dbUnreadCount, setDbUnreadCount] = useState(0)
+  useEffect(() => {
+    if (!activeDivision?.id || !isSupabaseConfigured()) return
+    fetchUnreadTossupCount(activeDivision.id).then(setDbUnreadCount)
+  }, [activeDivision?.id])
+
+  // ローカル楽観的更新分（未送信 or 今セッション）も加算
+  const localUnread = useMemo(() => localTossups.filter(
+    (t) => t.to_division_id === activeDivision?.id &&
+           (tossupStatuses[t.id] ?? t.status) === 'unread'
+  ).length, [localTossups, tossupStatuses, activeDivision?.id])
+
+  const unreadTossupCount = isSupabaseConfigured() ? dbUnreadCount : localUnread
 
   const handleLogout = async () => {
     const supabase = createClient()

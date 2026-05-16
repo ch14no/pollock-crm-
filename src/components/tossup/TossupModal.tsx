@@ -8,6 +8,7 @@ import { ContactPicker } from '@/components/ui/ContactPicker'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { createTossup } from '@/lib/db/tossups'
+import { fetchContactById } from '@/lib/db/contacts'
 import toast from 'react-hot-toast'
 import type { Tossup } from '@/types/database'
 
@@ -19,6 +20,7 @@ export function TossupModal() {
 
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ toDivisionId: '', contactId: '', message: '' })
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | undefined>()
 
   useEffect(() => {
     if (tossupModal.isOpen) {
@@ -27,8 +29,14 @@ export function TossupModal() {
         contactId: tossupModal.prefillContactId ?? '',
         message: '',
       })
+      setSelectedCompanyId(undefined)
     }
   }, [tossupModal.isOpen, tossupModal.prefillContactId])
+
+  useEffect(() => {
+    if (!form.contactId || !isSupabaseConfigured()) { setSelectedCompanyId(undefined); return }
+    fetchContactById(form.contactId).then((c) => setSelectedCompanyId(c?.company_id ?? undefined))
+  }, [form.contactId])
 
   // 自事業部以外の事業部一覧
   const targetDivisions = divisions.filter((d) => d.id !== activeDivisionId)
@@ -47,6 +55,7 @@ export function TossupModal() {
           fromDivisionId: activeDivision.id,
           toDivisionId:   form.toDivisionId,
           contactId:      form.contactId || undefined,
+          companyId:      selectedCompanyId,
           message:        form.message.trim(),
         })
       }
@@ -121,13 +130,17 @@ export function TossupModal() {
             value={form.message}
             onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
             rows={4}
+            maxLength={500}
             placeholder="相手のニーズや背景、対応の注意点などを記載してください...&#10;（例：IT人材の採用ニーズ、5月末まで、5名規模）"
             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
               focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50 resize-none"
           />
-          <p className="text-xs text-gray-400 mt-1">
-            具体的に書くほど受信側が動きやすくなります
-          </p>
+          <div className="flex items-center justify-between mt-1">
+            <p className="text-xs text-gray-400">具体的に書くほど受信側が動きやすくなります</p>
+            <span className={form.message.length >= 450 ? 'text-xs text-orange-500 font-medium' : 'text-xs text-gray-400'}>
+              {form.message.length}/500
+            </span>
+          </div>
         </div>
 
         <Button type="submit" variant="primary" size="lg" loading={loading} icon={<Rocket size={16} />} className="w-full">

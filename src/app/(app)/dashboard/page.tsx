@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Briefcase, Users, ArrowLeftRight, TrendingUp,
@@ -12,7 +12,10 @@ import { DailyMission } from '@/components/dashboard/DailyMission'
 import { RealtimeTimeline } from '@/components/dashboard/RealtimeTimeline'
 import { ManagerView } from '@/components/dashboard/ManagerView'
 import { useAppStore } from '@/store/appStore'
-import { MOCK_CONTACTS, MOCK_DEALS, MOCK_ACTIVITIES, MOCK_TOSSUPS, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
+import { MOCK_CONTACTS, MOCK_DEALS, MOCK_ACTIVITIES, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { fetchTossupsByDivision } from '@/lib/db/tossups'
+import type { Tossup } from '@/types/database'
 import { formatCurrency, formatDate, getStaleDays, cn } from '@/lib/utils'
 
 type DashView = 'personal' | 'team' | 'manager'
@@ -115,9 +118,16 @@ export default function DashboardPage() {
   const currentUser      = useAppStore((s) => s.currentUser)
   const localDeals       = useAppStore((s) => s.localDeals)
   const localActivities  = useAppStore((s) => s.localActivities)
+  const localTossups     = useAppStore((s) => s.localTossups)
   const teamGoals        = useAppStore((s) => s.teamGoals)
   const taskStatuses     = useAppStore((s) => s.taskStatuses)
   const divisionStages   = useAppStore((s) => s.divisionStages)
+
+  const [dbDivTossups, setDbDivTossups] = useState<Tossup[]>([])
+  useEffect(() => {
+    if (!activeDivisionId || !isSupabaseConfigured()) return
+    fetchTossupsByDivision(activeDivisionId).then(setDbDivTossups)
+  }, [activeDivisionId])
 
   // 事業部別ステージから受注/失注IDを動的解決（フォールバック: '受注'/'失注'）
   const divStages = useMemo(() => {
@@ -148,10 +158,10 @@ export default function DashboardPage() {
   // ─── チームデータ ───────────────────────────────────────────────
   const divDeals    = useMemo(() => allDeals.filter((d) => d.division_id === activeDivisionId), [allDeals, activeDivisionId])
   const divContacts = useMemo(() => MOCK_CONTACTS.filter((c) => c.division_id === activeDivisionId), [activeDivisionId])
-  const divTossups  = useMemo(
-    () => MOCK_TOSSUPS.filter((t) => t.from_division_id === activeDivisionId || t.to_division_id === activeDivisionId),
-    [activeDivisionId]
-  )
+  const divTossups  = useMemo((): Tossup[] => {
+    if (isSupabaseConfigured()) return dbDivTossups
+    return localTossups.filter((t) => t.from_division_id === activeDivisionId || t.to_division_id === activeDivisionId)
+  }, [dbDivTossups, localTossups, activeDivisionId])
   const divContactIds = useMemo(() => new Set(divContacts.map((c) => c.id)), [divContacts])
   const divDealIds    = useMemo(() => new Set(divDeals.map((d) => d.id)), [divDeals])
   const divActivities = useMemo(

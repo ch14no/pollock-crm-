@@ -93,15 +93,18 @@ export default function TossupsPage() {
     sent:     divTossups.filter((t) => t.from_division_id === activeDivision?.id).length,
   }), [divTossups, activeDivision?.id])
 
-  // ステータス変更（DB + ローカル）
+  // ステータス変更（DB 確定後に再取得）
   const handleStatusChange = async (id: string, status: TossupStatus) => {
     setTossupStatus(id, status)  // 楽観的更新
     if (isSupabaseConfigured() && !id.startsWith('toss-local-')) {
-      updateTossupStatus(id, status).catch(() => {
+      try {
+        await updateTossupStatus(id, status)
+        await loadTossups()
+      } catch {
         toast.error('ステータスの更新に失敗しました')
-      })
-      // DB再取得してステータスを確定反映
-      loadTossups()
+        // ロールバック
+        setTossupStatus(id, status === 'closed' ? 'in_progress' : 'unread')
+      }
     }
   }
 
@@ -220,8 +223,7 @@ export default function TossupsPage() {
                     className="flex items-center gap-1.5 text-xs font-bold text-orange-600 hover:text-orange-700 hover:underline mb-2 transition-colors"
                   >
                     <ExternalLink size={11} />
-                    {tossup.companies?.name}
-                    {` / ${tossup.contacts.name}`}
+                    {[tossup.contacts.companies?.name ?? tossup.companies?.name, tossup.contacts.name].filter(Boolean).join(' / ')}
                   </button>
                 ) : tossup.companies ? (
                   <p className="text-xs font-bold text-gray-500 mb-2">{tossup.companies.name}</p>
