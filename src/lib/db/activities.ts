@@ -54,6 +54,13 @@ export async function upsertTaskMeta(activityId: string, urgency: boolean, impor
   if (error) throw error
 }
 
+export async function fetchActivitiesByDivision(divisionId: string): Promise<Activity[]> {
+  const { data: contacts } = await getSupabase()
+    .from('contacts').select('id').eq('division_id', divisionId)
+  const contactIds = (contacts ?? []).map((c: { id: string }) => c.id)
+  return fetchActivitiesByContactIds(contactIds)
+}
+
 export async function fetchActivitiesByContactIds(contactIds: string[]): Promise<Activity[]> {
   if (contactIds.length === 0) return []
   const { data, error } = await getSupabase()

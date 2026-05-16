@@ -7,14 +7,14 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import {
   Save, User, Building2, Bell, Shield, Users,
-  Settings2, Tag, Trash2, Plus, ExternalLink,
-  Check, X, ArrowUp, ArrowDown, Edit2, Info,
+  Settings2, Tag, Trash2, Plus,
+  Check, X, ArrowUp, ArrowDown, Edit2, Eye, EyeOff, KeyRound, Info,
 } from 'lucide-react'
 import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import type { Role } from '@/types/database'
 import { cn, getInitials } from '@/lib/utils'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { updateUserName, fetchAllUsers } from '@/lib/db/users'
+import { updateUserName, fetchAllUsers, createUserAdmin, updateUserAdmin, deleteUserAdmin } from '@/lib/db/users'
 import {
   fetchPipelineStages, upsertPipelineStages,
   fetchDivisionCustomFields,
@@ -204,16 +204,103 @@ export default function SettingsPage() {
 }
 
 // ─── アカウント管理 ───────────────────────────────────────────────
+const EMPTY_CREATE = { name: '', email: '', password: '', role: 'user' as Role }
+const EMPTY_EDIT   = { name: '', role: 'user' as Role }
+const EMPTY_PW     = ''
+
+function PwInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const [show, setShow] = useState(false)
+  return (
+    <div className="relative">
+      <input
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder ?? 'パスワード'}
+        autoComplete="new-password"
+        className="w-full px-2.5 py-1.5 pr-8 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
+      />
+      <button type="button" onClick={() => setShow((v) => !v)}
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+        {show ? <EyeOff size={13} /> : <Eye size={13} />}
+      </button>
+    </div>
+  )
+}
+
 function AccountsPanel() {
   const { currentUser } = useAppStore()
-  const [users, setUsers] = useState<UserType[]>([])
-  const [loading, setLoading] = useState(false)
+  const [users,       setUsers]       = useState<UserType[]>([])
+  const [loading,     setLoading]     = useState(false)
+  const [showCreate,  setShowCreate]  = useState(false)
+  const [createForm,  setCreateForm]  = useState(EMPTY_CREATE)
+  const [saving,      setSaving]      = useState(false)
+  const [editingId,   setEditingId]   = useState<string | null>(null)
+  const [editForm,    setEditForm]    = useState(EMPTY_EDIT)
+  const [pwResetId,   setPwResetId]   = useState<string | null>(null)
+  const [newPw,       setNewPw]       = useState(EMPTY_PW)
 
-  useEffect(() => {
+  const reload = () => {
     if (!isSupabaseConfigured()) return
     setLoading(true)
     fetchAllUsers().then(setUsers).finally(() => setLoading(false))
-  }, [])
+  }
+
+  useEffect(() => { reload() }, []) // eslint-disable-line
+
+  const handleCreate = async () => {
+    if (!createForm.name.trim()) { toast.error('氏名を入力してください'); return }
+    if (!createForm.email.trim()) { toast.error('メールアドレスを入力してください'); return }
+    if (createForm.password.length < 6) { toast.error('パスワードは6文字以上で入力してください'); return }
+    setSaving(true)
+    try {
+      await createUserAdmin(createForm)
+      toast.success(`${createForm.name} を追加しました`)
+      setCreateForm(EMPTY_CREATE)
+      setShowCreate(false)
+      reload()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally { setSaving(false) }
+  }
+
+  const handleEdit = async (id: string) => {
+    if (!editForm.name.trim()) { toast.error('氏名を入力してください'); return }
+    setSaving(true)
+    try {
+      await updateUserAdmin(id, { name: editForm.name.trim(), role: editForm.role })
+      toast.success('更新しました')
+      setEditingId(null)
+      reload()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally { setSaving(false) }
+  }
+
+  const handlePwReset = async (id: string) => {
+    if (newPw.length < 6) { toast.error('パスワードは6文字以上で入力してください'); return }
+    setSaving(true)
+    try {
+      await updateUserAdmin(id, { password: newPw })
+      toast.success('パスワードを変更しました')
+      setPwResetId(null)
+      setNewPw(EMPTY_PW)
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally { setSaving(false) }
+  }
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!window.confirm(`「${name}」を削除しますか？\nこの操作は元に戻せません。`)) return
+    setSaving(true)
+    try {
+      await deleteUserAdmin(id)
+      toast.success(`${name} を削除しました`)
+      reload()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally { setSaving(false) }
+  }
 
   return (
     <Card>
@@ -223,19 +310,56 @@ function AccountsPanel() {
             <Users size={18} />アカウント管理
           </div>
           {isSupabaseConfigured() && (
-            <a
-              href="https://supabase.com/dashboard"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-orange-600 hover:text-orange-700 font-medium px-3 py-1.5 border border-orange-200 rounded-lg hover:bg-orange-50 transition-colors"
-            >
-              <ExternalLink size={12} />
-              Supabaseでユーザーを招待
-            </a>
+            <Button size="sm" icon={<Plus size={14} />} onClick={() => { setShowCreate((v) => !v); setEditingId(null); setPwResetId(null) }}>
+              ユーザーを追加
+            </Button>
           )}
         </div>
       </CardHeader>
       <CardBody>
+        {/* ─── 新規作成フォーム ─── */}
+        {showCreate && (
+          <div className="mb-4 p-4 bg-orange-50 rounded-xl border border-orange-100 space-y-3">
+            <p className="text-xs font-bold text-gray-600">新しいユーザーを追加</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">氏名 <span className="text-red-500">*</span></label>
+                <input type="text" value={createForm.name} onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
+                  placeholder="田中 太郎"
+                  className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">メールアドレス <span className="text-red-500">*</span></label>
+                <input type="email" value={createForm.email} onChange={(e) => setCreateForm((f) => ({ ...f, email: e.target.value }))}
+                  placeholder="taro@example.com"
+                  className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">パスワード <span className="text-red-500">*</span></label>
+                <PwInput value={createForm.password} onChange={(v) => setCreateForm((f) => ({ ...f, password: v }))} placeholder="6文字以上" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">権限</label>
+                <select value={createForm.role} onChange={(e) => setCreateForm((f) => ({ ...f, role: e.target.value as Role }))}
+                  className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white">
+                  <option value="user">ユーザー</option>
+                  <option value="manager">マネージャー</option>
+                  <option value="super_admin">システム管理者</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2 items-center">
+              <div className="flex items-start gap-1.5 flex-1 text-xs text-gray-400">
+                <Info size={12} className="flex-shrink-0 mt-0.5" />
+                <span>パスワードは本人に共有してください。後からリセット可能です。</span>
+              </div>
+              <Button size="sm" variant="secondary" onClick={() => setShowCreate(false)}>キャンセル</Button>
+              <Button size="sm" loading={saving} onClick={handleCreate} icon={<Check size={13} />}>追加</Button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── ユーザーリスト ─── */}
         {loading ? (
           <div className="flex items-center justify-center py-8">
             <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
@@ -243,33 +367,104 @@ function AccountsPanel() {
         ) : users.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-4">ユーザーが見つかりません</p>
         ) : (
-          <>
-            <div className="space-y-1">
-              {users.map((user) => (
-                <div key={user.id} className="flex items-center gap-3 p-3 border border-gray-100 rounded-xl">
-                  <div className="w-8 h-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center font-bold text-sm flex-shrink-0">
-                    {getInitials(user.name)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-700">
-                      {user.name}
-                      {user.id === currentUser?.id && (
-                        <span className="ml-1.5 text-xs text-orange-500 font-normal">（あなた）</span>
+          <div className="space-y-2">
+            {users.map((user) => {
+              const isMe = user.id === currentUser?.id
+              return (
+                <div key={user.id} className="border border-gray-100 rounded-xl overflow-hidden">
+                  {/* 通常表示 */}
+                  {editingId !== user.id && (
+                    <div className="flex items-center gap-3 p-3">
+                      <div className="w-8 h-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center font-bold text-sm flex-shrink-0">
+                        {getInitials(user.name)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-700">
+                          {user.name}
+                          {isMe && <span className="ml-1.5 text-xs text-orange-500 font-normal">（あなた）</span>}
+                        </p>
+                        <p className="text-xs text-gray-400 truncate">{user.email}</p>
+                      </div>
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0', ROLE_COLORS[user.role as Role])}>
+                        {ROLE_LABELS[user.role as Role] ?? user.role}
+                      </span>
+                      {!isMe && isSupabaseConfigured() && (
+                        <div className="flex gap-1 flex-shrink-0">
+                          <button
+                            onClick={() => { setPwResetId(pwResetId === user.id ? null : user.id); setNewPw(''); setEditingId(null) }}
+                            className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg transition-colors" title="パスワードをリセット">
+                            <KeyRound size={13} />
+                          </button>
+                          <button
+                            onClick={() => { setEditingId(user.id); setEditForm({ name: user.name, role: user.role as Role }); setPwResetId(null) }}
+                            className="p-1.5 text-gray-300 hover:text-orange-500 rounded-lg transition-colors" title="編集">
+                            <Edit2 size={13} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(user.id, user.name)}
+                            className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition-colors" title="削除">
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       )}
-                    </p>
-                    <p className="text-xs text-gray-400 truncate">{user.email}</p>
-                  </div>
-                  <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_COLORS[user.role as Role])}>
-                    {ROLE_LABELS[user.role as Role] ?? user.role}
-                  </span>
+                    </div>
+                  )}
+
+                  {/* パスワードリセットパネル */}
+                  {pwResetId === user.id && (
+                    <div className="px-3 pb-3 pt-0 bg-blue-50 border-t border-blue-100 space-y-2">
+                      <p className="text-xs font-medium text-blue-700 pt-2">パスワードをリセット — {user.name}</p>
+                      <div className="flex gap-2 items-center">
+                        <div className="flex-1">
+                          <PwInput value={newPw} onChange={setNewPw} placeholder="新しいパスワード（6文字以上）" />
+                        </div>
+                        <button onClick={() => { setPwResetId(null); setNewPw('') }}
+                          className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-white">
+                          <X size={13} />
+                        </button>
+                        <button onClick={() => handlePwReset(user.id)} disabled={saving}
+                          className="flex items-center gap-1 text-xs text-white bg-blue-500 hover:bg-blue-600 px-3 py-1.5 rounded-lg font-medium disabled:opacity-50">
+                          <Check size={12} />変更
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* インライン編集 */}
+                  {editingId === user.id && (
+                    <div className="p-3 bg-orange-50 border-t border-orange-100 space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-0.5">氏名</label>
+                          <input type="text" value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                            className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-0.5">権限</label>
+                          <select value={editForm.role} onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value as Role }))}
+                            className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white">
+                            <option value="user">ユーザー</option>
+                            <option value="manager">マネージャー</option>
+                            <option value="super_admin">システム管理者</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 justify-end">
+                        <button onClick={() => setEditingId(null)}
+                          className="flex items-center gap-1 text-xs text-gray-500 px-2.5 py-1.5 rounded-lg hover:bg-gray-100">
+                          <X size={11} />キャンセル
+                        </button>
+                        <button onClick={() => handleEdit(user.id)} disabled={saving}
+                          className="flex items-center gap-1 text-xs text-white bg-orange-500 px-2.5 py-1.5 rounded-lg hover:bg-orange-600 font-medium disabled:opacity-50">
+                          <Check size={11} />保存
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
-            <div className="flex items-start gap-2 mt-3 px-3 py-2.5 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700">
-              <Info size={13} className="flex-shrink-0 mt-0.5" />
-              <span>ユーザーの招待・ロール変更はSupabaseダッシュボードの Authentication → Users で行います</span>
-            </div>
-          </>
+              )
+            })}
+          </div>
         )}
       </CardBody>
     </Card>

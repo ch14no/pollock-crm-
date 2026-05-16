@@ -15,8 +15,11 @@ import { useAppStore } from '@/store/appStore'
 import { MOCK_CONTACTS, MOCK_DEALS, MOCK_ACTIVITIES, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchTossupsByDivision } from '@/lib/db/tossups'
-import type { Tossup } from '@/types/database'
-import { formatCurrency, formatDate, getStaleDays, cn } from '@/lib/utils'
+import { fetchDealsByDivision } from '@/lib/db/deals'
+import { fetchContactsByDivision } from '@/lib/db/contacts'
+import { fetchActivitiesByDivision } from '@/lib/db/activities'
+import type { Tossup, Deal, Contact, Activity as DbActivity } from '@/types/database'
+import { formatCurrency, formatDate, formatRelativeTime, getStaleDays, cn } from '@/lib/utils'
 
 type DashView = 'personal' | 'team' | 'manager'
 
@@ -124,9 +127,16 @@ export default function DashboardPage() {
   const divisionStages   = useAppStore((s) => s.divisionStages)
 
   const [dbDivTossups, setDbDivTossups] = useState<Tossup[]>([])
+  const [dbDeals,      setDbDeals]      = useState<Deal[]>([])
+  const [dbContacts,   setDbContacts]   = useState<Contact[]>([])
+  const [dbActivities, setDbActivities] = useState<DbActivity[]>([])
+
   useEffect(() => {
     if (!activeDivisionId || !isSupabaseConfigured()) return
     fetchTossupsByDivision(activeDivisionId).then(setDbDivTossups)
+    fetchDealsByDivision(activeDivisionId).then(setDbDeals)
+    fetchContactsByDivision(activeDivisionId).then(setDbContacts)
+    fetchActivitiesByDivision(activeDivisionId).then(setDbActivities)
   }, [activeDivisionId])
 
   // 事業部別ステージから受注/失注IDを動的解決（フォールバック: '受注'/'失注'）
@@ -152,12 +162,21 @@ export default function DashboardPage() {
 
   const [view, setView] = useState<DashView>('personal')
 
-  const allDeals      = useMemo(() => [...MOCK_DEALS, ...localDeals], [localDeals])
-  const allActivities = useMemo(() => [...MOCK_ACTIVITIES, ...localActivities], [localActivities])
+  const allDeals = useMemo(
+    () => isSupabaseConfigured() ? [...dbDeals, ...localDeals] : [...(MOCK_DEALS as unknown as Deal[]), ...localDeals],
+    [dbDeals, localDeals]
+  )
+  const allActivities = useMemo(
+    () => isSupabaseConfigured() ? [...dbActivities, ...localActivities] : [...(MOCK_ACTIVITIES as unknown as DbActivity[]), ...localActivities],
+    [dbActivities, localActivities]
+  )
 
   // ─── チームデータ ───────────────────────────────────────────────
   const divDeals    = useMemo(() => allDeals.filter((d) => d.division_id === activeDivisionId), [allDeals, activeDivisionId])
-  const divContacts = useMemo(() => MOCK_CONTACTS.filter((c) => c.division_id === activeDivisionId), [activeDivisionId])
+  const divContacts = useMemo(
+    () => isSupabaseConfigured() ? dbContacts : (MOCK_CONTACTS as unknown as Contact[]).filter((c) => c.division_id === activeDivisionId),
+    [dbContacts, activeDivisionId]
+  )
   const divTossups  = useMemo((): Tossup[] => {
     if (isSupabaseConfigured()) return dbDivTossups
     return localTossups.filter((t) => t.from_division_id === activeDivisionId || t.to_division_id === activeDivisionId)
@@ -206,7 +225,12 @@ export default function DashboardPage() {
   )
   const myActivitiesMonth  = myActivities.filter((a) => isSameMonth(a.action_date))
   const myActivitiesWeek   = myActivities.filter((a) => isSameWeek(a.action_date))
-  const myAssignedContacts = MOCK_CONTACTS.filter((c) => c.assigned_user_id === currentUser?.id)
+  const myAssignedContacts = useMemo(
+    () => isSupabaseConfigured()
+      ? dbContacts.filter((c) => c.assigned_user_id === currentUser?.id)
+      : (MOCK_CONTACTS as unknown as Contact[]).filter((c) => c.assigned_user_id === currentUser?.id),
+    [dbContacts, currentUser?.id]
+  )
 
   const myTasks = useMemo(
     () => allActivities
@@ -470,7 +494,11 @@ export default function DashboardPage() {
             {myActivities.length === 0 ? (
               <div className="px-5 py-10 text-center text-sm text-gray-400">まだ活動を記録していません</div>
             ) : (
-              <MyActivityList activities={myActivities.slice(0, 6)} onContactClick={(id) => router.push(`/contacts/${id}`)} />
+              <MyActivityList
+                activities={myActivities.slice(0, 6)}
+                contactsById={new Map(divContacts.map((c) => [c.id, c]))}
+                onContactClick={(id) => router.push(`/contacts/${id}`)}
+              />
             )}
           </div>
         </>
@@ -638,8 +666,12 @@ function ClosingSoonTable({
 }
 
 function MyActivityList({
-  activities, onContactClick,
-}: { activities: { id: string; activity_type: string; title?: string; memo?: string; action_date: string; target_type: string; target_id: string }[]; onContactClick: (id: string) => void }) {
+  activities, contactsById, onContactClick,
+}: {
+  activities: { id: string; activity_type: string; title?: string; memo?: string; action_date: string; target_type: string; target_id: string }[]
+  contactsById: Map<string, Contact>
+  onContactClick: (id: string) => void
+}) {
   const TYPE_LABEL: Record<string, string> = {
     call: '電話', email: 'メール', meeting: '面談', task: 'タスク', tossup: 'トスアップ', note: 'メモ',
   }
@@ -648,12 +680,11 @@ function MyActivityList({
     meeting: 'bg-green-100 text-green-600', task: 'bg-yellow-100 text-yellow-600',
     tossup: 'bg-orange-100 text-orange-600', note: 'bg-gray-100 text-gray-600',
   }
-  const { formatRelativeTime } = require('@/lib/utils')
 
   return (
     <ul className="divide-y divide-gray-50">
       {activities.map((a) => {
-        const contact = a.target_type === 'contact' ? MOCK_CONTACTS.find((c) => c.id === a.target_id) : null
+        const contact = a.target_type === 'contact' ? contactsById.get(a.target_id) : undefined
         return (
           <li key={a.id}
             className="flex gap-3 px-5 py-3.5 hover:bg-gray-50 cursor-pointer transition-colors"

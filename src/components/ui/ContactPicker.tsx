@@ -1,13 +1,14 @@
 'use client'
 
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { Search, X, Users, Building2, Tag, UserCircle } from 'lucide-react'
+import { Search, X, Users, Building2, UserCircle } from 'lucide-react'
 import { MOCK_CONTACTS } from '@/lib/mock-data'
 import { useAppStore } from '@/store/appStore'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { fetchContactsByDivision, fetchAllContacts, fetchContactById } from '@/lib/db/contacts'
 import { cn, getInitials } from '@/lib/utils'
 import { Badge } from '@/components/ui/Badge'
-
-type Contact = typeof MOCK_CONTACTS[0]
+import type { Contact } from '@/types/database'
 
 interface ContactPickerProps {
   selectedContactId?: string
@@ -16,7 +17,7 @@ interface ContactPickerProps {
   label?: string
   required?: boolean
   disabled?: boolean
-  filterDivisionId?: string   // undefined = 全事業部を検索
+  filterDivisionId?: string
   placeholder?: string
 }
 
@@ -26,7 +27,6 @@ function normalize(str: string): string {
   )
 }
 
-// ─── 顧客検索ポップアップ本体 ──────────────────────────────────────
 function ContactSearchPopup({
   filterDivisionId,
   onSelect,
@@ -37,42 +37,49 @@ function ContactSearchPopup({
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
+  const [contacts, setContacts] = useState<Contact[]>([])
+  const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [])
+  useEffect(() => { inputRef.current?.focus() }, [])
 
-  // キーボード操作
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [onClose])
 
+  useEffect(() => {
+    if (isSupabaseConfigured()) {
+      setLoading(true)
+      const fetch = filterDivisionId
+        ? fetchContactsByDivision(filterDivisionId)
+        : fetchAllContacts()
+      fetch.then(setContacts).catch(() => {}).finally(() => setLoading(false))
+    } else {
+      const base = filterDivisionId
+        ? MOCK_CONTACTS.filter((c) => c.division_id === filterDivisionId)
+        : MOCK_CONTACTS
+      setContacts(base as unknown as Contact[])
+    }
+  }, [filterDivisionId])
+
   const candidates = useMemo(() => {
-    const base = filterDivisionId
-      ? MOCK_CONTACTS.filter((c) => c.division_id === filterDivisionId)
-      : MOCK_CONTACTS
-    if (!query.trim()) return base.slice(0, 50)
+    if (!query.trim()) return contacts.slice(0, 50)
     const q = normalize(query)
-    return base.filter((c) =>
+    return contacts.filter((c) =>
       normalize(c.name).includes(q) ||
       normalize(c.companies?.name ?? '').includes(q) ||
       normalize(c.position ?? '').includes(q) ||
       normalize(c.email ?? '').includes(q)
     )
-  }, [query, filterDivisionId])
+  }, [query, contacts])
 
   return (
-    // バックドロップ
     <div className="fixed inset-0 z-[60] flex items-start justify-center pt-16 px-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden">
-        {/* 検索ヘッダー */}
         <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
           <Search size={16} className="text-gray-400 flex-shrink-0" />
           <input
@@ -94,17 +101,20 @@ function ContactSearchPopup({
           </button>
         </div>
 
-        {/* 件数サマリー */}
         <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
           <p className="text-xs text-gray-400">
-            {query ? `「${query}」の検索結果 ${candidates.length}件` : `顧客 ${candidates.length}件`}
+            {loading ? '読み込み中...' :
+              query ? `「${query}」の検索結果 ${candidates.length}件` : `顧客 ${contacts.length}件`}
             {filterDivisionId && ' （現在の事業部）'}
           </p>
         </div>
 
-        {/* 顧客リスト */}
         <div className="overflow-y-auto max-h-80">
-          {candidates.length === 0 ? (
+          {loading ? (
+            <div className="flex items-center justify-center py-10">
+              <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : candidates.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-gray-400">
               <Users size={28} className="mb-2 text-gray-300" />
               <p className="text-sm">一致する顧客がいません</p>
@@ -118,13 +128,10 @@ function ContactSearchPopup({
                   onClick={() => onSelect(contact)}
                   className="w-full flex items-center gap-3 px-4 py-3 hover:bg-orange-50 transition-colors text-left"
                 >
-                  {/* アバター */}
                   <div className="w-9 h-9 rounded-full bg-orange-100 text-orange-600 font-bold text-sm
                     flex items-center justify-center flex-shrink-0">
                     {getInitials(contact.name)}
                   </div>
-
-                  {/* 情報 */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-sm font-medium text-gray-800">{contact.name}</span>
@@ -150,8 +157,6 @@ function ContactSearchPopup({
                       )}
                     </div>
                   </div>
-
-                  {/* 矢印 */}
                   <span className="text-orange-300 text-sm flex-shrink-0">→</span>
                 </button>
               ))}
@@ -159,7 +164,6 @@ function ContactSearchPopup({
           )}
         </div>
 
-        {/* フッター */}
         <div className="px-4 py-2 border-t border-gray-100 bg-gray-50">
           <p className="text-xs text-gray-400">クリックで選択 · Esc で閉じる</p>
         </div>
@@ -168,7 +172,6 @@ function ContactSearchPopup({
   )
 }
 
-// ─── 公開コンポーネント ────────────────────────────────────────────
 export function ContactPicker({
   selectedContactId,
   onSelect,
@@ -180,12 +183,19 @@ export function ContactPicker({
   placeholder = '顧客を選択...',
 }: ContactPickerProps) {
   const [open, setOpen] = useState(false)
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const localContactEdits = useAppStore((s) => s.localContactEdits)
 
-  // localContactEdits があれば名前・会社表示に反映
-  const baseContact = MOCK_CONTACTS.find((c) => c.id === selectedContactId)
-  const edit = selectedContactId ? localContactEdits[selectedContactId] : undefined
-  const selectedContact = baseContact && edit ? { ...baseContact, ...edit } : baseContact
+  useEffect(() => {
+    if (!selectedContactId) { setSelectedContact(null); return }
+    if (isSupabaseConfigured()) {
+      fetchContactById(selectedContactId).then(setSelectedContact)
+    } else {
+      const base = MOCK_CONTACTS.find((c) => c.id === selectedContactId) ?? null
+      const edit = localContactEdits[selectedContactId]
+      setSelectedContact(base && edit ? { ...(base as unknown as Contact), ...edit } : (base as unknown as Contact | null))
+    }
+  }, [selectedContactId, localContactEdits])
 
   const handleSelect = (contact: Contact) => {
     onSelect(contact.id, contact)
@@ -201,7 +211,6 @@ export function ContactPicker({
       )}
 
       {selectedContact ? (
-        /* 選択済み表示 */
         <div className="flex items-center gap-2 px-3 py-2 bg-orange-50 border border-orange-200 rounded-lg">
           <div className="w-6 h-6 rounded-full bg-orange-200 text-orange-700 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
             {getInitials(selectedContact.name)}
@@ -226,7 +235,6 @@ export function ContactPicker({
           )}
         </div>
       ) : (
-        /* 未選択：入力+検索ボタン */
         <div className="flex gap-1.5">
           <button
             type="button"
@@ -256,7 +264,6 @@ export function ContactPicker({
         </div>
       )}
 
-      {/* 検索ポップアップ */}
       {open && (
         <ContactSearchPopup
           filterDivisionId={filterDivisionId}

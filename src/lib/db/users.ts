@@ -18,6 +18,37 @@ export async function updateUserName(userId: string, name: string): Promise<void
   if (error) throw error
 }
 
+export async function createUserAdmin(input: {
+  name: string; email: string; password: string; role: string
+}): Promise<User> {
+  const res = await fetch('/api/admin/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error ?? '作成に失敗しました')
+  return data as User
+}
+
+export async function updateUserAdmin(id: string, updates: {
+  name?: string; role?: string; password?: string
+}): Promise<void> {
+  const res = await fetch('/api/admin/users', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, ...updates }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error ?? '更新に失敗しました')
+}
+
+export async function deleteUserAdmin(id: string): Promise<void> {
+  const res = await fetch(`/api/admin/users?id=${id}`, { method: 'DELETE' })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error ?? '削除に失敗しました')
+}
+
 export async function fetchDivisionUsers(divisionId: string): Promise<User[]> {
   const { data, error } = await getSupabase()
     .from('user_divisions')

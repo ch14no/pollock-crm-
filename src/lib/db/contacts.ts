@@ -36,6 +36,16 @@ export async function fetchContactsByDivision(divisionId: string): Promise<Conta
   return (data ?? []).map(toContact)
 }
 
+export async function fetchAllContacts(): Promise<Contact[]> {
+  const { data, error } = await getSupabase()
+    .from('contacts')
+    .select('*, companies(*), users:assigned_user_id(id,name,email,role,created_at)')
+    .order('updated_at', { ascending: false })
+    .limit(500)
+  if (error) throw error
+  return (data ?? []).map(toContact)
+}
+
 export async function fetchContactById(id: string): Promise<Contact | null> {
   const { data, error } = await getSupabase()
     .from('contacts')

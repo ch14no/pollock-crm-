@@ -1,23 +1,18 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Target, AlertCircle, Clock, CalendarDays, ArrowRight } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
-import { MOCK_ACTIVITIES, MOCK_DEALS, MOCK_CONTACTS } from '@/lib/mock-data'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { fetchActivitiesByDivision } from '@/lib/db/activities'
+import { fetchDealsByDivision } from '@/lib/db/deals'
+import type { Activity, Deal } from '@/types/database'
+import { MOCK_ACTIVITIES, MOCK_DEALS, MOCK_CONTACTS, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import { cn } from '@/lib/utils'
 
 function daysUntil(dateStr: string) {
   return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86400000)
-}
-
-function resolveContactName(targetType: string, targetId: string): string {
-  if (targetType === 'contact') {
-    const c = MOCK_CONTACTS.find((x) => x.id === targetId)
-    return c ? c.name : ''
-  }
-  const d = MOCK_DEALS.find((x) => x.id === targetId)
-  return d?.contacts?.name ?? ''
 }
 
 type ActionItem = {
@@ -30,43 +25,67 @@ type ActionItem = {
 }
 
 interface DailyMissionProps {
-  // personalMode=true → 全事業部横断で自分のタスク表示
   personalMode?: boolean
 }
 
 export function DailyMission({ personalMode = false }: DailyMissionProps) {
   const router = useRouter()
-  const { activeDivisionId, localActivities, localDeals, taskStatuses, currentUser } = useAppStore()
+  const { activeDivisionId, localActivities, localDeals, taskStatuses, currentUser, divisionStages } = useAppStore()
 
-  const allActivities = useMemo(() => [...MOCK_ACTIVITIES, ...localActivities], [localActivities])
-  const allDeals = useMemo(() => [...MOCK_DEALS, ...localDeals], [localDeals])
+  const [dbActivities, setDbActivities] = useState<Activity[]>([])
+  const [dbDeals, setDbDeals]           = useState<Deal[]>([])
 
-  const divContactIds = useMemo(
-    () => new Set(MOCK_CONTACTS.filter((c) => c.division_id === activeDivisionId).map((c) => c.id)),
-    [activeDivisionId]
+  useEffect(() => {
+    if (!activeDivisionId || !isSupabaseConfigured()) return
+    fetchActivitiesByDivision(activeDivisionId).then(setDbActivities).catch(() => {})
+    fetchDealsByDivision(activeDivisionId).then(setDbDeals).catch(() => {})
+  }, [activeDivisionId])
+
+  const allActivities = useMemo((): Activity[] =>
+    isSupabaseConfigured()
+      ? [...dbActivities, ...localActivities]
+      : [...(MOCK_ACTIVITIES as unknown as Activity[]), ...localActivities],
+    [dbActivities, localActivities]
   )
+  const allDeals = useMemo((): Deal[] =>
+    isSupabaseConfigured()
+      ? [...dbDeals, ...localDeals]
+      : [...(MOCK_DEALS as unknown as Deal[]), ...localDeals],
+    [dbDeals, localDeals]
+  )
+
+  // 受注・失注ステージIDを store から解決（フォールバック: 文字列マッチ）
+  const divId = activeDivisionId ?? ''
+  const stagesForDiv = divisionStages[divId] ?? DEFAULT_DIVISION_STAGES[divId] ?? null
+  const wonIds  = useMemo(() => new Set(stagesForDiv ? stagesForDiv.filter((s) => s.isWon).map((s) => s.id)  : ['受注']), [stagesForDiv])
+  const lostIds = useMemo(() => new Set(stagesForDiv ? stagesForDiv.filter((s) => s.isLost).map((s) => s.id) : ['失注']), [stagesForDiv])
+  const isActiveStage = (stageId: string) => !wonIds.has(stageId) && !lostIds.has(stageId)
+
   const divDealIds = useMemo(
     () => new Set(allDeals.filter((d) => d.division_id === activeDivisionId).map((d) => d.id)),
     [allDeals, activeDivisionId]
   )
 
+  // contact IDs for this division (Supabase: resolved from dbActivities targets, demo: from MOCK)
+  const divContactIds = useMemo(() => {
+    if (isSupabaseConfigured()) {
+      return new Set(dbActivities.filter((a) => a.target_type === 'contact').map((a) => a.target_id))
+    }
+    return new Set(MOCK_CONTACTS.filter((c) => c.division_id === activeDivisionId).map((c) => c.id))
+  }, [dbActivities, activeDivisionId])
+
   const divTasks = useMemo(() => {
     if (personalMode) {
-      // 個人モード: 全事業部の自分が担当するタスク
       return allActivities.filter(
-        (a) =>
-          a.activity_type === 'task' &&
-          a.user_id === currentUser?.id &&
-          (taskStatuses[a.id] ?? a.status) !== 'done'
+        (a) => a.activity_type === 'task' && a.user_id === currentUser?.id &&
+               (taskStatuses[a.id] ?? a.status) !== 'done'
       )
     }
-    // チームモード: 選択中の事業部のタスク
     return allActivities.filter(
-      (a) =>
-        a.activity_type === 'task' &&
-        (taskStatuses[a.id] ?? a.status) !== 'done' &&
-        ((a.target_type === 'contact' && divContactIds.has(a.target_id)) ||
-          (a.target_type === 'deal' && divDealIds.has(a.target_id)))
+      (a) => a.activity_type === 'task' &&
+             (taskStatuses[a.id] ?? a.status) !== 'done' &&
+             ((a.target_type === 'contact' && divContactIds.has(a.target_id)) ||
+              (a.target_type === 'deal' && divDealIds.has(a.target_id)))
     )
   }, [allActivities, personalMode, currentUser?.id, taskStatuses, divContactIds, divDealIds])
 
@@ -75,19 +94,28 @@ export function DailyMission({ personalMode = false }: DailyMissionProps) {
       ? allDeals.filter((d) => d.assigned_user_id === currentUser?.id)
       : allDeals.filter((d) => d.division_id === activeDivisionId)
     return base.filter(
-      (d) => d.stage_id !== '受注' && d.stage_id !== '失注' && d.close_date && daysUntil(d.close_date) >= 0 && daysUntil(d.close_date) <= 7
+      (d) => isActiveStage(d.stage_id) && d.close_date &&
+             daysUntil(d.close_date) >= 0 && daysUntil(d.close_date) <= 7
     )
-  }, [allDeals, personalMode, currentUser?.id, activeDivisionId])
+  }, [allDeals, personalMode, currentUser?.id, activeDivisionId, wonIds, lostIds]) // eslint-disable-line
+
+  const resolveTargetName = (targetType: string, targetId: string): string => {
+    if (!isSupabaseConfigured()) {
+      if (targetType === 'contact') return MOCK_CONTACTS.find((x) => x.id === targetId)?.name ?? ''
+      return MOCK_DEALS.find((x) => x.id === targetId)?.contacts?.name ?? ''
+    }
+    // In Supabase mode activities don't carry contact names; omit for now
+    return ''
+  }
 
   const actions: ActionItem[] = useMemo(() => {
     const result: ActionItem[] = []
-
     divTasks
       .filter((t) => t.due_date && daysUntil(t.due_date) < 0)
       .sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime())
       .slice(0, 2)
       .forEach((t) => {
-        const name = resolveContactName(t.target_type, t.target_id)
+        const name = resolveTargetName(t.target_type, t.target_id)
         result.push({
           key: t.id, urgency: 'high', icon: AlertCircle,
           label: t.title ?? 'タスク',
@@ -95,12 +123,11 @@ export function DailyMission({ personalMode = false }: DailyMissionProps) {
           link: t.target_type === 'contact' ? `/contacts/${t.target_id}` : '/activities',
         })
       })
-
     divTasks
       .filter((t) => t.due_date && daysUntil(t.due_date) === 0)
       .slice(0, 2)
       .forEach((t) => {
-        const name = resolveContactName(t.target_type, t.target_id)
+        const name = resolveTargetName(t.target_type, t.target_id)
         result.push({
           key: t.id, urgency: 'medium', icon: Clock,
           label: t.title ?? 'タスク',
@@ -108,29 +135,24 @@ export function DailyMission({ personalMode = false }: DailyMissionProps) {
           link: t.target_type === 'contact' ? `/contacts/${t.target_id}` : '/activities',
         })
       })
-
     if (result.length < 3) {
-      closingDeals
-        .sort((a, b) => new Date(a.close_date!).getTime() - new Date(b.close_date!).getTime())
-        .slice(0, 1)
-        .forEach((d) => {
-          const days = daysUntil(d.close_date!)
-          result.push({
-            key: d.id, urgency: days <= 2 ? 'high' : 'medium', icon: CalendarDays,
-            label: `${d.title}のクロージング`,
-            detail: days === 0 ? '本日期限' : `${days}日後が期限`,
-            link: '/deals',
-          })
+      closingDeals.slice(0, 1).forEach((d) => {
+        const days = daysUntil(d.close_date!)
+        result.push({
+          key: d.id, urgency: days <= 2 ? 'high' : 'medium', icon: CalendarDays,
+          label: `${d.title}のクロージング`,
+          detail: days === 0 ? '本日期限' : `${days}日後が期限`,
+          link: '/deals',
         })
+      })
     }
-
     if (result.length < 3) {
       divTasks
         .filter((t) => t.due_date && daysUntil(t.due_date) > 0 && daysUntil(t.due_date) <= 3)
         .filter((t) => !result.some((r) => r.key === t.id))
         .slice(0, 3 - result.length)
         .forEach((t) => {
-          const name = resolveContactName(t.target_type, t.target_id)
+          const name = resolveTargetName(t.target_type, t.target_id)
           result.push({
             key: t.id, urgency: 'low', icon: Clock,
             label: t.title ?? 'タスク',
@@ -139,9 +161,8 @@ export function DailyMission({ personalMode = false }: DailyMissionProps) {
           })
         })
     }
-
     return result.slice(0, 3)
-  }, [divTasks, closingDeals])
+  }, [divTasks, closingDeals]) // eslint-disable-line
 
   const urgencyStyle: Record<string, string> = {
     high: 'bg-red-50 border-red-100', medium: 'bg-orange-50 border-orange-100', low: 'bg-gray-50 border-gray-100',
@@ -167,7 +188,6 @@ export function DailyMission({ personalMode = false }: DailyMissionProps) {
           </button>
         )}
       </div>
-
       {actions.length === 0 ? (
         <div className="flex items-center gap-3">
           <span className="text-2xl">🎉</span>

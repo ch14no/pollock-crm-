@@ -1,12 +1,16 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Rocket, TrendingUp, Phone, Mail, Users, FileText, CheckSquare } from 'lucide-react'
+import { Rocket, Phone, Mail, Users, FileText, CheckSquare } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { fetchActivitiesByDivision } from '@/lib/db/activities'
+import { fetchContactsByDivision } from '@/lib/db/contacts'
+import { fetchDealsByDivision } from '@/lib/db/deals'
+import type { Activity, Contact, Deal, ActivityType } from '@/types/database'
 import { MOCK_ACTIVITIES, MOCK_CONTACTS, MOCK_DEALS } from '@/lib/mock-data'
 import { formatRelativeTime, cn } from '@/lib/utils'
-import type { ActivityType } from '@/types/database'
 
 const TYPE_CONFIG: Record<ActivityType, { icon: React.ElementType; color: string; label: string }> = {
   call:    { icon: Phone,       color: 'text-blue-500 bg-blue-50',    label: '電話' },
@@ -17,35 +21,49 @@ const TYPE_CONFIG: Record<ActivityType, { icon: React.ElementType; color: string
   note:    { icon: FileText,    color: 'text-gray-500 bg-gray-100',   label: 'メモ' },
 }
 
-// ステージ受注はタイムライン上で特別表示
-const WON_CONFIG = { icon: TrendingUp, color: 'text-green-500 bg-green-50' }
-
-function resolveTarget(targetType: string, targetId: string): { name: string; contactId?: string } {
-  if (targetType === 'contact') {
-    const c = MOCK_CONTACTS.find((x) => x.id === targetId)
-    return { name: c ? `${c.name}（${c.companies?.name ?? ''}）` : '', contactId: targetId }
-  }
-  const d = MOCK_DEALS.find((x) => x.id === targetId)
-  if (d) {
-    return { name: `${d.title}${d.contacts ? ` / ${d.contacts.name}` : ''}`, contactId: d.contact_id }
-  }
-  return { name: '' }
-}
-
 export function RealtimeTimeline() {
   const router = useRouter()
   const { localActivities, activeDivisionId } = useAppStore()
 
-  const divContactIds = useMemo(
-    () => new Set(MOCK_CONTACTS.filter((c) => c.division_id === activeDivisionId).map((c) => c.id)),
-    [activeDivisionId]
-  )
-  const divDealIds = useMemo(
-    () => new Set(MOCK_DEALS.filter((d) => d.division_id === activeDivisionId).map((d) => d.id)),
-    [activeDivisionId]
-  )
+  const [dbActivities, setDbActivities] = useState<Activity[]>([])
+  const [dbContacts,   setDbContacts]   = useState<Contact[]>([])
+  const [dbDeals,      setDbDeals]      = useState<Deal[]>([])
 
-  const allActivities = useMemo(() => [...localActivities, ...MOCK_ACTIVITIES], [localActivities])
+  useEffect(() => {
+    if (!activeDivisionId || !isSupabaseConfigured()) return
+    fetchActivitiesByDivision(activeDivisionId).then(setDbActivities).catch(() => {})
+    fetchContactsByDivision(activeDivisionId).then(setDbContacts).catch(() => {})
+    fetchDealsByDivision(activeDivisionId).then(setDbDeals).catch(() => {})
+  }, [activeDivisionId])
+
+  const contactsById = useMemo((): Map<string, Contact> => {
+    const src = isSupabaseConfigured() ? dbContacts : (MOCK_CONTACTS as unknown as Contact[])
+    return new Map(src.map((c) => [c.id, c]))
+  }, [dbContacts])
+
+  const dealsById = useMemo((): Map<string, Deal> => {
+    const src = isSupabaseConfigured() ? dbDeals : (MOCK_DEALS as unknown as Deal[])
+    return new Map(src.map((d) => [d.id, d]))
+  }, [dbDeals])
+
+  const divContactIds = useMemo(() => {
+    return new Set(isSupabaseConfigured()
+      ? dbContacts.map((c) => c.id)
+      : MOCK_CONTACTS.filter((c) => c.division_id === activeDivisionId).map((c) => c.id))
+  }, [dbContacts, activeDivisionId])
+
+  const divDealIds = useMemo(() => {
+    return new Set(isSupabaseConfigured()
+      ? dbDeals.map((d) => d.id)
+      : MOCK_DEALS.filter((d) => d.division_id === activeDivisionId).map((d) => d.id))
+  }, [dbDeals, activeDivisionId])
+
+  const allActivities = useMemo((): Activity[] =>
+    isSupabaseConfigured()
+      ? [...localActivities, ...dbActivities]
+      : [...localActivities, ...(MOCK_ACTIVITIES as unknown as Activity[])],
+    [localActivities, dbActivities]
+  )
 
   const recentActivities = useMemo(() => {
     return allActivities
@@ -57,6 +75,16 @@ export function RealtimeTimeline() {
       .sort((a, b) => new Date(b.action_date).getTime() - new Date(a.action_date).getTime())
       .slice(0, 8)
   }, [allActivities, divContactIds, divDealIds])
+
+  const resolveTarget = (targetType: string, targetId: string): { name: string; contactId?: string } => {
+    if (targetType === 'contact') {
+      const c = contactsById.get(targetId)
+      return { name: c ? `${c.name}（${c.companies?.name ?? ''}）` : '', contactId: targetId }
+    }
+    const d = dealsById.get(targetId)
+    if (d) return { name: `${d.title}${d.contacts ? ` / ${d.contacts.name}` : ''}`, contactId: d.contact_id }
+    return { name: '' }
+  }
 
   const isNewActivity = (id: string) => localActivities.some((a) => a.id === id)
 
@@ -72,10 +100,7 @@ export function RealtimeTimeline() {
             <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
             ライブ
           </span>
-          <button
-            onClick={() => router.push('/activities')}
-            className="text-xs text-orange-600 hover:underline"
-          >
+          <button onClick={() => router.push('/activities')} className="text-xs text-orange-600 hover:underline">
             すべて見る
           </button>
         </div>
