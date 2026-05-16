@@ -164,7 +164,7 @@ export default function TossupsPage() {
       {/* リスト */}
       {filtered.length === 0 ? (
         <EmptyState
-          icon="🚀"
+          imgSrc="/characters/char-chef.png"
           title="トスアップがありません"
           description="他の事業部の顧客をトスアップして、グループシナジーを最大化しましょう！"
           action={<Button onClick={() => openTossupModal()} icon={<Rocket size={16} />}>最初のトスアップを送る</Button>}

@@ -444,7 +444,7 @@ export default function ContactsPage() {
       {/* Content */}
       {filtered.length === 0 ? (
         <EmptyState
-          icon="👥"
+          imgSrc="/characters/char-fisher.png"
           title="顧客が見つかりません"
           description={
             divisionContacts.length === 0

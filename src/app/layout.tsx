@@ -12,6 +12,10 @@ const notoSansJP = Noto_Sans_JP({
 export const metadata: Metadata = {
   title: 'Pollock Core CRM',
   description: '株式会社ポロック グループ統合CRM',
+  icons: {
+    icon: '/characters/char-painter.png',
+    apple: '/characters/char-painter.png',
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

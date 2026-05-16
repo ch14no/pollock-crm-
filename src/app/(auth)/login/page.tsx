@@ -33,7 +33,17 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 bg-orange-500 rounded-2xl flex items-center justify-center mb-3 shadow-lg shadow-orange-200">
+          <img
+            src="/characters/char-laptop.png"
+            alt=""
+            className="w-32 h-32 object-contain mb-1 drop-shadow-md"
+            onError={(e) => {
+              // 画像がない場合はロケットアイコンにフォールバック
+              e.currentTarget.style.display = 'none'
+              e.currentTarget.nextElementSibling?.classList.remove('hidden')
+            }}
+          />
+          <div className="hidden w-14 h-14 bg-orange-500 rounded-2xl flex items-center justify-center mb-3 shadow-lg shadow-orange-200">
             <Rocket size={28} className="text-white" />
           </div>
           <h1 className="text-2xl font-black text-gray-800">Pollock CRM</h1>

@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, Users, Briefcase, Activity,
   ArrowLeftRight, Upload, Settings, Rocket, ChevronDown,
-  LogOut, BarChart2, CheckSquare,
+  LogOut, BarChart2, CheckSquare, ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
@@ -130,6 +130,16 @@ export function Sidebar() {
         </ul>
       </nav>
 
+      {/* Character mascot */}
+      <div className="flex justify-center px-4 pb-1">
+        <img
+          src="/characters/char-phone.png"
+          alt=""
+          className="w-20 h-20 object-contain drop-shadow-sm opacity-90"
+          onError={(e) => { e.currentTarget.style.display = 'none' }}
+        />
+      </div>
+
       {/* Tossup CTA */}
       <div className="px-4 pb-3">
         <button
@@ -142,6 +152,20 @@ export function Sidebar() {
           <Rocket size={18} />
           トスアップ
         </button>
+      </div>
+
+      {/* 関連アプリリンク */}
+      <div className="px-3 pb-2">
+        <a
+          href="https://company-management-app-v2.vercel.app"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium
+            text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors"
+        >
+          <ExternalLink size={15} className="flex-shrink-0 text-gray-400" />
+          <span>会社管理アプリ</span>
+        </a>
       </div>
 
       {/* User profile */}

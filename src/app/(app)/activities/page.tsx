@@ -345,7 +345,7 @@ export default function ActivitiesPage() {
       {/* コンテンツ */}
       {grouped.length === 0 ? (
         <EmptyState
-          icon="📋"
+          imgSrc="/characters/char-cleaner.png"
           title="活動履歴がありません"
           description="電話・メール・面談などの活動を記録して引き継ぎコストをゼロにしましょう"
           action={
