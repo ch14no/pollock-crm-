@@ -1,12 +1,12 @@
 'use client'
 
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, Users, Briefcase, Activity,
   ArrowLeftRight, Upload, Settings, Rocket, ChevronDown,
-  LogOut, BarChart2, CheckSquare, ExternalLink,
+  LogOut, BarChart2, CheckSquare, ExternalLink, LayoutGrid, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
@@ -27,19 +27,44 @@ const NAV_ITEMS = [
   { href: '/settings',    label: '設定',         icon: Settings },
 ]
 
+// ─── グループアプリ一覧（追加はここに書くだけ）────────────────────
+const GROUP_APPS = [
+  {
+    name: 'タレントマネジメント',
+    url: 'https://company-management-app-v2.vercel.app',
+    emoji: '👥',
+    description: '人材管理・組織',
+  },
+  // 追加予定のアプリはここに追記
+  // { name: 'アプリ名', url: 'https://...', emoji: '📊', description: '説明' },
+]
+
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const { activeDivision, divisions, setActiveDivision, openTossupModal, currentUser, localTossups, tossupStatuses } = useAppStore()
 
-  // Supabase から未読トスアップ数を取得
   const [dbUnreadCount, setDbUnreadCount] = useState(0)
+  const [appsOpen, setAppsOpen] = useState(false)
+  const appsRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     if (!activeDivision?.id || !isSupabaseConfigured()) return
     fetchUnreadTossupCount(activeDivision.id).then(setDbUnreadCount)
   }, [activeDivision?.id])
 
-  // ローカル楽観的更新分（未送信 or 今セッション）も加算
+  // ポップアップ外クリックで閉じる
+  useEffect(() => {
+    if (!appsOpen) return
+    const handler = (e: MouseEvent) => {
+      if (appsRef.current && !appsRef.current.contains(e.target as Node)) {
+        setAppsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [appsOpen])
+
   const localUnread = useMemo(() => localTossups.filter(
     (t) => t.to_division_id === activeDivision?.id &&
            (tossupStatuses[t.id] ?? t.status) === 'unread'
@@ -89,10 +114,7 @@ export function Sidebar() {
         </div>
         {activeDivision?.color_code && (
           <div className="mt-2 flex items-center gap-1.5">
-            <span
-              className="w-2 h-2 rounded-full flex-shrink-0"
-              style={{ backgroundColor: activeDivision.color_code }}
-            />
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: activeDivision.color_code }} />
             <span className="text-xs text-gray-500">{activeDivision.name}</span>
           </div>
         )}
@@ -111,9 +133,7 @@ export function Sidebar() {
                   href={href}
                   className={cn(
                     'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                    active
-                      ? 'bg-orange-50 text-orange-600'
-                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
+                    active ? 'bg-orange-50 text-orange-600' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
                   )}
                 >
                   <Icon size={18} className="flex-shrink-0" />
@@ -146,26 +166,59 @@ export function Sidebar() {
           onClick={() => openTossupModal()}
           className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl
             bg-orange-500 text-white font-bold text-sm shadow-md
-            hover:bg-orange-600 active:bg-orange-700 transition-all duration-150
-            hover:shadow-lg"
+            hover:bg-orange-600 active:bg-orange-700 transition-all duration-150 hover:shadow-lg"
         >
           <Rocket size={18} />
           トスアップ
         </button>
       </div>
 
-      {/* 関連アプリリンク */}
-      <div className="px-3 pb-2">
-        <a
-          href="https://company-management-app-v2.vercel.app"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium
-            text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors"
+      {/* グループアプリ */}
+      <div className="px-3 pb-2 relative" ref={appsRef}>
+        <button
+          onClick={() => setAppsOpen((v) => !v)}
+          className={cn(
+            'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+            appsOpen ? 'bg-orange-50 text-orange-600' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+          )}
         >
-          <ExternalLink size={15} className="flex-shrink-0 text-gray-400" />
-          <span>タレントマネジメントapp</span>
-        </a>
+          <LayoutGrid size={15} className="flex-shrink-0" />
+          <span className="flex-1 text-left">グループアプリ</span>
+          <ChevronDown size={13} className={cn('transition-transform', appsOpen && 'rotate-180')} />
+        </button>
+
+        {/* ポップアップ */}
+        {appsOpen && (
+          <div className="absolute bottom-full left-3 right-3 mb-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-50">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">ポロックグループ</span>
+              <button onClick={() => setAppsOpen(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={13} />
+              </button>
+            </div>
+            <div className="p-1.5 space-y-0.5">
+              {GROUP_APPS.map((app) => (
+                <a
+                  key={app.url}
+                  href={app.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setAppsOpen(false)}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-orange-50 transition-colors group"
+                >
+                  <span className="text-xl leading-none flex-shrink-0">{app.emoji}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-700 group-hover:text-orange-600">{app.name}</p>
+                    {app.description && (
+                      <p className="text-xs text-gray-400 truncate">{app.description}</p>
+                    )}
+                  </div>
+                  <ExternalLink size={12} className="text-gray-300 group-hover:text-orange-400 flex-shrink-0" />
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* User profile */}
