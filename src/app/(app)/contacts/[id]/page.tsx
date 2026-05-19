@@ -379,10 +379,10 @@ export default function ContactDetailPage() {
                       <span>{displayContact.department}</span>
                     </div>
                   )}
-                  {displayContact.address && (
+                  {(displayContact.address || (displayContact.custom_attributes?.address as string | undefined)) && (
                     <div className="flex items-start gap-2 text-gray-600">
                       <MapPin size={14} className="mt-0.5 flex-shrink-0 text-gray-400" />
-                      <span>{displayContact.address}</span>
+                      <span>{displayContact.address || (displayContact.custom_attributes?.address as string)}</span>
                     </div>
                   )}
                   {assignee && (

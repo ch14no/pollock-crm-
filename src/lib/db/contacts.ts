@@ -143,6 +143,22 @@ export async function fetchContactCustomValues(contactId: string): Promise<Recor
   return Object.fromEntries((data ?? []).map((r) => [r.field_id, r.value ?? '']))
 }
 
+// 顧客ステータス一括取得（リスト画面用）
+export async function fetchContactStatusesBatch(contactIds: string[]): Promise<Record<string, string[]>> {
+  if (contactIds.length === 0) return {}
+  const { data } = await getSupabase()
+    .from('contact_statuses')
+    .select('contact_id, status')
+    .in('contact_id', contactIds)
+  const result: Record<string, string[]> = {}
+  for (const row of (data ?? [])) {
+    const cid = row.contact_id as string
+    if (!result[cid]) result[cid] = []
+    result[cid].push(row.status as string)
+  }
+  return result
+}
+
 // 顧客ステータス（星・ハート等）
 export async function fetchContactStatuses(contactId: string): Promise<string[]> {
   const { data } = await getSupabase()

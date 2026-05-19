@@ -17,7 +17,7 @@ import { useAppStore, selectIsOwnDivision } from '@/store/appStore'
 import type { ContactStatus } from '@/store/appStore'
 import { STATUS_CONFIG } from '@/lib/contactStatus'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchContactsByDivision, deleteContacts } from '@/lib/db/contacts'
+import { fetchContactsByDivision, deleteContacts, fetchContactStatusesBatch, fetchContactsCustomValues } from '@/lib/db/contacts'
 import type { Contact } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -91,6 +91,7 @@ export default function ContactsPage() {
   const isOwnDivision     = useAppStore(selectIsOwnDivision)
   const contactStatuses   = useAppStore((s) => s.contactStatuses)
   const localContactEdits = useAppStore((s) => s.localContactEdits)
+  const divisionCustomFields = useAppStore((s) => s.divisionCustomFields)
 
   const [dbContacts, setDbContacts] = useState<Contact[]>([])
   const [dbLoading, setDbLoading] = useState(false)
@@ -103,12 +104,27 @@ export default function ContactsPage() {
   const [deleting, setDeleting]         = useState(false)
   const sortMenuRef = useRef<HTMLDivElement>(null)
 
+  // ステータス・カスタムフィールドフィルター
+  const [listStatuses, setListStatuses] = useState<Record<string, string[]>>({})
+  const [listCustomValues, setListCustomValues] = useState<Record<string, Record<string, string>>>({})
+  const [statusFilter, setStatusFilter] = useState<string[]>([])
+  const [customFieldFilters, setCustomFieldFilters] = useState<Record<string, string>>({})
+
   const loadContacts = useCallback(async () => {
     if (!activeDivisionId || !isSupabaseConfigured()) return
     setDbLoading(true)
     try {
       const data = await fetchContactsByDivision(activeDivisionId)
       setDbContacts(data)
+      const ids = data.map((c) => c.id)
+      if (ids.length > 0) {
+        const [statuses, customVals] = await Promise.all([
+          fetchContactStatusesBatch(ids),
+          fetchContactsCustomValues(ids),
+        ])
+        setListStatuses(statuses)
+        setListCustomValues(customVals)
+      }
     } finally {
       setDbLoading(false)
     }
@@ -140,6 +156,12 @@ export default function ContactsPage() {
     })
   }, [dbContacts, activeDivisionId, localContactEdits])
 
+  // select型カスタムフィールドのみフィルター対象
+  const selectCustomFields = useMemo(() => {
+    const fields = divisionCustomFields[activeDivisionId ?? ''] ?? []
+    return fields.filter((f) => f.fieldType === 'select' && (f.options?.length ?? 0) > 0)
+  }, [divisionCustomFields, activeDivisionId])
+
   const filtered = useMemo(() => {
     let result = divisionContacts.filter((c) => {
       const matchQuery =
@@ -156,7 +178,16 @@ export default function ContactsPage() {
           ? !LOCATIONS.some((l) => c.tags.includes(l.id))
           : c.tags.includes(locationFilter)
 
-      return matchQuery && matchLocation
+      const matchStatus =
+        statusFilter.length === 0 ? true :
+        statusFilter.every((s) => (listStatuses[c.id] ?? contactStatuses[c.id] ?? []).includes(s))
+
+      const matchCustom = Object.entries(customFieldFilters).every(([fieldId, val]) => {
+        if (!val) return true
+        return (listCustomValues[c.id]?.[fieldId] ?? '') === val
+      })
+
+      return matchQuery && matchLocation && matchStatus && matchCustom
     })
 
     result = [...result].sort((a, b) => {
@@ -228,8 +259,11 @@ export default function ContactsPage() {
     toast.success(`${filtered.length}件をCSVエクスポートしました`)
   }
 
+  const toggleStatus = (s: string) =>
+    setStatusFilter((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s])
+
   const currentSortLabel = SORT_OPTIONS.find((o) => o.value === sortKey)?.label ?? ''
-  const hasFilter = query || locationFilter !== null
+  const hasFilter = query || locationFilter !== null || statusFilter.length > 0 || Object.values(customFieldFilters).some(Boolean)
   const noLocationCount = divisionContacts.filter(
     (c) => !LOCATIONS.some((l) => c.tags.includes(l.id))
   ).length
@@ -363,8 +397,63 @@ export default function ContactsPage() {
           )}
         </div>
 
+      </div>
+
+      {/* ステータス・カスタムフィールドフィルター */}
+      {(STATUS_CONFIG.length > 0 || selectCustomFields.length > 0) && (
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <span className="text-xs text-gray-400 font-medium flex-shrink-0">絞り込み:</span>
+          {STATUS_CONFIG.map(({ status, icon: Icon, label, activeClass }) => {
+            const active = statusFilter.includes(status)
+            return (
+              <button
+                key={status}
+                onClick={() => toggleStatus(status)}
+                title={label}
+                className={cn(
+                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors',
+                  active
+                    ? 'border-transparent bg-gray-800 text-white'
+                    : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                )}
+              >
+                <Icon size={12} fill={active ? 'currentColor' : 'none'} className={active ? 'text-white' : activeClass} />
+                {label}
+              </button>
+            )
+          })}
+          {selectCustomFields.map((field) => (
+            <select
+              key={field.id}
+              value={customFieldFilters[field.id] ?? ''}
+              onChange={(e) => setCustomFieldFilters((prev) => ({ ...prev, [field.id]: e.target.value }))}
+              className={cn(
+                'px-2.5 py-1 rounded-full text-xs border transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500',
+                customFieldFilters[field.id]
+                  ? 'border-orange-400 bg-orange-50 text-orange-700 font-medium'
+                  : 'border-gray-200 bg-white text-gray-500'
+              )}
+            >
+              <option value="">{field.label}（全て）</option>
+              {field.options?.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          ))}
+          {(statusFilter.length > 0 || Object.values(customFieldFilters).some(Boolean)) && (
+            <button
+              onClick={() => { setStatusFilter([]); setCustomFieldFilters({}) }}
+              className="text-xs text-gray-400 hover:text-gray-600 underline"
+            >
+              クリア
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
         {/* Sort */}
-        <div className="relative" ref={sortMenuRef}>
+        <div className="relative ml-auto" ref={sortMenuRef}>
           <button
             onClick={() => setShowSortMenu((v) => !v)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm bg-white border border-gray-200 rounded-xl
@@ -422,12 +511,11 @@ export default function ContactsPage() {
 
       {/* Active filters summary */}
       {hasFilter && (
-        <div className="flex items-center gap-2 mb-3 text-xs text-gray-500">
+        <div className="flex items-center gap-2 mb-3 text-xs text-gray-500 flex-wrap">
           <span>フィルター中:</span>
           {query && (
             <span className="flex items-center gap-1 bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
-              「{query}」
-              <button onClick={() => setQuery('')}><X size={10} /></button>
+              「{query}」<button onClick={() => setQuery('')}><X size={10} /></button>
             </span>
           )}
           {locationFilter && (
@@ -436,7 +524,27 @@ export default function ContactsPage() {
               <button onClick={() => setLocationFilter(null)}><X size={10} /></button>
             </span>
           )}
-          <button onClick={() => { setQuery(''); setLocationFilter(null) }} className="text-gray-400 hover:text-gray-600 ml-1">
+          {statusFilter.map((s) => {
+            const cfg = STATUS_CONFIG.find((c) => c.status === s)
+            return cfg ? (
+              <span key={s} className="flex items-center gap-1 bg-gray-800 text-white px-2 py-0.5 rounded-full">
+                {cfg.label}<button onClick={() => toggleStatus(s)}><X size={10} /></button>
+              </span>
+            ) : null
+          })}
+          {Object.entries(customFieldFilters).filter(([, v]) => v).map(([fieldId, val]) => {
+            const field = selectCustomFields.find((f) => f.id === fieldId)
+            return field ? (
+              <span key={fieldId} className="flex items-center gap-1 bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+                {field.label}: {val}
+                <button onClick={() => setCustomFieldFilters((p) => ({ ...p, [fieldId]: '' }))}><X size={10} /></button>
+              </span>
+            ) : null
+          })}
+          <button
+            onClick={() => { setQuery(''); setLocationFilter(null); setStatusFilter([]); setCustomFieldFilters({}) }}
+            className="text-gray-400 hover:text-gray-600 ml-1"
+          >
             すべてクリア
           </button>
         </div>

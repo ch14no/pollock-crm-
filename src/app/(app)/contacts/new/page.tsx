@@ -227,7 +227,6 @@ export default function NewContactPage() {
       ]
       const customAttributes: Record<string, unknown> = {}
       if (fields.mobile)        customAttributes.mobile = fields.mobile
-      if (fields.address)       customAttributes.address = fields.address
       if (fields.website)       customAttributes.website = fields.website
       if (meetingContext)       customAttributes.meeting_context = meetingContext
 
@@ -241,6 +240,7 @@ export default function NewContactPage() {
           email: fields.email || undefined,
           phone: fields.phone || undefined,
           position: fields.position || undefined,
+          address: fields.address || undefined,
           companyId,
           tags,
           customAttributes,
