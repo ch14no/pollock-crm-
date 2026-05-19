@@ -379,12 +379,13 @@ export default function ContactDetailPage() {
                       <span>{displayContact.department}</span>
                     </div>
                   )}
-                  {(displayContact.address || (displayContact.custom_attributes?.address as string | undefined)) && (
-                    <div className="flex items-start gap-2 text-gray-600">
-                      <MapPin size={14} className="mt-0.5 flex-shrink-0 text-gray-400" />
-                      <span>{displayContact.address || (displayContact.custom_attributes?.address as string)}</span>
-                    </div>
-                  )}
+                  <div className="flex items-start gap-2 text-gray-600">
+                    <MapPin size={14} className="mt-0.5 flex-shrink-0 text-gray-400" />
+                    {(displayContact.address || (displayContact.custom_attributes?.address as string | undefined))
+                      ? <span>{displayContact.address || (displayContact.custom_attributes?.address as string)}</span>
+                      : <span className="text-gray-300 text-xs">住所未設定</span>
+                    }
+                  </div>
                   {assignee && (
                     <div className="flex items-center gap-2 text-gray-600 pt-2 border-t border-gray-100">
                       <UserCircle size={14} className="flex-shrink-0 text-gray-400" />

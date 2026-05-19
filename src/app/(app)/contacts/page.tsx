@@ -17,7 +17,7 @@ import { useAppStore, selectIsOwnDivision } from '@/store/appStore'
 import type { ContactStatus } from '@/store/appStore'
 import { STATUS_CONFIG } from '@/lib/contactStatus'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchContactsByDivision, deleteContacts, fetchContactStatusesBatch, fetchContactsCustomValues } from '@/lib/db/contacts'
+import { fetchContactsByDivision, deleteContacts, fetchContactStatusesBatch, fetchContactsCustomValues, updateContact } from '@/lib/db/contacts'
 import type { Contact } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -99,8 +99,13 @@ export default function ContactsPage() {
   const [sortKey, setSortKey]           = useState<SortKey>('updated_desc')
   const [viewMode, setViewMode]         = useState<ViewMode>('list')
   const [locationFilter, setLocationFilter] = useState<string | null>(null)
-  const [showSortMenu, setShowSortMenu] = useState(false)
-  const [showFilters, setShowFilters]   = useState(false)
+  const [showSortMenu, setShowSortMenu]       = useState(false)
+  const [showFilters, setShowFilters]         = useState(false)
+  const [showAutoTag, setShowAutoTag]         = useState(false)
+  const [autoTagRunning, setAutoTagRunning]   = useState(false)
+  const [autoTagKeywords, setAutoTagKeywords] = useState<Record<string, string>>(() =>
+    Object.fromEntries(LOCATIONS.map((loc) => [loc.id, loc.id === '東京' ? '東京都,神奈川県,埼玉県,千葉県' : loc.id === '大阪' ? '大阪府,京都府,兵庫県' : `${loc.id}県`]))
+  )
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set())
   const [deleting, setDeleting]         = useState(false)
   const sortMenuRef = useRef<HTMLDivElement>(null)
@@ -265,6 +270,44 @@ export default function ContactsPage() {
 
   const clearFilters = () => { setLocationFilter(null); setStatusFilter([]); setCustomFieldFilters({}) }
 
+  const contactsWithAddress = useMemo(() =>
+    divisionContacts.filter((c) => c.address || (c.custom_attributes?.address as string | undefined)),
+  [divisionContacts])
+
+  const handleAutoTag = async () => {
+    if (!isSupabaseConfigured()) { toast.error('Supabase未接続'); return }
+    setAutoTagRunning(true)
+    let updated = 0
+    try {
+      for (const contact of contactsWithAddress) {
+        const addr = (contact.address || (contact.custom_attributes?.address as string) || '').toLowerCase()
+        const newTags = [...(contact.tags ?? [])]
+        let changed = false
+        for (const loc of LOCATIONS) {
+          const keywords = (autoTagKeywords[loc.id] ?? '')
+            .split(',').map((k) => k.trim()).filter(Boolean)
+          if (keywords.length === 0) continue
+          const matches = keywords.some((k) => addr.includes(k.toLowerCase()))
+          if (matches && !newTags.includes(loc.id)) {
+            newTags.push(loc.id)
+            changed = true
+          }
+        }
+        if (changed) {
+          await updateContact(contact.id, { tags: newTags })
+          updated++
+        }
+      }
+      toast.success(`${updated}件のタグを更新しました`)
+      setShowAutoTag(false)
+      await loadContacts()
+    } catch {
+      toast.error('更新に失敗しました')
+    } finally {
+      setAutoTagRunning(false)
+    }
+  }
+
   const activeFilterCount =
     (locationFilter !== null ? 1 : 0) +
     statusFilter.length +
@@ -287,6 +330,20 @@ export default function ContactsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isOwnDivision && contactsWithAddress.length > 0 && (
+            <button
+              onClick={() => setShowAutoTag((v) => !v)}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl border transition-colors',
+                showAutoTag
+                  ? 'bg-blue-500 border-blue-500 text-white'
+                  : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+              )}
+            >
+              <MapPin size={15} />
+              <span className="hidden sm:inline">住所から拠点を設定</span>
+            </button>
+          )}
           <button
             onClick={handleExportAll}
             className="flex items-center gap-1.5 px-3 py-2 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-gray-600"
@@ -327,6 +384,69 @@ export default function ContactsPage() {
             <strong>{activeDivision?.name}</strong> のデータを閲覧中です。
             編集・追加は担当者のみ可能です。トスアップは引き続きご利用いただけます。
           </span>
+        </div>
+      )}
+
+      {/* ─── 住所から拠点を自動設定パネル ──────────────────────────── */}
+      {showAutoTag && (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5 mb-4 shadow-sm">
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <p className="font-bold text-gray-800 flex items-center gap-2">
+                <MapPin size={16} className="text-blue-500" />
+                住所から拠点タグを自動設定
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                住所に含まれるキーワードをカンマ区切りで設定してください。一致した顧客に拠点タグが付与されます。
+              </p>
+            </div>
+            <button onClick={() => setShowAutoTag(false)} className="text-gray-400 hover:text-gray-600 p-1">
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="space-y-3 mb-4">
+            {LOCATIONS.map((loc) => (
+              <div key={loc.id} className="flex items-center gap-3">
+                <span className={cn('inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold flex-shrink-0 w-16 justify-center', loc.color)}>
+                  {loc.label}
+                </span>
+                <span className="text-gray-400 text-sm flex-shrink-0">→</span>
+                <input
+                  type="text"
+                  value={autoTagKeywords[loc.id] ?? ''}
+                  onChange={(e) => setAutoTagKeywords((p) => ({ ...p, [loc.id]: e.target.value }))}
+                  placeholder="都道府県をカンマ区切りで（例: 東京都,神奈川県）"
+                  className="flex-1 px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-500">
+              住所が登録されている顧客: <strong>{contactsWithAddress.length}件</strong>が対象
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowAutoTag(false)}
+                className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleAutoTag}
+                disabled={autoTagRunning || contactsWithAddress.length === 0}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-500 text-white rounded-xl hover:bg-blue-600 disabled:opacity-50 transition-colors"
+              >
+                {autoTagRunning ? (
+                  <><div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />実行中...</>
+                ) : (
+                  <><MapPin size={14} />実行</>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
