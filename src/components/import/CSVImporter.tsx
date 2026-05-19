@@ -6,7 +6,7 @@ import { Upload, ArrowRight, Check, Download, AlertCircle, Info, RotateCcw } fro
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { createContact, upsertContactCustomValue, fetchContactsByDivision } from '@/lib/db/contacts'
+import { createContact, upsertContactCustomValue, fetchContactsByDivision, updateContact } from '@/lib/db/contacts'
 import { findOrCreateCompany } from '@/lib/db/companies'
 import { fetchDivisionCustomFields } from '@/lib/db/divisions'
 import { useAppStore } from '@/store/appStore'
@@ -78,7 +78,8 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
   const [mapping, setMapping]   = useState<Record<string, string>>({})
   const [progress, setProgress] = useState(0)
   const [progressMsg, setProgressMsg] = useState('')
-  const [importResult, setImportResult] = useState<{ success: number; skipped: number; errors: ImportError[] } | null>(null)
+  const [importResult, setImportResult] = useState<{ success: number; updated: number; skipped: number; errors: ImportError[] } | null>(null)
+  const [duplicateMode, setDuplicateMode] = useState<'skip' | 'update'>('skip')
   const [customFields, setCustomFields] = useState<DivisionCustomField[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -189,17 +190,15 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
     let success = 0
     let skipped = 0
 
-    // 既存データを取得して「名前＋メール」両方一致で重複チェック
+    // 既存データを取得。email+name → contactId のマップを構築
     // ※メールのみ一致でも名前が違う場合は別人として取り込む（共通メール対応）
-    const existingPairs = new Map<string, Set<string>>() // email → Set<name>
+    const existingMap = new Map<string, string>() // `${email}|${name}` → contactId
     if (isSupabaseConfigured()) {
       setProgressMsg('既存データを確認中...')
       const existingContacts = await fetchContactsByDivision(targetDivisionId).catch(() => [])
       for (const c of existingContacts) {
         if (c.email) {
-          const eKey = c.email.toLowerCase()
-          if (!existingPairs.has(eKey)) existingPairs.set(eKey, new Set())
-          existingPairs.get(eKey)!.add(c.name.toLowerCase().trim())
+          existingMap.set(`${c.email.toLowerCase()}|${c.name.toLowerCase().trim()}`, c.id)
         }
       }
     }
@@ -208,6 +207,8 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
     const customMappings = Object.entries(mapping)
       .filter(([, v]) => v.startsWith('custom_'))
       .map(([header, key]) => ({ header, fieldId: key.replace('custom_', '') }))
+
+    let updated = 0
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
@@ -230,11 +231,35 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         errors.push({ row: rowNum, name, message: `メールアドレスの形式が正しくありません: ${email}` }); continue
       }
 
-      // 名前＋メール両方一致で重複チェック（メールだけ同じ別人はスキップしない）
-      if (email) {
-        const eKey = email.toLowerCase()
-        const nKey = name.toLowerCase().trim()
-        if (existingPairs.get(eKey)?.has(nKey)) { skipped++; continue }
+      // 名前＋メール両方一致で既存チェック
+      const existingId = email ? existingMap.get(`${email.toLowerCase()}|${name.toLowerCase().trim()}`) : undefined
+
+      if (existingId) {
+        if (duplicateMode === 'skip') {
+          skipped++
+          continue
+        }
+        // 更新モード: 非空の項目だけ上書き
+        if (!isSupabaseConfigured()) { updated++; await new Promise((r) => setTimeout(r, 30)); continue }
+        try {
+          const tags = tagsRaw ? tagsRaw.split('|').map((t) => t.trim()).filter(Boolean) : []
+          await updateContact(existingId, {
+            ...(phone      && { phone }),
+            ...(position   && { position }),
+            ...(department && { department }),
+            ...(address    && { address }),
+            ...(notes      && { notes }),
+            ...(tags.length > 0 && { tags }),
+          })
+          for (const { header, fieldId } of customMappings) {
+            const value = row[headers.indexOf(header)]?.trim()
+            if (value) await upsertContactCustomValue(existingId, fieldId, value)
+          }
+          updated++
+        } catch (err) {
+          errors.push({ row: rowNum, name, message: err instanceof Error ? err.message : '更新に失敗しました' })
+        }
+        continue
       }
 
       if (!isSupabaseConfigured()) { success++; await new Promise((r) => setTimeout(r, 30)); continue }
@@ -251,11 +276,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
           companyId, tags,
         })
 
-        if (email) {
-          const eKey = email.toLowerCase()
-          if (!existingPairs.has(eKey)) existingPairs.set(eKey, new Set())
-          existingPairs.get(eKey)!.add(name.toLowerCase().trim())
-        }
+        if (email) existingMap.set(`${email.toLowerCase()}|${name.toLowerCase().trim()}`, contact.id)
 
         for (const { header, fieldId } of customMappings) {
           const value = row[headers.indexOf(header)]?.trim()
@@ -268,11 +289,16 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
       }
     }
 
-    setImportResult({ success, skipped, errors })
+    setImportResult({ success, updated, skipped, errors })
     setStep('done')
-    if (errors.length === 0 && skipped === 0) toast.success(`${success}件のインポートが完了しました`)
-    else if (errors.length === 0) toast.success(`${success}件成功、${skipped}件スキップ（重複）`)
-    else toast(`${success}件成功、${skipped}件スキップ、${errors.length}件エラー`, { icon: '⚠️' })
+    const parts = [
+      success  > 0 ? `${success}件登録`  : '',
+      updated  > 0 ? `${updated}件更新`  : '',
+      skipped  > 0 ? `${skipped}件スキップ` : '',
+      errors.length > 0 ? `${errors.length}件エラー` : '',
+    ].filter(Boolean).join('、')
+    if (errors.length === 0) toast.success(`${parts}しました`)
+    else toast(parts, { icon: '⚠️' })
   }
 
   const handleDownloadErrorReport = () => {
@@ -302,7 +328,12 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         </div>
         <h2 className="text-xl font-bold text-gray-800 mb-2">インポート完了</h2>
         <div className="text-sm text-gray-600 space-y-1 mb-6">
-          <p>成功: <strong className="text-green-600">{importResult?.success}件</strong></p>
+          {(importResult?.success ?? 0) > 0 && (
+            <p>新規登録: <strong className="text-green-600">{importResult?.success}件</strong></p>
+          )}
+          {(importResult?.updated ?? 0) > 0 && (
+            <p>更新: <strong className="text-blue-600">{importResult?.updated}件</strong></p>
+          )}
           {(importResult?.skipped ?? 0) > 0 && (
             <p>スキップ（重複）: <strong className="text-yellow-600">{importResult?.skipped}件</strong></p>
           )}
@@ -519,11 +550,35 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
               <p className="text-center text-xs text-gray-400 py-2">... 他 {rows.length - 5}件</p>
             )}
           </div>
-          <div className="px-5 py-4 border-t border-gray-100 flex justify-between">
-            <Button variant="secondary" onClick={() => setStep('mapping')}>マッピングに戻る</Button>
-            <Button onClick={handleImport}>
-              {rows.length}件をインポート
-            </Button>
+          <div className="px-5 py-4 border-t border-gray-100 space-y-3">
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-2">重複（名前＋メール一致）時の処理</p>
+              <div className="flex gap-4">
+                {([
+                  { value: 'skip'   as const, label: 'スキップ',         desc: '既存データを変更しない' },
+                  { value: 'update' as const, label: '更新する',          desc: '住所・電話番号など空欄を補完・上書き' },
+                ] as const).map(({ value, label, desc }) => (
+                  <label key={value} className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="duplicateMode"
+                      value={value}
+                      checked={duplicateMode === value}
+                      onChange={() => setDuplicateMode(value)}
+                      className="mt-0.5 accent-orange-500"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">{label}</p>
+                      <p className="text-xs text-gray-400">{desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-between">
+              <Button variant="secondary" onClick={() => setStep('mapping')}>マッピングに戻る</Button>
+              <Button onClick={handleImport}>{rows.length}件をインポート</Button>
+            </div>
           </div>
         </Card>
       )}
