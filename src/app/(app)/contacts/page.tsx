@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Search, Plus, Building2, Phone, Mail,
   LayoutList, LayoutGrid, ChevronDown, MapPin, SlidersHorizontal, Lock, CreditCard, X,
-  Trash2, Download, CheckSquare, Square,
+  Trash2, Download, CheckSquare, Square, Filter,
 } from 'lucide-react'
 import { MOCK_CONTACTS, MOCK_TEAM_MEMBERS } from '@/lib/mock-data'
 import { LOCATIONS, getLocationConfig, sortTags } from '@/lib/config'
@@ -100,6 +100,7 @@ export default function ContactsPage() {
   const [viewMode, setViewMode]         = useState<ViewMode>('list')
   const [locationFilter, setLocationFilter] = useState<string | null>(null)
   const [showSortMenu, setShowSortMenu] = useState(false)
+  const [showFilters, setShowFilters]   = useState(false)
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set())
   const [deleting, setDeleting]         = useState(false)
   const sortMenuRef = useRef<HTMLDivElement>(null)
@@ -262,8 +263,15 @@ export default function ContactsPage() {
   const toggleStatus = (s: string) =>
     setStatusFilter((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s])
 
+  const clearFilters = () => { setLocationFilter(null); setStatusFilter([]); setCustomFieldFilters({}) }
+
+  const activeFilterCount =
+    (locationFilter !== null ? 1 : 0) +
+    statusFilter.length +
+    Object.values(customFieldFilters).filter(Boolean).length
+
   const currentSortLabel = SORT_OPTIONS.find((o) => o.value === sortKey)?.label ?? ''
-  const hasFilter = query || locationFilter !== null || statusFilter.length > 0 || Object.values(customFieldFilters).some(Boolean)
+  const hasFilter = !!(query || locationFilter !== null || statusFilter.length > 0 || Object.values(customFieldFilters).some(Boolean))
   const noLocationCount = divisionContacts.filter(
     (c) => !LOCATIONS.some((l) => c.tags.includes(l.id))
   ).length
@@ -322,9 +330,8 @@ export default function ContactsPage() {
         </div>
       )}
 
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {/* 全選択チェックボックス */}
+      {/* ─── Toolbar (1行) ──────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 mb-3">
         <button
           onClick={toggleSelectAll}
           className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors flex-shrink-0"
@@ -333,134 +340,52 @@ export default function ContactsPage() {
           {allFilteredSelected ? <CheckSquare size={18} className="text-orange-500" /> : <Square size={18} />}
         </button>
 
-        {/* Search */}
-        <div className="relative flex-1 min-w-48">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <div className="relative flex-1 min-w-0">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="名前・会社名・メール・役職・電話番号で検索..."
-            className="w-full pl-9 pr-8 py-2 text-sm bg-white border border-gray-200 rounded-xl
-              focus:outline-none focus:ring-2 focus:ring-orange-500"
+            className="w-full pl-9 pr-8 py-2 text-sm bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
           {query && (
-            <button
-              onClick={() => setQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-            >
+            <button onClick={() => setQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
               <X size={13} />
             </button>
           )}
         </div>
 
-        {/* Location filter */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <button
-            onClick={() => setLocationFilter(null)}
-            className={cn(
-              'px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
-              locationFilter === null
-                ? 'bg-orange-500 text-white'
-                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-            )}
-          >
-            全拠点
-          </button>
-          {LOCATIONS.map((loc) => (
-            <button
-              key={loc.id}
-              onClick={() => setLocationFilter(locationFilter === loc.id ? null : loc.id)}
-              className={cn(
-                'inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
-                locationFilter === loc.id
-                  ? loc.color + ' ring-2 ring-offset-1 ring-current'
-                  : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-              )}
-            >
-              <MapPin size={12} />
-              {loc.label}
-            </button>
-          ))}
-          {noLocationCount > 0 && (
-            <button
-              onClick={() => setLocationFilter(locationFilter === 'none' ? null : 'none')}
-              className={cn(
-                'px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
-                locationFilter === 'none'
-                  ? 'bg-gray-700 text-white'
-                  : 'bg-white text-gray-500 border border-dashed border-gray-300 hover:bg-gray-50'
-              )}
-            >
-              拠点なし ({noLocationCount})
-            </button>
+        {/* フィルターボタン */}
+        <button
+          onClick={() => setShowFilters((v) => !v)}
+          className={cn(
+            'flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border transition-all flex-shrink-0',
+            activeFilterCount > 0
+              ? 'bg-orange-500 border-orange-500 text-white shadow-sm'
+              : showFilters
+                ? 'bg-gray-100 border-gray-300 text-gray-700'
+                : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
           )}
-        </div>
-
-      </div>
-
-      {/* ステータス・カスタムフィールドフィルター */}
-      {(STATUS_CONFIG.length > 0 || selectCustomFields.length > 0) && (
-        <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <span className="text-xs text-gray-400 font-medium flex-shrink-0">絞り込み:</span>
-          {STATUS_CONFIG.map(({ status, icon: Icon, label, activeClass }) => {
-            const active = statusFilter.includes(status)
-            return (
-              <button
-                key={status}
-                onClick={() => toggleStatus(status)}
-                title={label}
-                className={cn(
-                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors',
-                  active
-                    ? 'border-transparent bg-gray-800 text-white'
-                    : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                )}
-              >
-                <Icon size={12} fill={active ? 'currentColor' : 'none'} className={active ? 'text-white' : activeClass} />
-                {label}
-              </button>
-            )
-          })}
-          {selectCustomFields.map((field) => (
-            <select
-              key={field.id}
-              value={customFieldFilters[field.id] ?? ''}
-              onChange={(e) => setCustomFieldFilters((prev) => ({ ...prev, [field.id]: e.target.value }))}
-              className={cn(
-                'px-2.5 py-1 rounded-full text-xs border transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500',
-                customFieldFilters[field.id]
-                  ? 'border-orange-400 bg-orange-50 text-orange-700 font-medium'
-                  : 'border-gray-200 bg-white text-gray-500'
-              )}
-            >
-              <option value="">{field.label}（全て）</option>
-              {field.options?.map((opt) => (
-                <option key={opt} value={opt}>{opt}</option>
-              ))}
-            </select>
-          ))}
-          {(statusFilter.length > 0 || Object.values(customFieldFilters).some(Boolean)) && (
-            <button
-              onClick={() => { setStatusFilter([]); setCustomFieldFilters({}) }}
-              className="text-xs text-gray-400 hover:text-gray-600 underline"
-            >
-              クリア
-            </button>
+        >
+          <Filter size={14} />
+          <span className="hidden sm:inline">絞り込み</span>
+          {activeFilterCount > 0 && (
+            <span className="w-4 h-4 rounded-full bg-white text-orange-500 text-[10px] font-bold flex items-center justify-center">
+              {activeFilterCount}
+            </span>
           )}
-        </div>
-      )}
+          <ChevronDown size={12} className={cn('transition-transform', showFilters && 'rotate-180')} />
+        </button>
 
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
         {/* Sort */}
-        <div className="relative ml-auto" ref={sortMenuRef}>
+        <div className="relative flex-shrink-0" ref={sortMenuRef}>
           <button
             onClick={() => setShowSortMenu((v) => !v)}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm bg-white border border-gray-200 rounded-xl
-              hover:bg-gray-50 transition-colors text-gray-600"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-gray-600"
           >
             <SlidersHorizontal size={14} />
-            <span className="hidden sm:inline">{currentSortLabel}</span>
+            <span className="hidden sm:inline text-xs">{currentSortLabel}</span>
             <ChevronDown size={12} className={cn('transition-transform', showSortMenu && 'rotate-180')} />
           </button>
           {showSortMenu && (
@@ -469,12 +394,7 @@ export default function ContactsPage() {
                 <button
                   key={opt.value}
                   onClick={() => { setSortKey(opt.value); setShowSortMenu(false) }}
-                  className={cn(
-                    'w-full text-left px-4 py-2.5 text-sm transition-colors',
-                    sortKey === opt.value
-                      ? 'bg-orange-50 text-orange-600 font-medium'
-                      : 'text-gray-700 hover:bg-gray-50'
-                  )}
+                  className={cn('w-full text-left px-4 py-2.5 text-sm transition-colors', sortKey === opt.value ? 'bg-orange-50 text-orange-600 font-medium' : 'text-gray-700 hover:bg-gray-50')}
                 >
                   {opt.label}
                 </button>
@@ -484,50 +404,127 @@ export default function ContactsPage() {
         </div>
 
         {/* View toggle */}
-        <div className="flex items-center bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <button
-            onClick={() => setViewMode('list')}
-            className={cn('p-2 transition-colors', viewMode === 'list' ? 'bg-orange-500 text-white' : 'text-gray-500 hover:bg-gray-50')}
-            title="リスト表示"
-          >
-            <LayoutList size={16} />
-          </button>
-          <button
-            onClick={() => setViewMode('card')}
-            className={cn('p-2 transition-colors', viewMode === 'card' ? 'bg-orange-500 text-white' : 'text-gray-500 hover:bg-gray-50')}
-            title="カード表示"
-          >
-            <LayoutGrid size={16} />
-          </button>
-          <button
-            onClick={() => setViewMode('company')}
-            className={cn('p-2 transition-colors', viewMode === 'company' ? 'bg-orange-500 text-white' : 'text-gray-500 hover:bg-gray-50')}
-            title="会社別表示"
-          >
-            <Building2 size={16} />
-          </button>
+        <div className="flex items-center bg-white border border-gray-200 rounded-xl overflow-hidden flex-shrink-0">
+          {([
+            { mode: 'list'    as const, Icon: LayoutList,  title: 'リスト表示' },
+            { mode: 'card'    as const, Icon: LayoutGrid,   title: 'カード表示' },
+            { mode: 'company' as const, Icon: Building2,    title: '会社別表示' },
+          ]).map(({ mode, Icon, title }) => (
+            <button
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              className={cn('p-2 transition-colors', viewMode === mode ? 'bg-orange-500 text-white' : 'text-gray-500 hover:bg-gray-50')}
+              title={title}
+            >
+              <Icon size={16} />
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Active filters summary */}
-      {hasFilter && (
-        <div className="flex items-center gap-2 mb-3 text-xs text-gray-500 flex-wrap">
-          <span>フィルター中:</span>
+      {/* ─── フィルターパネル ─────────────────────────────────────── */}
+      {showFilters && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-4 shadow-sm space-y-3">
+          {/* 拠点 */}
+          <div className="flex items-start gap-4">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0">拠点</span>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={() => setLocationFilter(null)}
+                className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors', locationFilter === null ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+              >全て</button>
+              {LOCATIONS.map((loc) => (
+                <button
+                  key={loc.id}
+                  onClick={() => setLocationFilter(locationFilter === loc.id ? null : loc.id)}
+                  className={cn('inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium transition-colors',
+                    locationFilter === loc.id ? loc.color + ' ring-2 ring-offset-1 ring-current' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+                >
+                  <MapPin size={10} />{loc.label}
+                </button>
+              ))}
+              {noLocationCount > 0 && (
+                <button
+                  onClick={() => setLocationFilter(locationFilter === 'none' ? null : 'none')}
+                  className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors', locationFilter === 'none' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200')}
+                >拠点なし ({noLocationCount})</button>
+              )}
+            </div>
+          </div>
+
+          {/* ステータス */}
+          <div className="flex items-start gap-4">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0">状態</span>
+            <div className="flex flex-wrap gap-1.5">
+              {STATUS_CONFIG.map(({ status, icon: Icon, label, activeClass }) => {
+                const active = statusFilter.includes(status)
+                return (
+                  <button
+                    key={status}
+                    onClick={() => toggleStatus(status)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all',
+                      active ? 'border-transparent bg-gray-800 text-white shadow-sm' : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'
+                    )}
+                  >
+                    <Icon size={11} fill={active ? 'currentColor' : 'none'} className={active ? 'text-white' : activeClass} />
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* カスタムフィールド（select型のみ） */}
+          {selectCustomFields.map((field) => (
+            <div key={field.id} className="flex items-start gap-4">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0 truncate">{field.label}</span>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => setCustomFieldFilters((p) => ({ ...p, [field.id]: '' }))}
+                  className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors', !customFieldFilters[field.id] ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+                >全て</button>
+                {field.options?.map((opt) => (
+                  <button
+                    key={opt}
+                    onClick={() => setCustomFieldFilters((p) => ({ ...p, [field.id]: p[field.id] === opt ? '' : opt }))}
+                    className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors', customFieldFilters[field.id] === opt ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+                  >{opt}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {/* フッター */}
+          {activeFilterCount > 0 && (
+            <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
+              <span className="text-xs text-gray-400">{filtered.length}件が一致</span>
+              <button onClick={clearFilters} className="text-xs font-medium text-orange-500 hover:text-orange-700 transition-colors">
+                フィルターをクリア
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── アクティブフィルターバッジ（パネル非表示時のみ） ────── */}
+      {!showFilters && hasFilter && (
+        <div className="flex items-center gap-1.5 mb-3 flex-wrap">
           {query && (
-            <span className="flex items-center gap-1 bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+            <span className="inline-flex items-center gap-1 bg-orange-50 text-orange-700 border border-orange-200 px-2.5 py-1 rounded-full text-xs font-medium">
               「{query}」<button onClick={() => setQuery('')}><X size={10} /></button>
             </span>
           )}
           {locationFilter && (
-            <span className="flex items-center gap-1 bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full">
-              {locationFilter === 'none' ? '拠点なし' : locationFilter}
+            <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 border border-gray-200 px-2.5 py-1 rounded-full text-xs font-medium">
+              <MapPin size={10} />{locationFilter === 'none' ? '拠点なし' : locationFilter}
               <button onClick={() => setLocationFilter(null)}><X size={10} /></button>
             </span>
           )}
           {statusFilter.map((s) => {
             const cfg = STATUS_CONFIG.find((c) => c.status === s)
             return cfg ? (
-              <span key={s} className="flex items-center gap-1 bg-gray-800 text-white px-2 py-0.5 rounded-full">
+              <span key={s} className="inline-flex items-center gap-1 bg-gray-800 text-white px-2.5 py-1 rounded-full text-xs font-medium">
                 {cfg.label}<button onClick={() => toggleStatus(s)}><X size={10} /></button>
               </span>
             ) : null
@@ -535,16 +532,13 @@ export default function ContactsPage() {
           {Object.entries(customFieldFilters).filter(([, v]) => v).map(([fieldId, val]) => {
             const field = selectCustomFields.find((f) => f.id === fieldId)
             return field ? (
-              <span key={fieldId} className="flex items-center gap-1 bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+              <span key={fieldId} className="inline-flex items-center gap-1 bg-orange-50 text-orange-700 border border-orange-200 px-2.5 py-1 rounded-full text-xs font-medium">
                 {field.label}: {val}
                 <button onClick={() => setCustomFieldFilters((p) => ({ ...p, [fieldId]: '' }))}><X size={10} /></button>
               </span>
             ) : null
           })}
-          <button
-            onClick={() => { setQuery(''); setLocationFilter(null); setStatusFilter([]); setCustomFieldFilters({}) }}
-            className="text-gray-400 hover:text-gray-600 ml-1"
-          >
+          <button onClick={() => { setQuery(''); clearFilters() }} className="text-xs text-gray-400 hover:text-gray-600 ml-1 underline">
             すべてクリア
           </button>
         </div>
