@@ -1,25 +1,29 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import Papa from 'papaparse'
-import { Upload, ArrowRight, Check, Download, AlertCircle, Info } from 'lucide-react'
+import { Upload, ArrowRight, Check, Download, AlertCircle, Info, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { createContact } from '@/lib/db/contacts'
+import { createContact, upsertContactCustomValue } from '@/lib/db/contacts'
 import { findOrCreateCompany } from '@/lib/db/companies'
+import { fetchDivisionCustomFields } from '@/lib/db/divisions'
 import { useAppStore } from '@/store/appStore'
+import type { DivisionCustomField } from '@/store/appStore'
 import toast from 'react-hot-toast'
 
 const SYSTEM_FIELDS = [
-  { key: 'name',     label: '担当者名',    required: true  },
-  { key: 'company',  label: '会社名',      required: false },
-  { key: 'email',    label: 'メールアドレス', required: false },
-  { key: 'phone',    label: '電話番号',    required: false },
-  { key: 'position', label: '役職',        required: false },
-  { key: 'tags',     label: 'タグ（|区切り）', required: false },
-  { key: 'skip',     label: '取り込まない', required: false },
+  { key: 'name',     label: '担当者名',       required: true  },
+  { key: 'company',  label: '会社名',          required: false },
+  { key: 'email',    label: 'メールアドレス',  required: false },
+  { key: 'phone',    label: '電話番号',         required: false },
+  { key: 'position', label: '役職',             required: false },
+  { key: 'tags',     label: 'タグ（|区切り）',  required: false },
+  { key: 'skip',     label: '取り込まない',     required: false },
 ]
+
+const mappingKey = (divisionId: string) => `pollock-import-mapping-${divisionId}`
 
 type Step = 'upload' | 'mapping' | 'preview' | 'importing' | 'done'
 
@@ -47,6 +51,7 @@ interface CSVImporterProps {
 
 export function CSVImporter({ divisionId }: CSVImporterProps) {
   const activeDivisionId = useAppStore((s) => s.activeDivisionId)
+  const storeCustomFields = useAppStore((s) => s.divisionCustomFields)
   const targetDivisionId = divisionId ?? activeDivisionId
 
   const [step, setStep]         = useState<Step>('upload')
@@ -56,10 +61,32 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
   const [mapping, setMapping]   = useState<Record<string, string>>({})
   const [progress, setProgress] = useState(0)
   const [progressMsg, setProgressMsg] = useState('')
-  const [importResult, setImportResult] = useState<{
-    success: number; errors: ImportError[]
-  } | null>(null)
+  const [importResult, setImportResult] = useState<{ success: number; errors: ImportError[] } | null>(null)
+  const [customFields, setCustomFields] = useState<DivisionCustomField[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // 事業部のカスタムフィールドを取得
+  useEffect(() => {
+    if (!targetDivisionId) return
+    if (isSupabaseConfigured()) {
+      fetchDivisionCustomFields(targetDivisionId).then((fields) => {
+        setCustomFields(fields.length > 0 ? fields : (storeCustomFields[targetDivisionId] ?? []))
+      }).catch(() => {
+        setCustomFields(storeCustomFields[targetDivisionId] ?? [])
+      })
+    } else {
+      setCustomFields(storeCustomFields[targetDivisionId] ?? [])
+    }
+  }, [targetDivisionId]) // eslint-disable-line
+
+  // システムフィールド + カスタムフィールド の全マッピング選択肢
+  const allMappingFields = useMemo(() => [
+    ...SYSTEM_FIELDS,
+    ...customFields.map((f) => ({ key: `custom_${f.id}`, label: f.label, required: false })),
+  ], [customFields])
+
+  const getLabelForKey = (key: string): string =>
+    allMappingFields.find((f) => f.key === key)?.label ?? key
 
   const handleFile = (f: File) => {
     setFile(f)
@@ -73,7 +100,12 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         setHeaders(hdrs)
         setRows(validRows)
 
-        // 自動マッピング
+        // 保存済みマッピングを読み込む（事業部別）
+        const saved: Record<string, string> = targetDivisionId
+          ? JSON.parse(localStorage.getItem(mappingKey(targetDivisionId)) ?? '{}')
+          : {}
+
+        // 自動マッピング（ヘッダー名から推測）
         const autoMap: Record<string, string> = {}
         hdrs.forEach((h) => {
           const lower = h.toLowerCase()
@@ -85,7 +117,13 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
           else if (lower.includes('タグ') || lower === 'tag') autoMap[h] = 'tags'
           else autoMap[h] = 'skip'
         })
-        setMapping(autoMap)
+
+        // 保存済み > 自動推測の優先度でマージ（保存済みに存在するヘッダーのみ適用）
+        const savedForHeaders: Record<string, string> = {}
+        hdrs.forEach((h) => {
+          if (saved[h]) savedForHeaders[h] = saved[h]
+        })
+        setMapping({ ...autoMap, ...savedForHeaders })
         setStep('mapping')
       },
       error: () => toast.error('CSVの読み込みに失敗しました。UTF-8形式で保存されているか確認してください。'),
@@ -103,6 +141,33 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
     Object.values(mapping).includes(f.key)
   )
 
+  const handleProceedToPreview = () => {
+    // マッピングをlocalStorageに保存（事業部別）
+    if (targetDivisionId) {
+      localStorage.setItem(mappingKey(targetDivisionId), JSON.stringify(mapping))
+    }
+    setStep('preview')
+  }
+
+  const handleResetMapping = () => {
+    if (!targetDivisionId) return
+    localStorage.removeItem(mappingKey(targetDivisionId))
+    toast.success('保存済みマッピングをリセットしました')
+    // 自動マッピングで再計算
+    const autoMap: Record<string, string> = {}
+    headers.forEach((h) => {
+      const lower = h.toLowerCase()
+      if (lower.includes('名前') || lower.includes('氏名') || lower === 'name' || lower.includes('担当')) autoMap[h] = 'name'
+      else if (lower.includes('会社') || lower.includes('企業') || lower === 'company') autoMap[h] = 'company'
+      else if (lower.includes('mail') || lower.includes('メール')) autoMap[h] = 'email'
+      else if (lower.includes('tel') || lower.includes('電話') || lower.includes('phone')) autoMap[h] = 'phone'
+      else if (lower.includes('役職') || lower.includes('position') || lower.includes('肩書')) autoMap[h] = 'position'
+      else if (lower.includes('タグ') || lower === 'tag') autoMap[h] = 'tags'
+      else autoMap[h] = 'skip'
+    })
+    setMapping(autoMap)
+  }
+
   const getField = (row: string[], key: string): string => {
     const header = Object.keys(mapping).find((h) => mapping[h] === key)
     if (!header) return ''
@@ -110,78 +175,69 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
   }
 
   const handleImport = async () => {
-    if (!targetDivisionId) {
-      toast.error('事業部が選択されていません')
-      return
-    }
+    if (!targetDivisionId) { toast.error('事業部が選択されていません'); return }
     setStep('importing')
     setProgress(0)
 
     const errors: ImportError[] = []
     let success = 0
 
+    // カスタムフィールドのマッピングを事前抽出
+    const customMappings = Object.entries(mapping)
+      .filter(([, v]) => v.startsWith('custom_'))
+      .map(([header, key]) => ({
+        header,
+        fieldId: key.replace('custom_', ''),
+      }))
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
       const rowNum = i + 2
-      const name    = getField(row, 'name')
-      const company = getField(row, 'company')
-      const email   = getField(row, 'email')
-      const phone   = getField(row, 'phone')
+      const name     = getField(row, 'name')
+      const company  = getField(row, 'company')
+      const email    = getField(row, 'email')
+      const phone    = getField(row, 'phone')
       const position = getField(row, 'position')
       const tagsRaw  = getField(row, 'tags')
 
       setProgressMsg(`${i + 1}/${rows.length} 件処理中: ${name || `行${rowNum}`}`)
       setProgress(Math.round(((i + 1) / rows.length) * 100))
 
-      // バリデーション
-      if (!name) {
-        errors.push({ row: rowNum, name: '(空)', message: '担当者名が空です' })
-        continue
-      }
+      if (!name) { errors.push({ row: rowNum, name: '(空)', message: '担当者名が空です' }); continue }
       if (email && !validateEmail(email)) {
-        errors.push({ row: rowNum, name, message: `メールアドレスの形式が正しくありません: ${email}` })
-        continue
+        errors.push({ row: rowNum, name, message: `メールアドレスの形式が正しくありません: ${email}` }); continue
       }
 
-      if (!isSupabaseConfigured()) {
-        // デモモード：バリデーションのみ
-        success++
-        await new Promise((r) => setTimeout(r, 30))
-        continue
-      }
+      if (!isSupabaseConfigured()) { success++; await new Promise((r) => setTimeout(r, 30)); continue }
 
       try {
-        const companyId = company
-          ? (await findOrCreateCompany(company)) ?? undefined
-          : undefined
+        const companyId = company ? (await findOrCreateCompany(company)) ?? undefined : undefined
+        const tags = tagsRaw ? tagsRaw.split('|').map((t) => t.trim()).filter(Boolean) : []
 
-        const tags = tagsRaw
-          ? tagsRaw.split('|').map((t) => t.trim()).filter(Boolean)
-          : []
-
-        await createContact({
-          divisionId: targetDivisionId,
-          name,
-          email: email || undefined,
-          phone: phone || undefined,
-          position: position || undefined,
-          companyId,
-          tags,
+        const contact = await createContact({
+          divisionId: targetDivisionId, name,
+          email: email || undefined, phone: phone || undefined,
+          position: position || undefined, companyId, tags,
         })
+
+        // カスタムフィールドの値を保存
+        for (const { header, fieldId } of customMappings) {
+          const value = row[headers.indexOf(header)]?.trim()
+          if (value) {
+            await upsertContactCustomValue(contact.id, fieldId, value)
+          }
+        }
+
         success++
       } catch (err) {
-        const msg = err instanceof Error ? err.message : '登録に失敗しました'
-        errors.push({ row: rowNum, name, message: msg })
+        errors.push({ row: rowNum, name, message: err instanceof Error ? err.message : '登録に失敗しました' })
       }
     }
 
     setImportResult({ success, errors })
     setStep('done')
-    if (errors.length === 0) {
-      toast.success(`${success}件のインポートが完了しました`)
-    } else {
-      toast(`${success}件成功、${errors.length}件エラー`, { icon: '⚠️' })
-    }
+    if (errors.length === 0) toast.success(`${success}件のインポートが完了しました`)
+    else toast(`${success}件成功、${errors.length}件エラー`, { icon: '⚠️' })
   }
 
   const handleDownloadErrorReport = () => {
@@ -193,17 +249,12 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
   }
 
   const handleReset = () => {
-    setStep('upload')
-    setFile(null)
-    setRows([])
-    setHeaders([])
-    setMapping({})
-    setProgress(0)
-    setProgressMsg('')
-    setImportResult(null)
+    setStep('upload'); setFile(null); setRows([]); setHeaders([])
+    setMapping({}); setProgress(0); setProgressMsg(''); setImportResult(null)
     if (fileRef.current) fileRef.current.value = ''
   }
 
+  // ─── 完了画面 ───────────────────────────────────────────────────
   if (step === 'done') {
     return (
       <Card className="p-8 text-center max-w-md mx-auto">
@@ -224,9 +275,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         {(importResult?.errors.length ?? 0) > 0 && (
           <div className="mb-4 text-left bg-red-50 border border-red-100 rounded-xl p-3 max-h-40 overflow-y-auto">
             {importResult!.errors.slice(0, 10).map((e, i) => (
-              <p key={i} className="text-xs text-red-600 mb-1">
-                行{e.row} <strong>{e.name}</strong>: {e.message}
-              </p>
+              <p key={i} className="text-xs text-red-600 mb-1">行{e.row} <strong>{e.name}</strong>: {e.message}</p>
             ))}
             {importResult!.errors.length > 10 && (
               <p className="text-xs text-red-400">... 他{importResult!.errors.length - 10}件</p>
@@ -239,9 +288,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
               エラーレポートDL
             </Button>
           )}
-          <Button onClick={handleReset}>
-            続けてインポート
-          </Button>
+          <Button onClick={handleReset}>続けてインポート</Button>
         </div>
       </Card>
     )
@@ -278,6 +325,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         ))}
       </div>
 
+      {/* ─── ファイル選択 ─── */}
       {step === 'upload' && (
         <div className="space-y-3">
           <div
@@ -291,13 +339,8 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
             <p className="text-gray-600 font-medium mb-1">CSVファイルをドラッグ＆ドロップ</p>
             <p className="text-sm text-gray-400">またはクリックしてファイルを選択</p>
             <p className="text-xs text-gray-300 mt-2">.csv 形式・UTF-8 エンコード</p>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".csv"
-              className="hidden"
-              onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-            />
+            <input ref={fileRef} type="file" accept=".csv" className="hidden"
+              onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
           </div>
           <div className="flex items-start gap-2 px-3 py-2.5 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700">
             <Info size={14} className="flex-shrink-0 mt-0.5" />
@@ -309,6 +352,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         </div>
       )}
 
+      {/* ─── 列のマッピング ─── */}
       {step === 'mapping' && (
         <Card className="overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -316,7 +360,17 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
               <h2 className="font-bold text-gray-800">列のマッピング</h2>
               <p className="text-xs text-gray-400 mt-0.5">{rows.length}行のデータを検出しました</p>
             </div>
-            <span className="text-sm text-gray-500 truncate max-w-36">{file?.name}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleResetMapping}
+                className="flex items-center gap-1 text-xs text-gray-400 hover:text-orange-500 transition-colors px-2 py-1.5 rounded-lg hover:bg-orange-50"
+                title="保存済みマッピングをリセット"
+              >
+                <RotateCcw size={12} />
+                リセット
+              </button>
+              <span className="text-sm text-gray-500 truncate max-w-36">{file?.name}</span>
+            </div>
           </div>
           {!canProceed && (
             <div className="px-5 py-2.5 bg-yellow-50 border-b border-yellow-100 text-xs text-yellow-700 flex items-center gap-1.5">
@@ -324,7 +378,19 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
               「担当者名」は必須です。対応する列を選択してください。
             </div>
           )}
+          {targetDivisionId && localStorage.getItem(mappingKey(targetDivisionId)) && (
+            <div className="px-5 py-2 bg-green-50 border-b border-green-100 text-xs text-green-700 flex items-center gap-1.5">
+              <Check size={12} />
+              この事業部の保存済みマッピングを適用しました
+            </div>
+          )}
           <div className="p-5 space-y-3">
+            {/* カスタムフィールドがある場合の説明 */}
+            {customFields.length > 0 && (
+              <p className="text-xs text-gray-400">
+                選択肢には基本項目のほか、この事業部のカスタムフィールド（{customFields.map((f) => f.label).join('・')}）も含まれています。
+              </p>
+            )}
             {headers.map((header) => (
               <div key={header} className="flex items-center gap-3">
                 <div className="w-36 text-sm font-medium text-gray-700 truncate flex-shrink-0" title={header}>{header}</div>
@@ -335,11 +401,22 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
                   className="flex-1 text-sm px-3 py-2 border border-gray-200 rounded-lg
                     focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
                 >
-                  {SYSTEM_FIELDS.map((f) => (
-                    <option key={f.key} value={f.key}>
-                      {f.label}{f.required ? ' *' : ''}
-                    </option>
-                  ))}
+                  {/* システムフィールド */}
+                  <optgroup label="基本項目">
+                    {SYSTEM_FIELDS.map((f) => (
+                      <option key={f.key} value={f.key}>
+                        {f.label}{f.required ? ' *' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                  {/* カスタムフィールド */}
+                  {customFields.length > 0 && (
+                    <optgroup label="カスタム項目">
+                      {customFields.map((f) => (
+                        <option key={f.id} value={`custom_${f.id}`}>{f.label}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
                 <div className="w-28 text-xs text-gray-400 truncate flex-shrink-0" title={rows[0]?.[headers.indexOf(header)]}>
                   例: {rows[0]?.[headers.indexOf(header)] || '—'}
@@ -349,11 +426,14 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
           </div>
           <div className="px-5 pb-5 flex justify-between">
             <Button variant="secondary" onClick={() => setStep('upload')}>戻る</Button>
-            <Button onClick={() => setStep('preview')} disabled={!canProceed}>プレビューへ</Button>
+            <Button onClick={handleProceedToPreview} disabled={!canProceed}>
+              プレビューへ（マッピングを保存）
+            </Button>
           </div>
         </Card>
       )}
 
+      {/* ─── プレビュー ─── */}
       {step === 'preview' && (
         <Card className="overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-100">
@@ -369,7 +449,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
                     .filter(([, v]) => v !== 'skip')
                     .map(([h, v]) => (
                       <th key={h} className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 whitespace-nowrap">
-                        {SYSTEM_FIELDS.find((f) => f.key === v)?.label}
+                        {getLabelForKey(v)}
                         <span className="text-gray-300 ml-1 font-normal">({h})</span>
                       </th>
                     ))}
@@ -378,9 +458,8 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
               <tbody className="divide-y divide-gray-50">
                 {rows.slice(0, 5).map((row, i) => {
                   const name = getField(row, 'name')
-                  const hasError = !name
                   return (
-                    <tr key={i} className={hasError ? 'bg-red-50' : 'hover:bg-gray-50'}>
+                    <tr key={i} className={!name ? 'bg-red-50' : 'hover:bg-gray-50'}>
                       <td className="px-3 py-2.5 text-xs text-gray-300">{i + 2}</td>
                       {Object.entries(mapping)
                         .filter(([, v]) => v !== 'skip')
@@ -398,9 +477,9 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
               <p className="text-center text-xs text-gray-400 py-2">... 他 {rows.length - 5}件</p>
             )}
           </div>
-          <div className="px-5 py-4 border-t border-gray-100 flex justify-between items-center">
-            <Button variant="secondary" onClick={() => setStep('mapping')}>戻る</Button>
-            <Button onClick={handleImport} icon={<Upload size={14} />}>
+          <div className="px-5 py-4 border-t border-gray-100 flex justify-between">
+            <Button variant="secondary" onClick={() => setStep('mapping')}>マッピングに戻る</Button>
+            <Button onClick={handleImport}>
               {rows.length}件をインポート
             </Button>
           </div>
