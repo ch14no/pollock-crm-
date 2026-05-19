@@ -122,8 +122,12 @@ export async function deleteContact(id: string): Promise<void> {
 }
 
 export async function deleteContacts(ids: string[]): Promise<void> {
-  const { error } = await getSupabase().from('contacts').delete().in('id', ids)
-  if (error) throw error
+  // Supabase の URL 長制限を避けるため 50 件ずつ分割して削除
+  const CHUNK = 50
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { error } = await getSupabase().from('contacts').delete().in('id', ids.slice(i, i + CHUNK))
+    if (error) throw error
+  }
 }
 
 // カスタムフィールド値
