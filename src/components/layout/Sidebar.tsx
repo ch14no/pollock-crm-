@@ -35,6 +35,12 @@ const GROUP_APPS = [
     emoji: '👥',
     description: '人材管理・組織',
   },
+  {
+    name: 'ポロック杯',
+    url: 'https://pollock-cup.vercel.app/cases',
+    emoji: '🏆',
+    description: '社内大会管理',
+  },
   // 追加予定のアプリはここに追記
   // { name: 'アプリ名', url: 'https://...', emoji: '📊', description: '説明' },
 ]
