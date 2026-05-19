@@ -39,7 +39,7 @@ async function adminFetch(url: string, options: RequestInit): Promise<Response> 
 }
 
 export async function createUserAdmin(input: {
-  name: string; email: string; password: string; role: string
+  name: string; email: string; password: string; role: string; divisionIds?: string[]
 }): Promise<User> {
   const res = await adminFetch('/api/admin/users', {
     method: 'POST',
@@ -51,7 +51,7 @@ export async function createUserAdmin(input: {
 }
 
 export async function updateUserAdmin(id: string, updates: {
-  name?: string; role?: string; password?: string
+  name?: string; role?: string; password?: string; divisionIds?: string[]
 }): Promise<void> {
   const res = await adminFetch('/api/admin/users', {
     method: 'PUT',
@@ -59,6 +59,14 @@ export async function updateUserAdmin(id: string, updates: {
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error ?? '更新に失敗しました')
+}
+
+export async function fetchUserDivisionIds(userId: string): Promise<string[]> {
+  const { data } = await getSupabase()
+    .from('user_divisions')
+    .select('division_id')
+    .eq('user_id', userId)
+  return (data ?? []).map((r) => r.division_id as string)
 }
 
 export async function deleteUserAdmin(id: string): Promise<void> {

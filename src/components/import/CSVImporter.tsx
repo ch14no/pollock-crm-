@@ -82,6 +82,14 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
   const [customFields, setCustomFields] = useState<DivisionCustomField[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // インポート中の離脱を防ぐ
+  useEffect(() => {
+    if (step !== 'importing') return
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [step])
+
   // 事業部のカスタムフィールドを取得
   useEffect(() => {
     if (!targetDivisionId) return
@@ -300,6 +308,10 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
   if (step === 'importing') {
     return (
       <Card className="p-8 text-center max-w-md mx-auto">
+        <div className="flex items-center gap-2 justify-center px-4 py-2 mb-6 bg-yellow-50 border border-yellow-200 rounded-xl text-yellow-800 text-sm">
+          <AlertCircle size={15} className="flex-shrink-0" />
+          インポート中はこのページから離れないでください
+        </div>
         <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
         <h2 className="text-lg font-bold text-gray-800 mb-2">インポート中...</h2>
         <p className="text-sm text-gray-500 mb-4 min-h-5">{progressMsg}</p>

@@ -38,14 +38,13 @@ export async function POST(req: NextRequest) {
   if (!await verifySuperAdmin(req)) {
     return NextResponse.json({ error: '権限がありません' }, { status: 403 })
   }
-  const { name, email, password, role } = await req.json() as {
-    name: string; email: string; password: string; role: string
+  const { name, email, password, role, divisionIds } = await req.json() as {
+    name: string; email: string; password: string; role: string; divisionIds?: string[]
   }
   if (!name || !email || !password || !role) {
     return NextResponse.json({ error: '必須項目が不足しています' }, { status: 400 })
   }
 
-  // サービスロールキーの診断
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!serviceKey || serviceKey.length < 50) {
     return NextResponse.json({
@@ -65,7 +64,6 @@ export async function POST(req: NextRequest) {
   }
 
   const userId = authData.user.id
-  // トリガーが自動挿入する場合があるため upsert で対応
   const { error: dbError } = await admin
     .from('users')
     .upsert({ id: userId, name, email, role }, { onConflict: 'id' })
@@ -74,16 +72,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: dbError.message }, { status: 500 })
   }
 
+  if (divisionIds && divisionIds.length > 0) {
+    const rows = divisionIds.map((divId, i) => ({
+      user_id: userId, division_id: divId, is_primary: i === 0,
+    }))
+    await admin.from('user_divisions').insert(rows)
+  }
+
   return NextResponse.json({ id: userId, name, email, role }, { status: 201 })
 }
 
-// PUT: ユーザー更新（名前・ロール・パスワード）
+// PUT: ユーザー更新（名前・ロール・パスワード・事業部）
 export async function PUT(req: NextRequest) {
   if (!await verifySuperAdmin(req)) {
     return NextResponse.json({ error: '権限がありません' }, { status: 403 })
   }
-  const { id, name, role, password } = await req.json() as {
-    id: string; name?: string; role?: string; password?: string
+  const { id, name, role, password, divisionIds } = await req.json() as {
+    id: string; name?: string; role?: string; password?: string; divisionIds?: string[]
   }
   if (!id) return NextResponse.json({ error: 'id が必要です' }, { status: 400 })
 
@@ -100,6 +105,16 @@ export async function PUT(req: NextRequest) {
   if (Object.keys(updates).length > 0) {
     const { error } = await admin.from('users').update(updates).eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  if (divisionIds !== undefined) {
+    await admin.from('user_divisions').delete().eq('user_id', id)
+    if (divisionIds.length > 0) {
+      const rows = divisionIds.map((divId, i) => ({
+        user_id: id, division_id: divId, is_primary: i === 0,
+      }))
+      await admin.from('user_divisions').insert(rows)
+    }
   }
 
   return NextResponse.json({ ok: true })

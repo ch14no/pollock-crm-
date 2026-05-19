@@ -14,7 +14,7 @@ import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES } from '@/lib/m
 import type { Role } from '@/types/database'
 import { cn, getInitials } from '@/lib/utils'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { updateUserName, fetchAllUsers, createUserAdmin, updateUserAdmin, deleteUserAdmin } from '@/lib/db/users'
+import { updateUserName, fetchAllUsers, createUserAdmin, updateUserAdmin, deleteUserAdmin, fetchUserDivisionIds } from '@/lib/db/users'
 import {
   fetchPipelineStages, upsertPipelineStages,
   fetchDivisionCustomFields,
@@ -204,8 +204,8 @@ export default function SettingsPage() {
 }
 
 // ─── アカウント管理 ───────────────────────────────────────────────
-const EMPTY_CREATE = { name: '', email: '', password: '', role: 'user' as Role }
-const EMPTY_EDIT   = { name: '', role: 'user' as Role }
+const EMPTY_CREATE = { name: '', email: '', password: '', role: 'user' as Role, divisionIds: [] as string[] }
+const EMPTY_EDIT   = { name: '', role: 'user' as Role, divisionIds: [] as string[] }
 const EMPTY_PW     = ''
 
 function PwInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
@@ -229,7 +229,7 @@ function PwInput({ value, onChange, placeholder }: { value: string; onChange: (v
 }
 
 function AccountsPanel() {
-  const { currentUser } = useAppStore()
+  const { currentUser, divisions } = useAppStore()
   const [users,       setUsers]       = useState<UserType[]>([])
   const [loading,     setLoading]     = useState(false)
   const [showCreate,  setShowCreate]  = useState(false)
@@ -268,7 +268,7 @@ function AccountsPanel() {
     if (!editForm.name.trim()) { toast.error('氏名を入力してください'); return }
     setSaving(true)
     try {
-      await updateUserAdmin(id, { name: editForm.name.trim(), role: editForm.role })
+      await updateUserAdmin(id, { name: editForm.name.trim(), role: editForm.role, divisionIds: editForm.divisionIds })
       toast.success('更新しました')
       setEditingId(null)
       reload()
@@ -276,6 +276,18 @@ function AccountsPanel() {
       toast.error((e as Error).message)
     } finally { setSaving(false) }
   }
+
+  const openEdit = async (user: UserType) => {
+    const divIds = await fetchUserDivisionIds(user.id)
+    setEditingId(user.id)
+    setEditForm({ name: user.name, role: user.role as Role, divisionIds: divIds })
+    setPwResetId(null)
+  }
+
+  const toggleDivision = (form: typeof EMPTY_EDIT, divId: string) =>
+    form.divisionIds.includes(divId)
+      ? form.divisionIds.filter((id) => id !== divId)
+      : [...form.divisionIds, divId]
 
   const handlePwReset = async (id: string) => {
     if (newPw.length < 6) { toast.error('パスワードは6文字以上で入力してください'); return }
@@ -348,6 +360,24 @@ function AccountsPanel() {
                 </select>
               </div>
             </div>
+            {createForm.role !== 'super_admin' && divisions.length > 0 && (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">所属事業部</label>
+                <div className="flex flex-wrap gap-3">
+                  {divisions.map((div) => (
+                    <label key={div.id} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={createForm.divisionIds.includes(div.id)}
+                        onChange={() => setCreateForm((f) => ({ ...f, divisionIds: toggleDivision(f, div.id) }))}
+                        className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
+                      />
+                      <span className="text-gray-700">{div.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex gap-2 items-center">
               <div className="flex items-start gap-1.5 flex-1 text-xs text-gray-400">
                 <Info size={12} className="flex-shrink-0 mt-0.5" />
@@ -396,7 +426,7 @@ function AccountsPanel() {
                             <KeyRound size={13} />
                           </button>
                           <button
-                            onClick={() => { setEditingId(user.id); setEditForm({ name: user.name, role: user.role as Role }); setPwResetId(null) }}
+                            onClick={() => openEdit(user)}
                             className="p-1.5 text-gray-300 hover:text-orange-500 rounded-lg transition-colors" title="編集">
                             <Edit2 size={13} />
                           </button>
@@ -449,6 +479,24 @@ function AccountsPanel() {
                           </select>
                         </div>
                       </div>
+                      {editForm.role !== 'super_admin' && divisions.length > 0 && (
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">所属事業部</label>
+                          <div className="flex flex-wrap gap-3">
+                            {divisions.map((div) => (
+                              <label key={div.id} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={editForm.divisionIds.includes(div.id)}
+                                  onChange={() => setEditForm((f) => ({ ...f, divisionIds: toggleDivision(f, div.id) }))}
+                                  className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
+                                />
+                                <span className="text-gray-700">{div.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <div className="flex gap-2 justify-end">
                         <button onClick={() => setEditingId(null)}
                           className="flex items-center gap-1 text-xs text-gray-500 px-2.5 py-1.5 rounded-lg hover:bg-gray-100">
