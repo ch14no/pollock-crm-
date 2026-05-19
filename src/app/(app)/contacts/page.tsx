@@ -21,7 +21,7 @@ import { fetchContactsByDivision, deleteContacts } from '@/lib/db/contacts'
 import type { Contact } from '@/types/database'
 import toast from 'react-hot-toast'
 
-type ViewMode = 'list' | 'card'
+type ViewMode = 'list' | 'card' | 'company'
 type SortKey = 'updated_desc' | 'updated_asc' | 'name_asc' | 'name_desc' | 'company_asc'
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
@@ -398,23 +398,24 @@ export default function ContactsPage() {
         <div className="flex items-center bg-white border border-gray-200 rounded-xl overflow-hidden">
           <button
             onClick={() => setViewMode('list')}
-            className={cn(
-              'p-2 transition-colors',
-              viewMode === 'list' ? 'bg-orange-500 text-white' : 'text-gray-500 hover:bg-gray-50'
-            )}
+            className={cn('p-2 transition-colors', viewMode === 'list' ? 'bg-orange-500 text-white' : 'text-gray-500 hover:bg-gray-50')}
             title="リスト表示"
           >
             <LayoutList size={16} />
           </button>
           <button
             onClick={() => setViewMode('card')}
-            className={cn(
-              'p-2 transition-colors',
-              viewMode === 'card' ? 'bg-orange-500 text-white' : 'text-gray-500 hover:bg-gray-50'
-            )}
+            className={cn('p-2 transition-colors', viewMode === 'card' ? 'bg-orange-500 text-white' : 'text-gray-500 hover:bg-gray-50')}
             title="カード表示"
           >
             <LayoutGrid size={16} />
+          </button>
+          <button
+            onClick={() => setViewMode('company')}
+            className={cn('p-2 transition-colors', viewMode === 'company' ? 'bg-orange-500 text-white' : 'text-gray-500 hover:bg-gray-50')}
+            title="会社別表示"
+          >
+            <Building2 size={16} />
           </button>
         </div>
       </div>
@@ -467,6 +468,15 @@ export default function ContactsPage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onSelect={(id) => router.push(`/contacts/${id}`)}
+          isReadOnly={!isOwnDivision}
+          contactStatuses={contactStatuses}
+        />
+      ) : viewMode === 'company' ? (
+        <CompanyView
+          contacts={filtered}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+          onSelect={(id: string) => router.push(`/contacts/${id}`)}
           isReadOnly={!isOwnDivision}
           contactStatuses={contactStatuses}
         />
@@ -640,6 +650,132 @@ function ListView({
                 <div>{formatRelativeTime(contact.updated_at)}</div>
               </div>
             </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Company View ─────────────────────────────────────────────────────────────
+function CompanyView({
+  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses,
+}: {
+  contacts: Contact[]
+  selectedIds: Set<string>
+  onToggleSelect: (id: string) => void
+  onSelect: (id: string) => void
+  isReadOnly: boolean
+  contactStatuses: ContactStatusMap
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  const groups = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; contacts: Contact[] }>()
+    for (const c of contacts) {
+      const key = c.company_id ?? '__none__'
+      const name = c.companies?.name ?? '会社未設定'
+      if (!map.has(key)) map.set(key, { id: key, name, contacts: [] })
+      map.get(key)!.contacts.push(c)
+    }
+    return [...map.values()].sort((a, b) => {
+      if (a.id === '__none__') return 1
+      if (b.id === '__none__') return -1
+      return a.name.localeCompare(b.name, 'ja')
+    })
+  }, [contacts])
+
+  const toggle = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+
+  return (
+    <div className="space-y-2">
+      {groups.map((group) => {
+        const isOpen = expanded.has(group.id)
+        const allSelected = group.contacts.every((c) => selectedIds.has(c.id))
+        return (
+          <div key={group.id} className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+            {/* 会社ヘッダー行 */}
+            <div className="flex items-center gap-3 p-4 hover:bg-gray-50 transition-colors">
+              <button
+                onClick={(e) => { e.stopPropagation(); group.contacts.forEach((c) => onToggleSelect(c.id)) }}
+                className="flex-shrink-0 text-gray-300 hover:text-orange-500 transition-colors"
+                title={allSelected ? '全解除' : '全選択'}
+              >
+                {allSelected
+                  ? <CheckSquare size={17} className="text-orange-500" />
+                  : <Square size={17} />}
+              </button>
+              <button
+                onClick={() => toggle(group.id)}
+                className="flex items-center gap-3 flex-1 min-w-0 text-left"
+              >
+                <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <Building2 size={17} className="text-blue-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-gray-800 truncate">{group.name}</p>
+                  <p className="text-xs text-gray-400">{group.contacts.length}名</p>
+                </div>
+                <ChevronDown size={15} className={cn('text-gray-400 transition-transform flex-shrink-0', isOpen && 'rotate-180')} />
+              </button>
+            </div>
+
+            {/* 担当者リスト（展開時） */}
+            {isOpen && (
+              <div className="border-t border-gray-100 divide-y divide-gray-50">
+                {group.contacts.map((contact) => {
+                  const selected = selectedIds.has(contact.id)
+                  return (
+                    <div
+                      key={contact.id}
+                      className={cn('flex items-center gap-3 pl-4 pr-4 py-3 cursor-pointer hover:bg-orange-50/50 transition-colors', selected && 'bg-orange-50/30')}
+                    >
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onToggleSelect(contact.id) }}
+                        className="flex-shrink-0 text-gray-300 hover:text-orange-500 transition-colors"
+                      >
+                        {selected ? <CheckSquare size={15} className="text-orange-500" /> : <Square size={15} />}
+                      </button>
+                      <div
+                        onClick={() => onSelect(contact.id)}
+                        className={cn('w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0',
+                          isReadOnly ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-600')}
+                      >
+                        {getInitials(contact.name)}
+                      </div>
+                      <div className="flex-1 min-w-0" onClick={() => onSelect(contact.id)}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-sm text-gray-800">{contact.name}</span>
+                          <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} />
+                          {contact.position && <span className="text-xs text-gray-500">{contact.position}</span>}
+                          {isReadOnly && <span className="inline-flex items-center gap-1 text-xs text-gray-400"><Lock size={9} /> 閲覧のみ</span>}
+                        </div>
+                        <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-400 flex-wrap">
+                          {contact.phone && (
+                            <a href={`tel:${contact.phone}`} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 hover:text-orange-600">
+                              <Phone size={11} />{contact.phone}
+                            </a>
+                          )}
+                          {contact.email && (
+                            <a href={`mailto:${contact.email}`} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 hover:text-orange-600 truncate max-w-48">
+                              <Mail size={11} />{contact.email}
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-xs text-gray-300 flex-shrink-0" onClick={() => onSelect(contact.id)}>
+                        {formatRelativeTime(contact.updated_at)}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )
       })}

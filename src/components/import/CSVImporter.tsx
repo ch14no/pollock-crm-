@@ -6,7 +6,7 @@ import { Upload, ArrowRight, Check, Download, AlertCircle, Info, RotateCcw } fro
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { createContact, upsertContactCustomValue } from '@/lib/db/contacts'
+import { createContact, upsertContactCustomValue, fetchContactsByDivision } from '@/lib/db/contacts'
 import { findOrCreateCompany } from '@/lib/db/companies'
 import { fetchDivisionCustomFields } from '@/lib/db/divisions'
 import { useAppStore } from '@/store/appStore'
@@ -78,7 +78,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
   const [mapping, setMapping]   = useState<Record<string, string>>({})
   const [progress, setProgress] = useState(0)
   const [progressMsg, setProgressMsg] = useState('')
-  const [importResult, setImportResult] = useState<{ success: number; errors: ImportError[] } | null>(null)
+  const [importResult, setImportResult] = useState<{ success: number; skipped: number; errors: ImportError[] } | null>(null)
   const [customFields, setCustomFields] = useState<DivisionCustomField[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -187,14 +187,22 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
 
     const errors: ImportError[] = []
     let success = 0
+    let skipped = 0
+
+    // 既存メールアドレスを取得して重複チェック用セットを作成
+    const existingEmails = new Set<string>()
+    if (isSupabaseConfigured()) {
+      setProgressMsg('既存データを確認中...')
+      const existingContacts = await fetchContactsByDivision(targetDivisionId).catch(() => [])
+      for (const c of existingContacts) {
+        if (c.email) existingEmails.add(c.email.toLowerCase())
+      }
+    }
 
     // カスタムフィールドのマッピングを事前抽出
     const customMappings = Object.entries(mapping)
       .filter(([, v]) => v.startsWith('custom_'))
-      .map(([header, key]) => ({
-        header,
-        fieldId: key.replace('custom_', ''),
-      }))
+      .map(([header, key]) => ({ header, fieldId: key.replace('custom_', '') }))
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
@@ -217,6 +225,12 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         errors.push({ row: rowNum, name, message: `メールアドレスの形式が正しくありません: ${email}` }); continue
       }
 
+      // メールアドレスで重複チェック
+      if (email && existingEmails.has(email.toLowerCase())) {
+        skipped++
+        continue
+      }
+
       if (!isSupabaseConfigured()) { success++; await new Promise((r) => setTimeout(r, 30)); continue }
 
       try {
@@ -231,12 +245,11 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
           companyId, tags,
         })
 
-        // カスタムフィールドの値を保存
+        if (email) existingEmails.add(email.toLowerCase())
+
         for (const { header, fieldId } of customMappings) {
           const value = row[headers.indexOf(header)]?.trim()
-          if (value) {
-            await upsertContactCustomValue(contact.id, fieldId, value)
-          }
+          if (value) await upsertContactCustomValue(contact.id, fieldId, value)
         }
 
         success++
@@ -245,10 +258,11 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
       }
     }
 
-    setImportResult({ success, errors })
+    setImportResult({ success, skipped, errors })
     setStep('done')
-    if (errors.length === 0) toast.success(`${success}件のインポートが完了しました`)
-    else toast(`${success}件成功、${errors.length}件エラー`, { icon: '⚠️' })
+    if (errors.length === 0 && skipped === 0) toast.success(`${success}件のインポートが完了しました`)
+    else if (errors.length === 0) toast.success(`${success}件成功、${skipped}件スキップ（重複）`)
+    else toast(`${success}件成功、${skipped}件スキップ、${errors.length}件エラー`, { icon: '⚠️' })
   }
 
   const handleDownloadErrorReport = () => {
@@ -279,6 +293,9 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         <h2 className="text-xl font-bold text-gray-800 mb-2">インポート完了</h2>
         <div className="text-sm text-gray-600 space-y-1 mb-6">
           <p>成功: <strong className="text-green-600">{importResult?.success}件</strong></p>
+          {(importResult?.skipped ?? 0) > 0 && (
+            <p>スキップ（重複）: <strong className="text-yellow-600">{importResult?.skipped}件</strong></p>
+          )}
           {(importResult?.errors.length ?? 0) > 0 && (
             <p>エラー: <strong className="text-red-500">{importResult?.errors.length}件</strong></p>
           )}
