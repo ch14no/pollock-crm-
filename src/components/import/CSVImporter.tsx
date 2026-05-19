@@ -14,16 +14,33 @@ import type { DivisionCustomField } from '@/store/appStore'
 import toast from 'react-hot-toast'
 
 const SYSTEM_FIELDS = [
-  { key: 'name',     label: '担当者名',       required: true  },
-  { key: 'company',  label: '会社名',          required: false },
-  { key: 'email',    label: 'メールアドレス',  required: false },
-  { key: 'phone',    label: '電話番号',         required: false },
-  { key: 'position', label: '役職',             required: false },
-  { key: 'tags',     label: 'タグ（|区切り）',  required: false },
-  { key: 'skip',     label: '取り込まない',     required: false },
+  { key: 'name',       label: '担当者名',         required: true  },
+  { key: 'company',    label: '会社名',            required: false },
+  { key: 'email',      label: 'メールアドレス',    required: false },
+  { key: 'phone',      label: '電話番号',           required: false },
+  { key: 'position',   label: '役職',               required: false },
+  { key: 'department', label: '部署名',             required: false },
+  { key: 'address',    label: '住所',               required: false },
+  { key: 'notes',      label: 'メモ・備考',         required: false },
+  { key: 'tags',       label: 'タグ（|区切り）',    required: false },
+  { key: 'skip',       label: '取り込まない',       required: false },
 ]
 
 const mappingKey = (divisionId: string) => `pollock-import-mapping-${divisionId}`
+
+function guessFieldKey(header: string): string {
+  const h = header.toLowerCase()
+  if (h.includes('名前') || h.includes('氏名') || h === 'name' || (h.includes('担当') && (h.includes('者名') || h.includes('名')))) return 'name'
+  if (h.includes('会社') || h.includes('企業') || h === 'company') return 'company'
+  if (h.includes('mail') || h.includes('メール')) return 'email'
+  if (h.includes('tell') || h.includes('tel') || h.includes('電話') || h.includes('phone')) return 'phone'
+  if (h.includes('役職') || h.includes('position') || h.includes('肩書')) return 'position'
+  if (h.includes('部署') || h.includes('department') || h.includes('section')) return 'department'
+  if (h.includes('住所') || h.includes('address') || h.includes('所在地')) return 'address'
+  if (h.includes('メモ') || h.includes('備考') || h.includes('note') || h.includes('remark')) return 'notes'
+  if (h.includes('タグ') || h === 'tag') return 'tags'
+  return 'skip'
+}
 
 type Step = 'upload' | 'mapping' | 'preview' | 'importing' | 'done'
 
@@ -107,16 +124,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
 
         // 自動マッピング（ヘッダー名から推測）
         const autoMap: Record<string, string> = {}
-        hdrs.forEach((h) => {
-          const lower = h.toLowerCase()
-          if (lower.includes('名前') || lower.includes('氏名') || lower === 'name' || lower.includes('担当')) autoMap[h] = 'name'
-          else if (lower.includes('会社') || lower.includes('企業') || lower === 'company') autoMap[h] = 'company'
-          else if (lower.includes('mail') || lower.includes('メール')) autoMap[h] = 'email'
-          else if (lower.includes('tel') || lower.includes('電話') || lower.includes('phone')) autoMap[h] = 'phone'
-          else if (lower.includes('役職') || lower.includes('position') || lower.includes('肩書')) autoMap[h] = 'position'
-          else if (lower.includes('タグ') || lower === 'tag') autoMap[h] = 'tags'
-          else autoMap[h] = 'skip'
-        })
+        hdrs.forEach((h) => { autoMap[h] = guessFieldKey(h) })
 
         // 保存済み > 自動推測の優先度でマージ（保存済みに存在するヘッダーのみ適用）
         const savedForHeaders: Record<string, string> = {}
@@ -153,18 +161,8 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
     if (!targetDivisionId) return
     localStorage.removeItem(mappingKey(targetDivisionId))
     toast.success('保存済みマッピングをリセットしました')
-    // 自動マッピングで再計算
     const autoMap: Record<string, string> = {}
-    headers.forEach((h) => {
-      const lower = h.toLowerCase()
-      if (lower.includes('名前') || lower.includes('氏名') || lower === 'name' || lower.includes('担当')) autoMap[h] = 'name'
-      else if (lower.includes('会社') || lower.includes('企業') || lower === 'company') autoMap[h] = 'company'
-      else if (lower.includes('mail') || lower.includes('メール')) autoMap[h] = 'email'
-      else if (lower.includes('tel') || lower.includes('電話') || lower.includes('phone')) autoMap[h] = 'phone'
-      else if (lower.includes('役職') || lower.includes('position') || lower.includes('肩書')) autoMap[h] = 'position'
-      else if (lower.includes('タグ') || lower === 'tag') autoMap[h] = 'tags'
-      else autoMap[h] = 'skip'
-    })
+    headers.forEach((h) => { autoMap[h] = guessFieldKey(h) })
     setMapping(autoMap)
   }
 
@@ -193,12 +191,15 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
       const rowNum = i + 2
-      const name     = getField(row, 'name')
-      const company  = getField(row, 'company')
-      const email    = getField(row, 'email')
-      const phone    = getField(row, 'phone')
-      const position = getField(row, 'position')
-      const tagsRaw  = getField(row, 'tags')
+      const name       = getField(row, 'name')
+      const company    = getField(row, 'company')
+      const email      = getField(row, 'email')
+      const phone      = getField(row, 'phone')
+      const position   = getField(row, 'position')
+      const department = getField(row, 'department')
+      const address    = getField(row, 'address')
+      const notes      = getField(row, 'notes')
+      const tagsRaw    = getField(row, 'tags')
 
       setProgressMsg(`${i + 1}/${rows.length} 件処理中: ${name || `行${rowNum}`}`)
       setProgress(Math.round(((i + 1) / rows.length) * 100))
@@ -217,7 +218,9 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         const contact = await createContact({
           divisionId: targetDivisionId, name,
           email: email || undefined, phone: phone || undefined,
-          position: position || undefined, companyId, tags,
+          position: position || undefined, department: department || undefined,
+          address: address || undefined, notes: notes || undefined,
+          companyId, tags,
         })
 
         // カスタムフィールドの値を保存

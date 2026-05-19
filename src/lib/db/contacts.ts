@@ -4,6 +4,7 @@ import type { Contact } from '@/types/database'
 type RawContact = {
   id: string; company_id: string | null; division_id: string; assigned_user_id: string | null
   name: string; email: string | null; phone: string | null; position: string | null
+  address: string | null; department: string | null
   tags: string[]; custom_attributes: Record<string, unknown>; notes: string | null
   created_at: string; updated_at: string
   companies: { id: string; name: string; website: string | null; corporate_number: string | null; created_at: string; updated_at: string } | null
@@ -15,7 +16,9 @@ function toContact(r: RawContact): Contact {
     id: r.id, company_id: r.company_id ?? undefined, division_id: r.division_id,
     assigned_user_id: r.assigned_user_id ?? undefined,
     name: r.name, email: r.email ?? undefined, phone: r.phone ?? undefined,
-    position: r.position ?? undefined, tags: r.tags ?? [], custom_attributes: r.custom_attributes ?? {},
+    position: r.position ?? undefined, address: r.address ?? undefined,
+    department: r.department ?? undefined, notes: r.notes ?? undefined,
+    tags: r.tags ?? [], custom_attributes: r.custom_attributes ?? {},
     created_at: r.created_at, updated_at: r.updated_at,
     companies: r.companies ? {
       ...r.companies,
@@ -59,6 +62,7 @@ export async function fetchContactById(id: string): Promise<Contact | null> {
 export async function createContact(input: {
   divisionId: string; assignedUserId?: string; companyId?: string
   name: string; email?: string; phone?: string; position?: string
+  address?: string; department?: string; notes?: string
   tags?: string[]; customAttributes?: Record<string, unknown>
 }): Promise<Contact> {
   const { data, error } = await getSupabase()
@@ -71,6 +75,9 @@ export async function createContact(input: {
       email: input.email ?? null,
       phone: input.phone ?? null,
       position: input.position ?? null,
+      address: input.address ?? null,
+      department: input.department ?? null,
+      notes: input.notes ?? null,
       tags: input.tags ?? [],
       custom_attributes: input.customAttributes ?? {},
     })
@@ -82,7 +89,8 @@ export async function createContact(input: {
 
 export async function updateContact(id: string, updates: {
   name?: string; email?: string | null; phone?: string | null
-  position?: string | null; tags?: string[]
+  position?: string | null; address?: string | null; department?: string | null
+  notes?: string | null; tags?: string[]
 }): Promise<void> {
   const { error } = await getSupabase()
     .from('contacts')

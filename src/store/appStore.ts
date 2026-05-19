@@ -73,6 +73,9 @@ export interface ContactLocalEdit {
   position?: string
   phone?: string
   email?: string
+  department?: string
+  address?: string
+  notes?: string
   tags?: string[]
 }
 

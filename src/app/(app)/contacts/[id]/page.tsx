@@ -3,10 +3,10 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
-  ArrowLeft, Building2, Phone, Mail, Rocket,
+  ArrowLeft, Building2, Building, Phone, Mail, Rocket,
   MessageSquare, CheckSquare, Clock, Plus, Tag, Lock,
   Users, FileText, ChevronDown, ExternalLink, UserCircle,
-  Edit2, Check, X,
+  Edit2, Check, X, MapPin,
 } from 'lucide-react'
 import { MOCK_DEALS, DEFAULT_DIVISION_CUSTOM_FIELDS } from '@/lib/mock-data'
 import { isSupabaseConfigured } from '@/lib/db/client'
@@ -151,7 +151,7 @@ export default function ContactDetailPage() {
 
   // 基本情報インライン編集
   const [editingInfo, setEditingInfo] = useState(false)
-  const [infoForm, setInfoForm] = useState({ name: '', position: '', phone: '', email: '', tags: [] as string[], tagInput: '' })
+  const [infoForm, setInfoForm] = useState({ name: '', position: '', phone: '', email: '', department: '', address: '', notes: '', tags: [] as string[], tagInput: '' })
 
   if (contactLoading) {
     return (
@@ -186,6 +186,9 @@ export default function ContactDetailPage() {
       position: displayContact.position ?? '',
       phone: displayContact.phone ?? '',
       email: displayContact.email ?? '',
+      department: displayContact.department ?? '',
+      address: displayContact.address ?? '',
+      notes: displayContact.notes ?? '',
       tags: [...(displayContact.tags ?? [])],
       tagInput: '',
     })
@@ -198,6 +201,9 @@ export default function ContactDetailPage() {
       position: infoForm.position.trim() || null,
       phone: infoForm.phone.trim() || null,
       email: infoForm.email.trim() || null,
+      department: infoForm.department.trim() || null,
+      address: infoForm.address.trim() || null,
+      notes: infoForm.notes.trim() || null,
       tags: infoForm.tags,
     }
     setLocalContactEdit(id, {
@@ -205,6 +211,9 @@ export default function ContactDetailPage() {
       position: updates.position ?? undefined,
       phone: updates.phone ?? undefined,
       email: updates.email ?? undefined,
+      department: updates.department ?? undefined,
+      address: updates.address ?? undefined,
+      notes: updates.notes ?? undefined,
       tags: updates.tags,
     })
     if (isSupabaseConfigured()) {
@@ -364,6 +373,18 @@ export default function ContactDetailPage() {
                       <a href={`mailto:${displayContact.email}`} className="hover:text-orange-600 truncate text-sm">{displayContact.email}</a>
                     </div>
                   )}
+                  {displayContact.department && (
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <Building size={14} className="flex-shrink-0 text-gray-400" />
+                      <span>{displayContact.department}</span>
+                    </div>
+                  )}
+                  {displayContact.address && (
+                    <div className="flex items-start gap-2 text-gray-600">
+                      <MapPin size={14} className="mt-0.5 flex-shrink-0 text-gray-400" />
+                      <span>{displayContact.address}</span>
+                    </div>
+                  )}
                   {assignee && (
                     <div className="flex items-center gap-2 text-gray-600 pt-2 border-t border-gray-100">
                       <UserCircle size={14} className="flex-shrink-0 text-gray-400" />
@@ -384,8 +405,10 @@ export default function ContactDetailPage() {
                 {[
                   { label: '氏名', key: 'name' as const, type: 'text' },
                   { label: '役職', key: 'position' as const, type: 'text' },
+                  { label: '部署名', key: 'department' as const, type: 'text' },
                   { label: '電話', key: 'phone' as const, type: 'tel' },
                   { label: 'メール', key: 'email' as const, type: 'email' },
+                  { label: '住所', key: 'address' as const, type: 'text' },
                 ].map(({ label, key, type }) => (
                   <div key={key}>
                     <label className="block text-xs text-gray-400 mb-0.5">{label}</label>
@@ -397,6 +420,16 @@ export default function ContactDetailPage() {
                     />
                   </div>
                 ))}
+                <div>
+                  <label className="block text-xs text-gray-400 mb-0.5">メモ・備考</label>
+                  <textarea
+                    value={infoForm.notes}
+                    onChange={(e) => setInfoForm((f) => ({ ...f, notes: e.target.value }))}
+                    rows={3}
+                    placeholder="メモを入力..."
+                    className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+                  />
+                </div>
 
                 {/* タグ編集 */}
                 <div>
@@ -446,6 +479,14 @@ export default function ContactDetailPage() {
                     <Check size={12} /> 保存
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* メモ・備考 */}
+            {displayContact.notes && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1.5">メモ・備考</p>
+                <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{displayContact.notes}</p>
               </div>
             )}
 

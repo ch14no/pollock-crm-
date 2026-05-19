@@ -44,6 +44,8 @@ export interface Contact {
   email?: string
   phone?: string
   position?: string
+  address?: string
+  department?: string
   tags: string[]
   custom_attributes: Record<string, unknown>
   notes?: string
