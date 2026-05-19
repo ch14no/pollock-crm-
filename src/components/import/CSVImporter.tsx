@@ -189,13 +189,18 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
     let success = 0
     let skipped = 0
 
-    // 既存メールアドレスを取得して重複チェック用セットを作成
-    const existingEmails = new Set<string>()
+    // 既存データを取得して「名前＋メール」両方一致で重複チェック
+    // ※メールのみ一致でも名前が違う場合は別人として取り込む（共通メール対応）
+    const existingPairs = new Map<string, Set<string>>() // email → Set<name>
     if (isSupabaseConfigured()) {
       setProgressMsg('既存データを確認中...')
       const existingContacts = await fetchContactsByDivision(targetDivisionId).catch(() => [])
       for (const c of existingContacts) {
-        if (c.email) existingEmails.add(c.email.toLowerCase())
+        if (c.email) {
+          const eKey = c.email.toLowerCase()
+          if (!existingPairs.has(eKey)) existingPairs.set(eKey, new Set())
+          existingPairs.get(eKey)!.add(c.name.toLowerCase().trim())
+        }
       }
     }
 
@@ -225,10 +230,11 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         errors.push({ row: rowNum, name, message: `メールアドレスの形式が正しくありません: ${email}` }); continue
       }
 
-      // メールアドレスで重複チェック
-      if (email && existingEmails.has(email.toLowerCase())) {
-        skipped++
-        continue
+      // 名前＋メール両方一致で重複チェック（メールだけ同じ別人はスキップしない）
+      if (email) {
+        const eKey = email.toLowerCase()
+        const nKey = name.toLowerCase().trim()
+        if (existingPairs.get(eKey)?.has(nKey)) { skipped++; continue }
       }
 
       if (!isSupabaseConfigured()) { success++; await new Promise((r) => setTimeout(r, 30)); continue }
@@ -245,7 +251,11 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
           companyId, tags,
         })
 
-        if (email) existingEmails.add(email.toLowerCase())
+        if (email) {
+          const eKey = email.toLowerCase()
+          if (!existingPairs.has(eKey)) existingPairs.set(eKey, new Set())
+          existingPairs.get(eKey)!.add(name.toLowerCase().trim())
+        }
 
         for (const { header, fieldId } of customMappings) {
           const value = row[headers.indexOf(header)]?.trim()
