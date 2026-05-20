@@ -41,8 +41,12 @@ const GROUP_APPS = [
     emoji: '🏆',
     description: '社内大会管理',
   },
-  // 追加予定のアプリはここに追記
-  // { name: 'アプリ名', url: 'https://...', emoji: '📊', description: '説明' },
+  {
+    name: 'Pollock Portal',
+    url: 'https://pollock-portal.vercel.app',
+    emoji: '🐟',
+    description: '管理者ポータル',
+  },
 ]
 
 export function Sidebar() {
