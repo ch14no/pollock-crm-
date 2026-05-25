@@ -913,31 +913,68 @@ function DivisionFieldsPanel() {
 
 // ─── 商品マスタ管理 ───────────────────────────────────────────────
 function ProductsPanel() {
-  const { activeDivision, activeDivisionId, divisionProducts, setDivisionProducts } = useAppStore()
-  const divId = activeDivisionId ?? ''
-  const products = divisionProducts[divId] ?? DEFAULT_DIVISION_PRODUCTS[divId] ?? []
+  const { divisions, divisionProducts, setDivisionProducts, divisionProductsEnabled, setDivisionProductsEnabled } = useAppStore()
+  const [selectedDivId, setSelectedDivId] = useState(divisions[0]?.id ?? '')
+
+  const products = divisionProducts[selectedDivId] ?? DEFAULT_DIVISION_PRODUCTS[selectedDivId] ?? []
+  const enabled = divisionProductsEnabled[selectedDivId] ?? false
   const [newProduct, setNewProduct] = useState('')
 
   const handleAdd = () => {
     const trimmed = newProduct.trim()
     if (!trimmed) return
     if (products.includes(trimmed)) { toast.error('同じ商品名がすでに存在します'); return }
-    setDivisionProducts(divId, [...products, trimmed])
+    setDivisionProducts(selectedDivId, [...products, trimmed])
     setNewProduct('')
     toast.success(`「${trimmed}」を追加しました`)
   }
 
+  const handleToggleEnabled = () => {
+    setDivisionProductsEnabled(selectedDivId, !enabled)
+    toast.success(!enabled ? '商品選択を有効にしました' : '商品選択を無効にしました')
+  }
+
   return (
     <Card>
-      <CardHeader><div className="flex items-center gap-2"><Tag size={16} /><span className="font-bold text-gray-800">商品マスタ（{activeDivision?.name ?? ''}）</span></div></CardHeader>
+      <CardHeader>
+        <div className="flex items-center gap-2 font-bold text-gray-700">
+          <Tag size={18} />商品マスタ管理
+        </div>
+      </CardHeader>
       <CardBody>
-        <p className="text-xs text-gray-500 mb-3">商談登録時に選択できる提案商品・サービスを管理します。</p>
+        <p className="text-xs text-gray-500 mb-4">事業部ごとに商談登録画面で選択できる提案商品・サービスを管理します。</p>
+
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
+          <select value={selectedDivId} onChange={(e) => { setSelectedDivId(e.target.value); setNewProduct('') }}
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
+            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </div>
+
+        {/* 表示ON/OFFトグル */}
+        <div className="flex items-center justify-between mb-4 p-3 bg-gray-50 rounded-xl border border-gray-100">
+          <div>
+            <p className="text-sm font-medium text-gray-700">商談画面に商品選択を表示する</p>
+            <p className="text-xs text-gray-400 mt-0.5">ONにすると商談登録・編集時に商品を選択できます</p>
+          </div>
+          <button
+            onClick={handleToggleEnabled}
+            className={cn('relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0',
+              enabled ? 'bg-orange-500' : 'bg-gray-200')}
+          >
+            <span className={cn('inline-block h-4 w-4 rounded-full bg-white transition-transform',
+              enabled ? 'translate-x-6' : 'translate-x-1')} />
+          </button>
+        </div>
+
+        {/* 商品リスト */}
         <div className="space-y-1.5 mb-3">
-          {products.length === 0 && <p className="text-xs text-gray-400 py-2">商品がまだ登録されていません</p>}
+          {products.length === 0 && <p className="text-xs text-gray-400 py-2 text-center">商品がまだ登録されていません</p>}
           {products.map((p) => (
             <div key={p} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
               <span className="flex-1 text-sm text-gray-700">{p}</span>
-              <button onClick={() => setDivisionProducts(divId, products.filter((x) => x !== p))}
+              <button onClick={() => setDivisionProducts(selectedDivId, products.filter((x) => x !== p))}
                 className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
             </div>
           ))}

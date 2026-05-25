@@ -11,7 +11,7 @@ import type { Challenge, TaskMeta } from '@/store/appStore'
 import { cn, formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity } from '@/lib/db/activities'
+import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields } from '@/lib/db/activities'
 import { fetchContactsByDivision } from '@/lib/db/contacts'
 import { fetchChallenges, createChallenge, updateChallengeStatus, deleteChallenge } from '@/lib/db/challenges'
 import { DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
@@ -44,9 +44,10 @@ export default function TasksPage() {
   const taskStatuses      = useAppStore((s) => s.taskStatuses)
   const setTaskStatus     = useAppStore((s) => s.setTaskStatus)
   const taskMeta          = useAppStore((s) => s.taskMeta)
-  const removeLocalActivity = useAppStore((s) => s.removeLocalActivity)
-  const openActivityModal = useAppStore((s) => s.openActivityModal)
-  const activityModalIsOpen = useAppStore((s) => s.activityModal.isOpen)
+  const removeLocalActivity  = useAppStore((s) => s.removeLocalActivity)
+  const updateLocalActivity  = useAppStore((s) => s.updateLocalActivity)
+  const openActivityModal    = useAppStore((s) => s.openActivityModal)
+  const activityModalIsOpen  = useAppStore((s) => s.activityModal.isOpen)
 
   const divisionTaskStages = useAppStore((s) => s.divisionTaskStages)
 
@@ -57,7 +58,9 @@ export default function TasksPage() {
   const [tab, setTab]     = useState<'kanban' | 'tasks' | 'challenges'>('kanban')
   const [scope, setScope] = useState<'personal' | 'team'>('team')
   const [expandedQ, setExpandedQ] = useState<Set<number>>(new Set([1, 2, 3, 4]))
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [deleteConfirmId,   setDeleteConfirmId]   = useState<string | null>(null)
+  const [completeConfirmId, setCompleteConfirmId] = useState<string | null>(null)
+  const [showCompleted, setShowCompleted] = useState(false)
 
   // ─── Supabase データ ─────────────────────────────────────────────
   const [dbTasks, setDbTasks]         = useState<Activity[]>([])
@@ -116,6 +119,11 @@ export default function TasksPage() {
     return effectiveStatus !== 'done'
   }), [allTasks, taskStatuses])
 
+  const completedTasks = useMemo(() => allTasks.filter((a) => {
+    const effectiveStatus = taskStatuses[a.id] ?? a.status
+    return effectiveStatus === 'done'
+  }), [allTasks, taskStatuses])
+
   const filteredTasks = useMemo(() => {
     if (scope === 'team') return pendingTasks
     return pendingTasks.filter((t) => t.user_id === currentUser?.id)
@@ -144,7 +152,18 @@ export default function TasksPage() {
         toast.error('ステータス更新に失敗しました')
       })
     }
+    setCompleteConfirmId(null)
     toast.success('タスクを完了しました')
+  }
+
+  const handleReopen = async (id: string) => {
+    setTaskStatus(id, 'todo')
+    if (isSupabaseConfigured() && !id.startsWith('act-local-')) {
+      updateActivityStatus(id, 'todo').catch(() => {
+        toast.error('ステータス更新に失敗しました')
+      })
+    }
+    toast.success('タスクを未完了に戻しました')
   }
 
   const handleDelete = async (id: string) => {
@@ -161,6 +180,25 @@ export default function TasksPage() {
     removeLocalActivity(id)
     setDeleteConfirmId(null)
     toast.success('タスクを削除しました')
+  }
+
+  const handleEditSave = async (task: Activity, data: { title: string; dueDate: string; memo: string }) => {
+    const dbUpdates = {
+      title:    data.title.trim() || null,
+      memo:     data.memo.trim() || null,
+      due_date: data.dueDate ? new Date(data.dueDate).toISOString() : null,
+    }
+    const storeUpdates: Partial<Activity> = {
+      title:    data.title.trim() || undefined,
+      memo:     data.memo.trim() || undefined,
+      due_date: data.dueDate ? new Date(data.dueDate).toISOString() : undefined,
+    }
+    updateLocalActivity(task.id, storeUpdates)
+    setDbTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, ...storeUpdates } : t))
+    if (isSupabaseConfigured() && !task.id.startsWith('act-local-')) {
+      updateActivityFields(task.id, dbUpdates).catch(() => toast.error('保存に失敗しました'))
+    }
+    toast.success('タスクを更新しました')
   }
 
   // ─── 課題データ ──────────────────────────────────────────────────
@@ -287,8 +325,15 @@ export default function TasksPage() {
       {tab === 'kanban' && (
         <TaskKanbanBoard
           tasks={filteredTasks}
+          completedTasks={completedTasks}
           stages={kanbanStages}
+          showCompleted={showCompleted}
           onAddTask={(stageId) => openActivityModal({ prefillKanbanStageId: stageId })}
+          onComplete={(task) => handleComplete(task.id)}
+          onDelete={(task) => handleDelete(task.id)}
+          onSave={handleEditSave}
+          onReopen={(task) => handleReopen(task.id)}
+          onToggleCompleted={() => setShowCompleted((v) => !v)}
         />
       )}
 
@@ -341,10 +386,10 @@ export default function TasksPage() {
                           <div className="flex items-start gap-2">
                             {/* チェックボックス */}
                             <button
-                              onClick={() => isMyTask && handleComplete(task.id)}
+                              onClick={() => isMyTask && setCompleteConfirmId(task.id)}
                               disabled={!isMyTask}
                               className={cn('mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors',
-                                isMyTask ? 'border-gray-300 hover:border-orange-400 cursor-pointer' : 'border-gray-200 cursor-not-allowed opacity-40')}
+                                isMyTask ? 'border-gray-300 hover:border-green-400 cursor-pointer' : 'border-gray-200 cursor-not-allowed opacity-40')}
                               title={isMyTask ? '完了にする' : '自分のタスクではありません'}
                             />
                             <div className="flex-1 min-w-0"
@@ -376,6 +421,18 @@ export default function TasksPage() {
                             )}
                           </div>
 
+                          {/* 完了確認 */}
+                          {completeConfirmId === task.id && (
+                            <div className="mt-2 flex items-center gap-2 p-2 bg-green-50 rounded-lg">
+                              <Check size={13} className="text-green-500 flex-shrink-0" />
+                              <span className="text-xs text-green-700 flex-1">このタスクを完了にしますか？</span>
+                              <button onClick={() => handleComplete(task.id)}
+                                className="text-xs text-white bg-green-500 font-bold px-2 py-1 rounded-lg hover:bg-green-600">完了</button>
+                              <button onClick={() => setCompleteConfirmId(null)}
+                                className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">キャンセル</button>
+                            </div>
+                          )}
+
                           {/* 削除確認 */}
                           {isConfirmingDelete && (
                             <div className="mt-2 flex items-center gap-2 p-2 bg-red-50 rounded-lg">
@@ -401,6 +458,49 @@ export default function TasksPage() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* ─── 象限ビュー：完了済みセクション ─── */}
+      {tab === 'tasks' && (
+        <div>
+          <button
+            onClick={() => setShowCompleted((v) => !v)}
+            className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-600 mb-2 transition-colors"
+          >
+            <Check size={14} className="text-green-400" />
+            完了済み
+            <span className="bg-gray-100 text-gray-500 text-xs px-1.5 py-0.5 rounded-full font-medium">
+              {completedTasks.length}
+            </span>
+            <ChevronDown size={14} className={cn('transition-transform', !showCompleted && '-rotate-90')} />
+          </button>
+          {showCompleted && (
+            <div className="space-y-1.5">
+              {completedTasks.length === 0 ? (
+                <p className="text-xs text-gray-300 text-center py-4">完了済みタスクなし</p>
+              ) : completedTasks.map((task) => {
+                const isMyTask = task.user_id === currentUser?.id
+                return (
+                  <div key={task.id} className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-100 rounded-xl">
+                    <Check size={13} className="text-green-500 flex-shrink-0" />
+                    <p className="flex-1 text-sm text-gray-400 line-through truncate">{task.title ?? 'タスク'}</p>
+                    {task.due_date && (
+                      <span className="text-[10px] text-gray-300 flex-shrink-0">{formatDate(task.due_date)}</span>
+                    )}
+                    {isMyTask && (
+                      <button
+                        onClick={() => handleReopen(task.id)}
+                        className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-orange-500 px-1.5 py-0.5 rounded-lg hover:bg-orange-50 transition-colors flex-shrink-0"
+                      >
+                        <X size={10} />戻す
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 

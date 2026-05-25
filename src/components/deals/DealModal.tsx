@@ -32,7 +32,7 @@ export function DealModal() {
   const {
     dealModal, closeDealModal, activeDivisionId,
     addDeal, updateLocalDeal, currentUser, divisionStages,
-    divisionProducts, dealProducts, setDealProduct, clearDealProduct,
+    divisionProducts, divisionProductsEnabled, dealProducts, setDealProduct, clearDealProduct,
   } = useAppStore()
 
   const [loading, setLoading] = useState(false)
@@ -256,7 +256,7 @@ export function DealModal() {
         </div>
 
         {/* 提案商品 */}
-        {productList.length > 0 && (
+        {productList.length > 0 && divisionProductsEnabled[activeDivisionId ?? ''] && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">提案商品・サービス</label>
             <div className="flex flex-wrap gap-2">

@@ -235,6 +235,10 @@ interface AppState {
   divisionProducts: Record<string, string[]>  // divisionId -> product names
   setDivisionProducts: (divisionId: string, products: string[]) => void
 
+  // 商品選択の表示ON/OFF（事業部別）
+  divisionProductsEnabled: Record<string, boolean>
+  setDivisionProductsEnabled: (divisionId: string, enabled: boolean) => void
+
   // 商談の提案商品（dealId -> product name）
   dealProducts: Record<string, string>
   setDealProduct: (dealId: string, product: string) => void
@@ -423,6 +427,10 @@ export const useAppStore = create<AppState>()(
       setDivisionProducts: (divisionId, products) =>
         set((state) => ({ divisionProducts: { ...state.divisionProducts, [divisionId]: products } })),
 
+      divisionProductsEnabled: {},
+      setDivisionProductsEnabled: (divisionId, enabled) =>
+        set((state) => ({ divisionProductsEnabled: { ...state.divisionProductsEnabled, [divisionId]: enabled } })),
+
       dealProducts: {},
       setDealProduct: (dealId, product) =>
         set((state) => ({ dealProducts: { ...state.dealProducts, [dealId]: product } })),
@@ -503,6 +511,7 @@ export const useAppStore = create<AppState>()(
         divisionCustomFields: state.divisionCustomFields,
         divisionStages: state.divisionStages,
         divisionProducts: state.divisionProducts,
+        divisionProductsEnabled: state.divisionProductsEnabled,
         dealProducts: state.dealProducts,
         divisionTaskStages: state.divisionTaskStages,
         taskStageMap: state.taskStageMap,
