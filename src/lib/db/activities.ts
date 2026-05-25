@@ -75,9 +75,8 @@ export async function fetchActivitiesByContactIds(contactIds: string[]): Promise
 }
 
 export async function deleteActivity(id: string): Promise<void> {
-  const { data, error } = await getSupabase().from('activities').delete().eq('id', id).select('id')
+  const { error } = await getSupabase().from('activities').delete().eq('id', id)
   if (error) throw error
-  if (!data || data.length === 0) throw new Error('削除する権限がないか、対象が見つかりません')
 }
 
 export async function updateActivityFields(id: string, updates: {
