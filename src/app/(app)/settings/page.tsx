@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useAppStore } from '@/store/appStore'
-import type { DivisionCustomField, DivisionStage } from '@/store/appStore'
+import type { DivisionCustomField, DivisionStage, TaskKanbanStage } from '@/store/appStore'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import {
@@ -10,7 +10,7 @@ import {
   Settings2, Tag, Trash2, Plus,
   Check, X, ArrowUp, ArrowDown, Edit2, Eye, EyeOff, KeyRound, Info,
 } from 'lucide-react'
-import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
+import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS, DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
 import type { Role } from '@/types/database'
 import { cn, getInitials } from '@/lib/utils'
 import { isSupabaseConfigured } from '@/lib/db/client'
@@ -197,6 +197,8 @@ export default function SettingsPage() {
           <AccountsPanel />
           <DivisionStagesPanel />
           <DivisionFieldsPanel />
+          <ProductsPanel />
+          <TaskStagesPanel />
         </>
       )}
     </div>
@@ -904,6 +906,130 @@ function DivisionFieldsPanel() {
             ))}
           </div>
         )}
+      </CardBody>
+    </Card>
+  )
+}
+
+// ─── 商品マスタ管理 ───────────────────────────────────────────────
+function ProductsPanel() {
+  const { activeDivision, activeDivisionId, divisionProducts, setDivisionProducts } = useAppStore()
+  const divId = activeDivisionId ?? ''
+  const products = divisionProducts[divId] ?? DEFAULT_DIVISION_PRODUCTS[divId] ?? []
+  const [newProduct, setNewProduct] = useState('')
+
+  const handleAdd = () => {
+    const trimmed = newProduct.trim()
+    if (!trimmed) return
+    if (products.includes(trimmed)) { toast.error('同じ商品名がすでに存在します'); return }
+    setDivisionProducts(divId, [...products, trimmed])
+    setNewProduct('')
+    toast.success(`「${trimmed}」を追加しました`)
+  }
+
+  return (
+    <Card>
+      <CardHeader><div className="flex items-center gap-2"><Tag size={16} /><span className="font-bold text-gray-800">商品マスタ（{activeDivision?.name ?? ''}）</span></div></CardHeader>
+      <CardBody>
+        <p className="text-xs text-gray-500 mb-3">商談登録時に選択できる提案商品・サービスを管理します。</p>
+        <div className="space-y-1.5 mb-3">
+          {products.length === 0 && <p className="text-xs text-gray-400 py-2">商品がまだ登録されていません</p>}
+          {products.map((p) => (
+            <div key={p} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
+              <span className="flex-1 text-sm text-gray-700">{p}</span>
+              <button onClick={() => setDivisionProducts(divId, products.filter((x) => x !== p))}
+                className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input type="text" value={newProduct} onChange={(e) => setNewProduct(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+            placeholder="商品名を入力（例: assiST）"
+            className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
+          <button onClick={handleAdd}
+            className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors">
+            <Plus size={13} />追加
+          </button>
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+// ─── タスクカンバンステージ管理 ────────────────────────────────────
+const STAGE_COLOR_OPTIONS = [
+  { value: 'gray',   label: 'グレー'   },
+  { value: 'blue',   label: 'ブルー'   },
+  { value: 'yellow', label: 'イエロー' },
+  { value: 'orange', label: 'オレンジ' },
+  { value: 'green',  label: 'グリーン' },
+  { value: 'red',    label: 'レッド'   },
+  { value: 'purple', label: 'パープル' },
+]
+const COLOR_DOT: Record<string, string> = {
+  gray: 'bg-gray-400', blue: 'bg-blue-500', yellow: 'bg-yellow-500',
+  orange: 'bg-orange-500', green: 'bg-green-500', red: 'bg-red-500', purple: 'bg-purple-500',
+}
+
+function TaskStagesPanel() {
+  const { activeDivision, activeDivisionId, divisionTaskStages, setDivisionTaskStages } = useAppStore()
+  const divId = activeDivisionId ?? ''
+  const stages: TaskKanbanStage[] = divisionTaskStages[divId] ?? DEFAULT_DIVISION_TASK_STAGES[divId] ?? []
+  const [newName, setNewName]   = useState('')
+  const [newColor, setNewColor] = useState('blue')
+
+  const handleAdd = () => {
+    const trimmed = newName.trim()
+    if (!trimmed) return
+    setDivisionTaskStages(divId, [...stages, { id: `stage-${Date.now()}`, name: trimmed, color: newColor }])
+    setNewName('')
+    toast.success(`ステージ「${trimmed}」を追加しました`)
+  }
+
+  const move = (idx: number, dir: -1 | 1) => {
+    const next = [...stages]
+    const target = idx + dir
+    if (target < 0 || target >= next.length) return
+    ;[next[idx], next[target]] = [next[target], next[idx]]
+    setDivisionTaskStages(divId, next)
+  }
+
+  return (
+    <Card>
+      <CardHeader><div className="flex items-center gap-2"><Settings2 size={16} /><span className="font-bold text-gray-800">タスクカンバン設定（{activeDivision?.name ?? ''}）</span></div></CardHeader>
+      <CardBody>
+        <p className="text-xs text-gray-500 mb-3">タスクカンバンの列を管理します。財務支援では補助金フロー用の列がデフォルト設定されています。</p>
+        <div className="space-y-1.5 mb-3">
+          {stages.map((s, idx) => (
+            <div key={s.id} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
+              <span className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', COLOR_DOT[s.color] ?? 'bg-gray-400')} />
+              <span className="flex-1 text-sm text-gray-700">{s.name}</span>
+              <div className="flex gap-0.5">
+                <button onClick={() => move(idx, -1)} disabled={idx === 0}
+                  className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowUp size={12} /></button>
+                <button onClick={() => move(idx, 1)} disabled={idx === stages.length - 1}
+                  className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowDown size={12} /></button>
+              </div>
+              <button onClick={() => setDivisionTaskStages(divId, stages.filter((x) => x.id !== s.id))}
+                className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <select value={newColor} onChange={(e) => setNewColor(e.target.value)}
+            className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white">
+            {STAGE_COLOR_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+          <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+            placeholder="ステージ名（例: 申請中）"
+            className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
+          <button onClick={handleAdd}
+            className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors">
+            <Plus size={13} />追加
+          </button>
+        </div>
       </CardBody>
     </Card>
   )

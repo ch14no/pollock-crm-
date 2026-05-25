@@ -1,14 +1,14 @@
 'use client'
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Search, Plus, Building2, Phone, Mail,
   LayoutList, LayoutGrid, ChevronDown, MapPin, SlidersHorizontal, Lock, CreditCard, X,
   Trash2, Download, CheckSquare, Square, Filter,
 } from 'lucide-react'
 import { MOCK_CONTACTS, MOCK_TEAM_MEMBERS } from '@/lib/mock-data'
-import { LOCATIONS, getLocationConfig, sortTags } from '@/lib/config'
+import { LOCATIONS, getLocationConfig, getLocationsByRegion, sortTags } from '@/lib/config'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -86,6 +86,7 @@ function exportContactsCSV(contacts: Contact[], filename: string) {
 
 export default function ContactsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const activeDivisionId  = useAppStore((s) => s.activeDivisionId)
   const activeDivision    = useAppStore((s) => s.activeDivision)
   const isOwnDivision     = useAppStore(selectIsOwnDivision)
@@ -95,10 +96,11 @@ export default function ContactsPage() {
 
   const [dbContacts, setDbContacts] = useState<Contact[]>([])
   const [dbLoading, setDbLoading] = useState(false)
-  const [query, setQuery]               = useState('')
+  const [query, setQuery]               = useState(() => searchParams.get('q') ?? '')
   const [sortKey, setSortKey]           = useState<SortKey>('updated_desc')
-  const [viewMode, setViewMode]         = useState<ViewMode>('list')
+  const [viewMode, setViewMode]         = useState<ViewMode>('company')
   const [locationFilter, setLocationFilter] = useState<string | null>(null)
+  const [tagFilter, setTagFilter]           = useState<string | null>(null)
   const [showSortMenu, setShowSortMenu]       = useState(false)
   const [showFilters, setShowFilters]         = useState(false)
   const [showAutoTag, setShowAutoTag]         = useState(false)
@@ -193,7 +195,9 @@ export default function ContactsPage() {
         return (listCustomValues[c.id]?.[fieldId] ?? '') === val
       })
 
-      return matchQuery && matchLocation && matchStatus && matchCustom
+      const matchTag = tagFilter === null ? true : c.tags.includes(tagFilter)
+
+      return matchQuery && matchLocation && matchStatus && matchCustom && matchTag
     })
 
     result = [...result].sort((a, b) => {
@@ -207,7 +211,8 @@ export default function ContactsPage() {
       }
     })
     return result
-  }, [divisionContacts, query, sortKey, locationFilter])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [divisionContacts, query, sortKey, locationFilter, tagFilter, statusFilter, customFieldFilters, listStatuses, contactStatuses])
 
   const allFilteredSelected = filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id))
 
@@ -268,7 +273,7 @@ export default function ContactsPage() {
   const toggleStatus = (s: string) =>
     setStatusFilter((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s])
 
-  const clearFilters = () => { setLocationFilter(null); setStatusFilter([]); setCustomFieldFilters({}) }
+  const clearFilters = () => { setLocationFilter(null); setTagFilter(null); setStatusFilter([]); setCustomFieldFilters({}) }
 
   const contactsWithAddress = useMemo(() =>
     divisionContacts.filter((c) => c.address || (c.custom_attributes?.address as string | undefined)),
@@ -310,14 +315,23 @@ export default function ContactsPage() {
 
   const activeFilterCount =
     (locationFilter !== null ? 1 : 0) +
+    (tagFilter !== null ? 1 : 0) +
     statusFilter.length +
     Object.values(customFieldFilters).filter(Boolean).length
 
   const currentSortLabel = SORT_OPTIONS.find((o) => o.value === sortKey)?.label ?? ''
-  const hasFilter = !!(query || locationFilter !== null || statusFilter.length > 0 || Object.values(customFieldFilters).some(Boolean))
+  const hasFilter = !!(query || locationFilter !== null || tagFilter !== null || statusFilter.length > 0 || Object.values(customFieldFilters).some(Boolean))
   const noLocationCount = divisionContacts.filter(
     (c) => !LOCATIONS.some((l) => c.tags.includes(l.id))
   ).length
+
+  const locationsByRegion = getLocationsByRegion()
+
+  // 都道府県以外のユニークタグ一覧
+  const prefectureSet = new Set<string>(LOCATIONS.map((l) => l.id))
+  const otherTags = [...new Set(
+    divisionContacts.flatMap((c) => c.tags.filter((t) => !prefectureSet.has(t)))
+  )].sort()
 
   return (
     <div className="w-full">
@@ -545,23 +559,28 @@ export default function ContactsPage() {
       {/* ─── フィルターパネル ─────────────────────────────────────── */}
       {showFilters && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-4 shadow-sm space-y-3">
-          {/* 拠点 */}
+          {/* 都道府県（地方別グループ） */}
           <div className="flex items-start gap-4">
-            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0">拠点</span>
-            <div className="flex flex-wrap gap-1.5">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0">都道府県</span>
+            <div className="flex-1 space-y-1.5">
               <button
                 onClick={() => setLocationFilter(null)}
                 className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors', locationFilter === null ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
               >全て</button>
-              {LOCATIONS.map((loc) => (
-                <button
-                  key={loc.id}
-                  onClick={() => setLocationFilter(locationFilter === loc.id ? null : loc.id)}
-                  className={cn('inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium transition-colors',
-                    locationFilter === loc.id ? loc.color + ' ring-2 ring-offset-1 ring-current' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
-                >
-                  <MapPin size={10} />{loc.label}
-                </button>
+              {Object.entries(locationsByRegion).map(([region, locs]) => (
+                <div key={region} className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] text-gray-400 w-10 flex-shrink-0 text-right">{region}</span>
+                  {locs.map((loc) => (
+                    <button
+                      key={loc.id}
+                      onClick={() => setLocationFilter(locationFilter === loc.id ? null : loc.id)}
+                      className={cn('inline-flex items-center gap-0.5 px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors',
+                        locationFilter === loc.id ? loc.color + ' ring-2 ring-offset-1 ring-current' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+                    >
+                      <MapPin size={9} />{loc.label}
+                    </button>
+                  ))}
+                </div>
               ))}
               {noLocationCount > 0 && (
                 <button
@@ -571,6 +590,27 @@ export default function ContactsPage() {
               )}
             </div>
           </div>
+
+          {/* その他タグ */}
+          {otherTags.length > 0 && (
+            <div className="flex items-start gap-4">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0">タグ</span>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => setTagFilter(null)}
+                  className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors', tagFilter === null ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+                >全て</button>
+                {otherTags.map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() => setTagFilter(tagFilter === tag ? null : tag)}
+                    className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors',
+                      tagFilter === tag ? 'bg-purple-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+                  >{tag}</button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ステータス */}
           <div className="flex items-start gap-4">
@@ -641,6 +681,12 @@ export default function ContactsPage() {
               <button onClick={() => setLocationFilter(null)}><X size={10} /></button>
             </span>
           )}
+          {tagFilter && (
+            <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-700 border border-purple-200 px-2.5 py-1 rounded-full text-xs font-medium">
+              #{tagFilter}
+              <button onClick={() => setTagFilter(null)}><X size={10} /></button>
+            </span>
+          )}
           {statusFilter.map((s) => {
             const cfg = STATUS_CONFIG.find((c) => c.status === s)
             return cfg ? (
@@ -692,6 +738,7 @@ export default function ContactsPage() {
           onSelect={(id) => router.push(`/contacts/${id}`)}
           isReadOnly={!isOwnDivision}
           contactStatuses={contactStatuses}
+          listStatuses={listStatuses}
         />
       ) : viewMode === 'company' ? (
         <CompanyView
@@ -701,6 +748,7 @@ export default function ContactsPage() {
           onSelect={(id: string) => router.push(`/contacts/${id}`)}
           isReadOnly={!isOwnDivision}
           contactStatuses={contactStatuses}
+          listStatuses={listStatuses}
         />
       ) : (
         <CardView
@@ -710,6 +758,7 @@ export default function ContactsPage() {
           onSelect={(id) => router.push(`/contacts/${id}`)}
           isReadOnly={!isOwnDivision}
           contactStatuses={contactStatuses}
+          listStatuses={listStatuses}
         />
       )}
 
@@ -751,8 +800,8 @@ export default function ContactsPage() {
 type ContactStatusMap = Record<string, ContactStatus[]>
 
 // ─── Status icons ─────────────────────────────────────────────────────────────
-function StatusIcons({ contactId, contactStatuses }: { contactId: string; contactStatuses: ContactStatusMap }) {
-  const active = contactStatuses[contactId] ?? []
+function StatusIcons({ contactId, contactStatuses, listStatuses }: { contactId: string; contactStatuses: ContactStatusMap; listStatuses: Record<string, string[]> }) {
+  const active = listStatuses[contactId] ?? contactStatuses[contactId] ?? []
   if (active.length === 0) return null
   return (
     <span className="flex items-center gap-0.5 flex-shrink-0">
@@ -781,7 +830,7 @@ function AssigneeChip({ userId }: { userId?: string }) {
 
 // ─── List View ────────────────────────────────────────────────────────────────
 function ListView({
-  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses,
+  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses,
 }: {
   contacts: Contact[]
   selectedIds: Set<string>
@@ -789,6 +838,7 @@ function ListView({
   onSelect: (id: string) => void
   isReadOnly: boolean
   contactStatuses: ContactStatusMap
+  listStatuses: Record<string, string[]>
 }) {
   return (
     <div className="space-y-2">
@@ -826,7 +876,7 @@ function ListView({
               <div className="flex-1 min-w-0" onClick={() => onSelect(contact.id)}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-gray-800">{contact.name}</span>
-                  <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} />
+                  <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} listStatuses={listStatuses} />
                   {isReadOnly && (
                     <span className="inline-flex items-center gap-1 text-xs text-gray-400">
                       <Lock size={10} /> 閲覧のみ
@@ -881,7 +931,7 @@ function ListView({
 
 // ─── Company View ─────────────────────────────────────────────────────────────
 function CompanyView({
-  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses,
+  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses,
 }: {
   contacts: Contact[]
   selectedIds: Set<string>
@@ -889,6 +939,7 @@ function CompanyView({
   onSelect: (id: string) => void
   isReadOnly: boolean
   contactStatuses: ContactStatusMap
+  listStatuses: Record<string, string[]>
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
@@ -973,7 +1024,7 @@ function CompanyView({
                       <div className="flex-1 min-w-0" onClick={() => onSelect(contact.id)}>
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium text-sm text-gray-800">{contact.name}</span>
-                          <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} />
+                          <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} listStatuses={listStatuses} />
                           {contact.position && <span className="text-xs text-gray-500">{contact.position}</span>}
                           {isReadOnly && <span className="inline-flex items-center gap-1 text-xs text-gray-400"><Lock size={9} /> 閲覧のみ</span>}
                         </div>
@@ -1007,7 +1058,7 @@ function CompanyView({
 
 // ─── Card View ────────────────────────────────────────────────────────────────
 function CardView({
-  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses,
+  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses,
 }: {
   contacts: Contact[]
   selectedIds: Set<string>
@@ -1015,6 +1066,7 @@ function CardView({
   onSelect: (id: string) => void
   isReadOnly: boolean
   contactStatuses: ContactStatusMap
+  listStatuses: Record<string, string[]>
 }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1047,7 +1099,7 @@ function CardView({
                 {getInitials(contact.name)}
               </div>
               <div className="flex flex-col items-end gap-1.5">
-                <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} />
+                <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} listStatuses={listStatuses} />
                 {isReadOnly && (
                   <span className="inline-flex items-center gap-1 text-xs text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">
                     <Lock size={10} /> 閲覧のみ

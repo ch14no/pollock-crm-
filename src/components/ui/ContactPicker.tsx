@@ -188,13 +188,15 @@ export function ContactPicker({
 
   useEffect(() => {
     if (!selectedContactId) { setSelectedContact(null); return }
+    let cancelled = false
     if (isSupabaseConfigured()) {
-      fetchContactById(selectedContactId).then(setSelectedContact)
+      fetchContactById(selectedContactId).then((c) => { if (!cancelled) setSelectedContact(c) })
     } else {
       const base = MOCK_CONTACTS.find((c) => c.id === selectedContactId) ?? null
       const edit = localContactEdits[selectedContactId]
       setSelectedContact(base && edit ? { ...(base as unknown as Contact), ...edit } : (base as unknown as Contact | null))
     }
+    return () => { cancelled = true }
   }, [selectedContactId, localContactEdits])
 
   const handleSelect = (contact: Contact) => {

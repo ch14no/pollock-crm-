@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Users, User, Plus, Check, X, Trash2,
-  AlertCircle, ChevronDown, CheckSquare, Layers,
+  AlertCircle, ChevronDown, CheckSquare, Layers, Kanban,
 } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import type { Challenge, TaskMeta } from '@/store/appStore'
@@ -14,6 +14,8 @@ import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity } from '@/lib/db/activities'
 import { fetchContactsByDivision } from '@/lib/db/contacts'
 import { fetchChallenges, createChallenge, updateChallengeStatus, deleteChallenge } from '@/lib/db/challenges'
+import { DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
+import { TaskKanbanBoard } from '@/components/tasks/TaskKanbanBoard'
 import type { Activity, Contact } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -46,7 +48,13 @@ export default function TasksPage() {
   const openActivityModal = useAppStore((s) => s.openActivityModal)
   const activityModalIsOpen = useAppStore((s) => s.activityModal.isOpen)
 
-  const [tab, setTab]     = useState<'tasks' | 'challenges'>('tasks')
+  const divisionTaskStages = useAppStore((s) => s.divisionTaskStages)
+
+  const kanbanStages = activeDivisionId
+    ? (divisionTaskStages[activeDivisionId] ?? DEFAULT_DIVISION_TASK_STAGES[activeDivisionId] ?? DEFAULT_DIVISION_TASK_STAGES['div-1'])
+    : []
+
+  const [tab, setTab]     = useState<'kanban' | 'tasks' | 'challenges'>('kanban')
   const [scope, setScope] = useState<'personal' | 'team'>('team')
   const [expandedQ, setExpandedQ] = useState<Set<number>>(new Set([1, 2, 3, 4]))
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
@@ -252,8 +260,12 @@ export default function TasksPage() {
       {/* タブ + スコープ */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex bg-gray-100 p-1 rounded-xl">
-          {([['tasks', <CheckSquare size={14} key="t" />, 'タスク'], ['challenges', <Layers size={14} key="c" />, '課題']] as const).map(([t, icon, label]) => (
-            <button key={t} onClick={() => setTab(t as typeof tab)}
+          {([
+            ['kanban',     <Kanban size={14} key="k" />,      'カンバン'],
+            ['tasks',      <CheckSquare size={14} key="t" />, '象限'],
+            ['challenges', <Layers size={14} key="c" />,      '課題'],
+          ] as const).map(([t, icon, label]) => (
+            <button key={t} onClick={() => setTab(t)}
               className={cn('flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
                 tab === t ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700')}>
               {icon}{label}
@@ -270,6 +282,15 @@ export default function TasksPage() {
           ))}
         </div>
       </div>
+
+      {/* ─── カンバンビュー ─── */}
+      {tab === 'kanban' && (
+        <TaskKanbanBoard
+          tasks={filteredTasks}
+          stages={kanbanStages}
+          onAddTask={(stageId) => openActivityModal({ prefillKanbanStageId: stageId })}
+        />
+      )}
 
       {/* ─── タスク4象限ビュー ─── */}
       {tab === 'tasks' && (

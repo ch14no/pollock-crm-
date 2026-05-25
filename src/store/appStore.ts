@@ -98,6 +98,13 @@ export interface DivisionStage {
   isWon: boolean
   isLost: boolean
 }
+
+// タスクカンバンステージ定義
+export interface TaskKanbanStage {
+  id: string
+  name: string
+  color: string  // 'blue' | 'green' | 'yellow' | 'red' | 'gray' | 'purple' | 'orange'
+}
 // ─────────────────────────────────────────────────────────────────
 
 interface TossupModalState {
@@ -139,11 +146,13 @@ interface AppState {
     prefillDealTitle?: string
     prefillTaskUrgency?: boolean
     prefillTaskImportance?: boolean
+    prefillKanbanStageId?: string
   }
   openActivityModal: (prefill?: {
     contactId?: string; contactName?: string
     dealId?: string; dealTitle?: string
     taskUrgency?: boolean; taskImportance?: boolean
+    prefillKanbanStageId?: string
   }) => void
   closeActivityModal: () => void
 
@@ -222,6 +231,23 @@ interface AppState {
   divisionStages: Record<string, DivisionStage[]>  // divisionId -> stages
   setDivisionStages: (divisionId: string, stages: DivisionStage[]) => void
 
+  // 商品マスタ（事業部別）
+  divisionProducts: Record<string, string[]>  // divisionId -> product names
+  setDivisionProducts: (divisionId: string, products: string[]) => void
+
+  // 商談の提案商品（dealId -> product name）
+  dealProducts: Record<string, string>
+  setDealProduct: (dealId: string, product: string) => void
+  clearDealProduct: (dealId: string) => void
+
+  // タスクカンバンステージ（事業部別）
+  divisionTaskStages: Record<string, TaskKanbanStage[]>
+  setDivisionTaskStages: (divisionId: string, stages: TaskKanbanStage[]) => void
+
+  // タスクのカンバン列（activityId -> stageId）
+  taskStageMap: Record<string, string>
+  setTaskStage: (activityId: string, stageId: string) => void
+
   // 顧客の事業部別カスタムフィールド値
   contactCustomValues: Record<string, Record<string, string>>  // contactId -> { fieldId -> value }
   setContactCustomValue: (contactId: string, fieldId: string, value: string) => void
@@ -289,6 +315,7 @@ export const useAppStore = create<AppState>()(
             prefillDealTitle: prefill?.dealTitle,
             prefillTaskUrgency: prefill?.taskUrgency,
             prefillTaskImportance: prefill?.taskImportance,
+            prefillKanbanStageId: prefill?.prefillKanbanStageId,
           },
         }),
       closeActivityModal: () => set({ activityModal: { isOpen: false } }),
@@ -392,6 +419,28 @@ export const useAppStore = create<AppState>()(
       setDivisionStages: (divisionId, stages) =>
         set((state) => ({ divisionStages: { ...state.divisionStages, [divisionId]: stages } })),
 
+      divisionProducts: {},
+      setDivisionProducts: (divisionId, products) =>
+        set((state) => ({ divisionProducts: { ...state.divisionProducts, [divisionId]: products } })),
+
+      dealProducts: {},
+      setDealProduct: (dealId, product) =>
+        set((state) => ({ dealProducts: { ...state.dealProducts, [dealId]: product } })),
+      clearDealProduct: (dealId) =>
+        set((state) => {
+          const next = { ...state.dealProducts }
+          delete next[dealId]
+          return { dealProducts: next }
+        }),
+
+      divisionTaskStages: {},
+      setDivisionTaskStages: (divisionId, stages) =>
+        set((state) => ({ divisionTaskStages: { ...state.divisionTaskStages, [divisionId]: stages } })),
+
+      taskStageMap: {},
+      setTaskStage: (activityId, stageId) =>
+        set((state) => ({ taskStageMap: { ...state.taskStageMap, [activityId]: stageId } })),
+
       contactCustomValues: {},
       setContactCustomValue: (contactId, fieldId, value) =>
         set((state) => ({
@@ -453,6 +502,10 @@ export const useAppStore = create<AppState>()(
         tossupStatuses: state.tossupStatuses,
         divisionCustomFields: state.divisionCustomFields,
         divisionStages: state.divisionStages,
+        divisionProducts: state.divisionProducts,
+        dealProducts: state.dealProducts,
+        divisionTaskStages: state.divisionTaskStages,
+        taskStageMap: state.taskStageMap,
         contactCustomValues: state.contactCustomValues,
         contactStatuses: state.contactStatuses,
         localContactEdits: state.localContactEdits,

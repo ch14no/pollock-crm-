@@ -166,10 +166,12 @@ export default function DashboardPage() {
     () => isSupabaseConfigured() ? [...dbDeals, ...localDeals] : [...(MOCK_DEALS as unknown as Deal[]), ...localDeals],
     [dbDeals, localDeals]
   )
-  const allActivities = useMemo(
-    () => isSupabaseConfigured() ? [...dbActivities, ...localActivities] : [...(MOCK_ACTIVITIES as unknown as DbActivity[]), ...localActivities],
-    [dbActivities, localActivities]
-  )
+  const allActivities = useMemo(() => {
+    if (!isSupabaseConfigured()) return [...(MOCK_ACTIVITIES as unknown as DbActivity[]), ...localActivities]
+    const dbIds = new Set(dbActivities.map((a) => a.id))
+    const onlyLocal = localActivities.filter((a) => !dbIds.has(a.id))
+    return [...onlyLocal, ...dbActivities]
+  }, [dbActivities, localActivities])
 
   // ─── チームデータ ───────────────────────────────────────────────
   const divDeals    = useMemo(() => allDeals.filter((d) => d.division_id === activeDivisionId), [allDeals, activeDivisionId])
@@ -442,7 +444,7 @@ export default function DashboardPage() {
                   <CheckSquare size={16} className="text-orange-500" />
                   自分のタスク
                 </h2>
-                <button onClick={() => router.push('/activities')} className="text-xs text-orange-600 hover:underline">すべて見る</button>
+                <button onClick={() => router.push('/tasks')} className="text-xs text-orange-600 hover:underline">すべて見る</button>
               </div>
               {myTasks.length === 0 ? (
                 <div className="text-center py-6">
@@ -585,7 +587,7 @@ export default function DashboardPage() {
                   <CheckSquare size={16} className="text-orange-500" />
                   今日のタスク
                 </h2>
-                <button onClick={() => router.push('/activities')} className="text-xs text-orange-600 hover:underline">すべて見る</button>
+                <button onClick={() => router.push('/tasks')} className="text-xs text-orange-600 hover:underline">すべて見る</button>
               </div>
               {teamOverdue.length + teamToday.length + teamUpcoming.length === 0 ? (
                 <div className="text-center py-6">

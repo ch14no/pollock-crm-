@@ -37,7 +37,7 @@ function todayStr() {
 }
 
 export function ActivityModal() {
-  const { activityModal, closeActivityModal, activeDivisionId, currentUser, addActivity, setTaskMeta } = useAppStore()
+  const { activityModal, closeActivityModal, activeDivisionId, currentUser, addActivity, setTaskMeta, setTaskStage } = useAppStore()
   const [loading, setLoading] = useState(false)
   const [taskUrgency, setTaskUrgency] = useState(false)
   const [taskImportance, setTaskImportance] = useState(false)
@@ -132,6 +132,9 @@ export function ActivityModal() {
 
       if (isTask) {
         setTaskMeta(savedId, { urgency: taskUrgency, importance: taskImportance, scope: taskScope })
+        if (activityModal.prefillKanbanStageId) {
+          setTaskStage(savedId, activityModal.prefillKanbanStageId)
+        }
       }
 
       closeActivityModal()

@@ -20,6 +20,7 @@ export default function DealsPage() {
 
   const [dbDeals, setDbDeals] = useState<Deal[]>([])
   const [loading, setLoading] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
   const prevModalOpen = useRef(false)
 
   const loadDeals = async () => {
@@ -40,6 +41,7 @@ export default function DealsPage() {
   useEffect(() => {
     if (prevModalOpen.current && !dealModalIsOpen) {
       loadDeals()
+      setReloadKey((k) => k + 1)
     }
     prevModalOpen.current = dealModalIsOpen
   }, [dealModalIsOpen]) // eslint-disable-line
@@ -82,7 +84,7 @@ export default function DealsPage() {
       )}
 
       <KanbanBoard
-        key={`${activeDivisionId}-${divisionDeals.length}`}
+        key={`${activeDivisionId}-${reloadKey}`}
         initialDeals={divisionDeals}
         readOnly={!isOwnDivision}
       />

@@ -5,7 +5,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { ContactPicker } from '@/components/ui/ContactPicker'
 import { useAppStore } from '@/store/appStore'
-import { DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
+import { DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS } from '@/lib/mock-data'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { createDeal, updateDeal, updateDealStage } from '@/lib/db/deals'
 import { cn } from '@/lib/utils'
@@ -32,11 +32,17 @@ export function DealModal() {
   const {
     dealModal, closeDealModal, activeDivisionId,
     addDeal, updateLocalDeal, currentUser, divisionStages,
+    divisionProducts, dealProducts, setDealProduct, clearDealProduct,
   } = useAppStore()
 
   const [loading, setLoading] = useState(false)
   const [amountDisplay, setAmountDisplay] = useState('')
+  const [selectedProduct, setSelectedProduct] = useState('')
   const isEdit = !!dealModal.deal
+
+  const productList = activeDivisionId
+    ? (divisionProducts[activeDivisionId] ?? DEFAULT_DIVISION_PRODUCTS[activeDivisionId] ?? [])
+    : []
 
   const [form, setForm] = useState<DealFormState>({
     title: '', contactId: '', amount: '', stageId: 'リード', closeDate: '', description: '',
@@ -66,6 +72,7 @@ export function DealModal() {
         description: d.description ?? '',
       })
       setAmountDisplay(d.amount > 0 ? d.amount.toLocaleString('ja-JP') : '')
+      setSelectedProduct(dealProducts[d.id] ?? '')
     } else {
       setForm({
         title: '',
@@ -76,6 +83,7 @@ export function DealModal() {
         description: '',
       })
       setAmountDisplay('')
+      setSelectedProduct('')
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dealModal.isOpen, dealModal.deal, dealModal.prefillContactId, dealModal.prefillStageId])
@@ -115,6 +123,8 @@ export function DealModal() {
           description: form.description.trim() || undefined,
           updated_at: now,
         })
+        if (selectedProduct) setDealProduct(dealModal.deal.id, selectedProduct)
+        else clearDealProduct(dealModal.deal.id)
         toast.success(`「${form.title}」を更新しました`)
       } else {
         // ── 新規作成 ──
@@ -145,6 +155,7 @@ export function DealModal() {
           updated_at: now,
           users: currentUser ?? undefined,
         })
+        if (selectedProduct) setDealProduct(dealId, selectedProduct)
         toast.success(`商談「${form.title}」を作成しました`)
       }
       closeDealModal()
@@ -237,13 +248,36 @@ export function DealModal() {
             <input
               type="date"
               value={form.closeDate}
-              min={new Date().toISOString().slice(0, 10)}
               onChange={(e) => setForm((f) => ({ ...f, closeDate: e.target.value }))}
               className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
                 focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
             />
           </div>
         </div>
+
+        {/* 提案商品 */}
+        {productList.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">提案商品・サービス</label>
+            <div className="flex flex-wrap gap-2">
+              {productList.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setSelectedProduct(selectedProduct === p ? '' : p)}
+                  className={cn(
+                    'px-3 py-1.5 rounded-lg text-xs font-medium border-2 transition-all',
+                    selectedProduct === p
+                      ? 'bg-blue-500 text-white border-blue-500'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                  )}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ステージ選択 */}
         <div>

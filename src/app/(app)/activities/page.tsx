@@ -378,7 +378,7 @@ export default function ActivitiesPage() {
                   const isMyTask         = activity.user_id === currentUser?.id
                   const isMyCreation     = isLocal
                   const canComplete      = !isTask || isMyTask
-                  const canEdit          = isTask && isMyCreation && !isMyTask
+                  const canEdit          = isTask && (isMyTask || isMyCreation)
                   const isLocked         = isTask && !isMyTask && !isMyCreation
                   const assigneeName     = isTask && activity.user_id !== currentUser?.id
                     ? (activity.users?.name ?? null)

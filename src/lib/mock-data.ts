@@ -1,5 +1,5 @@
 import type { Division, User, UserDivision, Company, Contact, Deal, Activity, Tossup } from '@/types/database'
-import type { DivisionCustomField, DivisionStage } from '@/store/appStore'
+import type { DivisionCustomField, DivisionStage, TaskKanbanStage } from '@/store/appStore'
 
 export const MOCK_DIVISIONS: Division[] = [
   { id: 'div-1', name: 'ITソリューション', color_code: '#f97316', created_at: '2026-01-01' },
@@ -281,6 +281,47 @@ export const DEFAULT_DIVISION_STAGES: Record<string, DivisionStage[]> = {
     { id: '受注',         name: '受注',         sortOrder: 4, isWon: true,  isLost: false },
     { id: '失注',         name: '失注',         sortOrder: 5, isWon: false, isLost: true  },
   ],
+}
+
+// ─── 事業部別デフォルトタスクカンバンステージ ───────────────────────
+export const DEFAULT_DIVISION_TASK_STAGES: Record<string, TaskKanbanStage[]> = {
+  'div-1': [ // ITソリューション
+    { id: 'todo',       name: '未着手',   color: 'gray'   },
+    { id: 'inprogress', name: '進行中',   color: 'blue'   },
+    { id: 'review',     name: 'レビュー', color: 'yellow' },
+    { id: 'done',       name: '完了',     color: 'green'  },
+  ],
+  'div-2': [ // 人材
+    { id: 'todo',       name: '未着手',   color: 'gray'   },
+    { id: 'inprogress', name: '進行中',   color: 'blue'   },
+    { id: 'done',       name: '完了',     color: 'green'  },
+  ],
+  'div-3': [ // 財務支援（補助金フロー）
+    { id: 'making',     name: '資料作成中',     color: 'blue'   },
+    { id: 'sharing',    name: '共有中',         color: 'yellow' },
+    { id: 'applying',   name: '申請中（審査中）', color: 'orange' },
+    { id: 'adopted',    name: '採択',           color: 'green'  },
+    { id: 'rejected',   name: '不採択',         color: 'red'    },
+  ],
+  'div-4': [ // Bowers
+    { id: 'todo',       name: '未着手',   color: 'gray'   },
+    { id: 'inprogress', name: '進行中',   color: 'blue'   },
+    { id: 'done',       name: '完了',     color: 'green'  },
+  ],
+  'div-5': [ // メディケア
+    { id: 'todo',       name: '未着手',   color: 'gray'   },
+    { id: 'inprogress', name: '進行中',   color: 'blue'   },
+    { id: 'done',       name: '完了',     color: 'green'  },
+  ],
+}
+
+// ─── 事業部別デフォルト商品マスタ ────────────────────────────────
+export const DEFAULT_DIVISION_PRODUCTS: Record<string, string[]> = {
+  'div-1': ['assiST', 'ALL-BLUE', 'SES契約', 'システム開発', 'コンサルティング'],
+  'div-2': ['人材紹介', '派遣', 'RPO', 'ヘッドハンティング'],
+  'div-3': ['assiST', 'ALL-BLUE', '補助金申請支援', '融資相談', '財務コンサル', 'M&A支援'],
+  'div-4': ['Bowers基本プラン', 'Bowersエンタープライズ', 'カスタム開発'],
+  'div-5': ['医療IT導入支援', '病院経営コンサル', 'システム導入'],
 }
 
 export const MOCK_TOSSUPS: Tossup[] = [
