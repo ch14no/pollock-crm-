@@ -459,7 +459,7 @@ export default function DashboardPage() {
                   ))}
                   {myTasks.length > 5 && (
                     <button
-                      onClick={() => router.push('/activities')}
+                      onClick={() => router.push('/tasks')}
                       className="w-full text-xs text-orange-600 hover:underline pt-1 text-center"
                     >
                       他 {myTasks.length - 5}件のタスクを見る →
@@ -556,7 +556,7 @@ export default function DashboardPage() {
                 </button>
               )}
               {teamOverdue.length > 0 && (
-                <button onClick={() => router.push('/activities')}
+                <button onClick={() => router.push('/tasks')}
                   className="flex items-center gap-3 px-4 py-3 bg-yellow-50 border border-yellow-200 rounded-xl text-left hover:bg-yellow-100 transition-colors">
                   <Clock size={18} className="text-yellow-600 flex-shrink-0" />
                   <div className="flex-1">

@@ -46,8 +46,9 @@ export default function DealsPage() {
     prevModalOpen.current = dealModalIsOpen
   }, [dealModalIsOpen]) // eslint-disable-line
 
+  // localDeals の編集内容を dbDeals に即時パッチ（DB再取得前でも反映）
   const divisionDeals: Deal[] = isSupabaseConfigured()
-    ? dbDeals
+    ? dbDeals.map((d) => { const p = localDeals.find((l) => l.id === d.id); return p ? { ...d, ...p } : d })
     : localDeals.filter((d) => d.division_id === activeDivisionId)
 
   const activeDeals = divisionDeals.filter((d) => d.stage_id !== '受注' && d.stage_id !== '失注')

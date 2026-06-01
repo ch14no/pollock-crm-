@@ -11,7 +11,7 @@ import {
 import { MOCK_DEALS, DEFAULT_DIVISION_CUSTOM_FIELDS } from '@/lib/mock-data'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchContactById, updateContact, fetchContactCustomValues } from '@/lib/db/contacts'
-import { fetchActivitiesByTarget, updateActivityStatus } from '@/lib/db/activities'
+import { fetchActivitiesByTarget, updateActivityStatus, updateActivityFields } from '@/lib/db/activities'
 import { fetchDealsByContact } from '@/lib/db/deals'
 import type { Contact, Activity, Deal } from '@/types/database'
 import { getLocationConfig, sortTags } from '@/lib/config'
@@ -147,6 +147,8 @@ export default function ContactDetailPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState({ title: '', dueDate: '', memo: '' })
+  const [editingActId, setEditingActId] = useState<string | null>(null)
+  const [actEditForm, setActEditForm] = useState({ title: '', memo: '' })
   const [editingFields, setEditingFields] = useState(false)
 
   // 基本情報インライン編集
@@ -612,6 +614,8 @@ export default function ContactDetailPage() {
                         const color = ACT_COLOR[act.activity_type]
                         const label = ACT_LABEL[act.activity_type]
                         const isExpanded = expandedIds.has(act.id)
+                        const isEditingThis = editingActId === act.id
+                        const canEditAct = isOwnDivision && act.user_id === currentUser?.id
 
                         return (
                           <div key={act.id} className="flex gap-3">
@@ -620,7 +624,7 @@ export default function ContactDetailPage() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-start justify-between gap-1">
-                                <div>
+                                <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className={cn('text-xs font-semibold px-1.5 py-0.5 rounded', color)}>{label}</span>
                                     <span className="text-xs text-gray-400">{formatRelativeTime(act.action_date)}</span>
@@ -628,20 +632,69 @@ export default function ContactDetailPage() {
                                       <span className="text-xs text-gray-400">{act.users.name}</span>
                                     )}
                                   </div>
-                                  {act.title && (
+                                  {!isEditingThis && act.title && (
                                     <p className="text-sm font-medium text-gray-700 mt-0.5">{act.title}</p>
                                   )}
                                 </div>
-                                {act.memo && (
-                                  <button onClick={() => toggleExpand(act.id)} className="text-gray-300 hover:text-gray-500 flex-shrink-0 mt-1">
-                                    <ChevronDown size={13} className={cn('transition-transform', isExpanded && 'rotate-180')} />
-                                  </button>
-                                )}
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  {canEditAct && !isEditingThis && (
+                                    <button
+                                      onClick={() => { setEditingActId(act.id); setActEditForm({ title: act.title ?? '', memo: act.memo ?? '' }) }}
+                                      className="text-gray-300 hover:text-orange-500 transition-colors p-0.5 rounded"
+                                      title="編集"
+                                    >
+                                      <Edit2 size={12} />
+                                    </button>
+                                  )}
+                                  {!isEditingThis && act.memo && (
+                                    <button onClick={() => toggleExpand(act.id)} className="text-gray-300 hover:text-gray-500">
+                                      <ChevronDown size={13} className={cn('transition-transform', isExpanded && 'rotate-180')} />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
-                              {act.memo && (isExpanded || !act.title) && (
+
+                              {/* インライン編集フォーム */}
+                              {isEditingThis && (
+                                <div className="mt-2 p-2.5 bg-orange-50 rounded-xl space-y-2 border border-orange-100">
+                                  <input
+                                    type="text"
+                                    value={actEditForm.title}
+                                    onChange={(e) => setActEditForm((f) => ({ ...f, title: e.target.value }))}
+                                    placeholder="件名"
+                                    className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
+                                  />
+                                  <textarea
+                                    value={actEditForm.memo}
+                                    onChange={(e) => setActEditForm((f) => ({ ...f, memo: e.target.value }))}
+                                    placeholder="メモ"
+                                    rows={2}
+                                    className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white resize-none"
+                                  />
+                                  <div className="flex gap-2 justify-end">
+                                    <button onClick={() => setEditingActId(null)}
+                                      className="flex items-center gap-1 text-xs text-gray-500 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 transition-colors">
+                                      <X size={12} /> キャンセル
+                                    </button>
+                                    <button
+                                      onClick={async () => {
+                                        updateLocalActivity(act.id, { title: actEditForm.title || undefined, memo: actEditForm.memo || undefined })
+                                        if (isSupabaseConfigured() && !act.id.startsWith('act-local-')) {
+                                          await updateActivityFields(act.id, { title: actEditForm.title || null, memo: actEditForm.memo || null }).catch(() => {})
+                                        }
+                                        setEditingActId(null)
+                                      }}
+                                      className="flex items-center gap-1 text-xs text-white bg-orange-500 hover:bg-orange-600 px-2.5 py-1.5 rounded-lg font-medium transition-colors">
+                                      <Check size={12} /> 保存
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {!isEditingThis && act.memo && (isExpanded || !act.title) && (
                                 <p className="mt-1.5 text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{act.memo}</p>
                               )}
-                              {act.memo && act.title && !isExpanded && (
+                              {!isEditingThis && act.memo && act.title && !isExpanded && (
                                 <p className="mt-0.5 text-xs text-gray-400 truncate">{act.memo}</p>
                               )}
                             </div>

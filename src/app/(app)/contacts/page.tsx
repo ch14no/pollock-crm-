@@ -22,7 +22,7 @@ import type { Contact } from '@/types/database'
 import toast from 'react-hot-toast'
 
 type ViewMode = 'list' | 'card' | 'company'
-type SortKey = 'updated_desc' | 'updated_asc' | 'name_asc' | 'name_desc' | 'company_asc'
+type SortKey = 'updated_desc' | 'updated_asc' | 'name_asc' | 'name_desc' | 'company_asc' | 'company_desc'
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'updated_desc', label: '最終更新（新しい順）' },
@@ -30,6 +30,7 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'name_asc',     label: '氏名（昇順）' },
   { value: 'name_desc',    label: '氏名（降順）' },
   { value: 'company_asc',  label: '会社名（昇順）' },
+  { value: 'company_desc', label: '会社名（降順）' },
 ]
 
 function normalize(str: string): string {
@@ -97,6 +98,7 @@ export default function ContactsPage() {
   const [dbContacts, setDbContacts] = useState<Contact[]>([])
   const [dbLoading, setDbLoading] = useState(false)
   const [query, setQuery]               = useState(() => searchParams.get('q') ?? '')
+  useEffect(() => { setQuery(searchParams.get('q') ?? '') }, [searchParams])
   const [sortKey, setSortKey]           = useState<SortKey>('updated_desc')
   const [viewMode, setViewMode]         = useState<ViewMode>('company')
   const [locationFilter, setLocationFilter] = useState<string | null>(null)
@@ -206,7 +208,16 @@ export default function ContactsPage() {
         case 'updated_asc':  return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
         case 'name_asc':     return a.name.localeCompare(b.name, 'ja')
         case 'name_desc':    return b.name.localeCompare(a.name, 'ja')
-        case 'company_asc':  return (a.companies?.name ?? '').localeCompare(b.companies?.name ?? '', 'ja')
+        case 'company_asc': {
+          const ca = a.companies?.name ?? '', cb = b.companies?.name ?? ''
+          if (!ca && cb) return 1; if (ca && !cb) return -1
+          return ca.localeCompare(cb, 'ja')
+        }
+        case 'company_desc': {
+          const ca = a.companies?.name ?? '', cb = b.companies?.name ?? ''
+          if (!ca && cb) return 1; if (ca && !cb) return -1
+          return cb.localeCompare(ca, 'ja')
+        }
         default: return 0
       }
     })

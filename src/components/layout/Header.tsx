@@ -1,16 +1,32 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Search, Bell, X, CheckCheck } from 'lucide-react'
+import { Search, Bell, X, CheckCheck, ArrowLeftRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/store/appStore'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { fetchUnreadTossupCount } from '@/lib/db/tossups'
 
 export function Header() {
   const [search, setSearch] = useState('')
   const [notifOpen, setNotifOpen] = useState(false)
-  const { activeDivision } = useAppStore()
+  const [unreadCount, setUnreadCount] = useState(0)
+  const { activeDivision, localTossups, tossupStatuses } = useAppStore()
   const router = useRouter()
   const notifRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!activeDivision?.id) return
+    if (isSupabaseConfigured()) {
+      fetchUnreadTossupCount(activeDivision.id).then(setUnreadCount)
+    } else {
+      const count = localTossups.filter(
+        (t) => t.to_division_id === activeDivision.id &&
+               (tossupStatuses[t.id] ?? t.status) === 'unread'
+      ).length
+      setUnreadCount(count)
+    }
+  }, [activeDivision?.id, localTossups, tossupStatuses])
 
   useEffect(() => {
     if (!notifOpen) return
@@ -71,6 +87,11 @@ export function Header() {
           className="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
         >
           <Bell size={20} />
+          {unreadCount > 0 && (
+            <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
         </button>
 
         {notifOpen && (
@@ -81,10 +102,28 @@ export function Header() {
                 <X size={15} />
               </button>
             </div>
-            <div className="flex flex-col items-center justify-center py-10 text-gray-400">
-              <CheckCheck size={28} className="mb-2 text-gray-300" />
-              <p className="text-sm">新しい通知はありません</p>
-            </div>
+            {unreadCount > 0 ? (
+              <button
+                onClick={() => { setNotifOpen(false); router.push('/tossups') }}
+                className="w-full flex items-center gap-3 px-4 py-4 hover:bg-orange-50 transition-colors text-left"
+              >
+                <div className="w-9 h-9 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <ArrowLeftRight size={16} className="text-orange-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800">未読のトスアップ</p>
+                  <p className="text-xs text-gray-500">{unreadCount}件の未読があります</p>
+                </div>
+                <span className="w-5 h-5 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              </button>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-10 text-gray-400">
+                <CheckCheck size={28} className="mb-2 text-gray-300" />
+                <p className="text-sm">新しい通知はありません</p>
+              </div>
+            )}
           </div>
         )}
       </div>
