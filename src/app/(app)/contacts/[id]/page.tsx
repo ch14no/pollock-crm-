@@ -234,7 +234,10 @@ export default function ContactDetailPage() {
   }
 
   // DB活動 + ローカル追加分をマージ
-  const allActivities = [...dbActivities, ...localActivities]
+  // DB と local の重複を除去（活動作成後の再取得で2件表示されるのを防ぐ）
+  const allActivities = isSupabaseConfigured()
+    ? [...dbActivities, ...localActivities.filter((a) => !dbActivities.some((db) => db.id === a.id))]
+    : [...dbActivities, ...localActivities]
   const allDeals: Deal[] = isSupabaseConfigured()
     ? [...dbDeals, ...localDeals.filter((d) => d.contact_id === id && !dbDeals.some((dd) => dd.id === d.id))]
     : [...(MOCK_DEALS as unknown as Deal[]).filter((d) => d.contact_id === id), ...localDeals.filter((d) => d.contact_id === id)]

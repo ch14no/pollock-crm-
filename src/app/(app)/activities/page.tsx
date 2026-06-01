@@ -231,7 +231,7 @@ export default function ActivitiesPage() {
       memo:     updates.memo ?? undefined,
     })
     setEditingTaskId(null)
-    toast.success('タスクを更新しました')
+    toast.success('更新しました')
   }
 
   const thisMonth   = allActivities.filter((a) => isSameMonth(a.action_date))
@@ -378,7 +378,7 @@ export default function ActivitiesPage() {
                   const isMyTask         = activity.user_id === currentUser?.id
                   const isMyCreation     = isLocal
                   const canComplete      = !isTask || isMyTask
-                  const canEdit          = isTask && (isMyTask || isMyCreation)
+                  const canEdit          = isMyTask || isMyCreation
                   const isLocked         = isTask && !isMyTask && !isMyCreation
                   const assigneeName     = isTask && activity.user_id !== currentUser?.id
                     ? (activity.users?.name ?? null)
@@ -504,14 +504,16 @@ export default function ActivitiesPage() {
                           {/* インライン修正フォーム */}
                           {isEditingThis && (
                             <div className="mt-2 p-3 bg-orange-50 rounded-xl space-y-2 border border-orange-100">
-                              <p className="text-xs font-medium text-orange-700 mb-1">タスクを修正中</p>
+                              <p className="text-xs font-medium text-orange-700 mb-1">修正中</p>
                               <input type="text" value={editForm.title}
                                 onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
                                 placeholder="件名"
                                 className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
-                              <input type="datetime-local" value={editForm.dueDate}
-                                onChange={(e) => setEditForm((f) => ({ ...f, dueDate: e.target.value }))}
-                                className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+                              {isTask && (
+                                <input type="datetime-local" value={editForm.dueDate}
+                                  onChange={(e) => setEditForm((f) => ({ ...f, dueDate: e.target.value }))}
+                                  className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+                              )}
                               <textarea value={editForm.memo}
                                 onChange={(e) => setEditForm((f) => ({ ...f, memo: e.target.value }))}
                                 placeholder="メモ" rows={2}
