@@ -409,7 +409,7 @@ export default function DashboardPage() {
           {/* 個人アラート */}
           {(myOverdue.length > 0) && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button onClick={() => router.push('/activities')}
+              <button onClick={() => router.push('/tasks')}
                 className="flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-left hover:bg-red-100 transition-colors">
                 <AlertCircle size={18} className="text-red-500 flex-shrink-0" />
                 <div className="flex-1">

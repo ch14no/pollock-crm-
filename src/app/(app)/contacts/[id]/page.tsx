@@ -678,7 +678,14 @@ export default function ContactDetailPage() {
                                     </button>
                                     <button
                                       onClick={async () => {
-                                        updateLocalActivity(act.id, { title: actEditForm.title || undefined, memo: actEditForm.memo || undefined })
+                                        const titleVal = actEditForm.title || undefined
+                                        const memoVal  = actEditForm.memo  || undefined
+                                        // DB state の即時反映（localActivities に入っていない DB アクティビティ用）
+                                        setDbActivities((prev) => prev.map((a) =>
+                                          a.id === act.id ? { ...a, title: titleVal, memo: memoVal } : a
+                                        ))
+                                        // store の localActivities も更新
+                                        updateLocalActivity(act.id, { title: titleVal, memo: memoVal })
                                         if (isSupabaseConfigured() && !act.id.startsWith('act-local-')) {
                                           await updateActivityFields(act.id, { title: actEditForm.title || null, memo: actEditForm.memo || null }).catch(() => {})
                                         }
