@@ -60,6 +60,11 @@ export async function updateDealStage(id: string, stageId: string): Promise<void
   if (error) throw error
 }
 
+export async function deleteDeal(id: string): Promise<void> {
+  const { error } = await getSupabase().from('deals').delete().eq('id', id)
+  if (error) throw error
+}
+
 export async function updateDeal(id: string, updates: {
   title?: string; amount?: number; stageId?: string
   closeDate?: string | null; description?: string | null

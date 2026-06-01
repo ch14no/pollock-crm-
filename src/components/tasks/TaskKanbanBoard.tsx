@@ -16,6 +16,8 @@ import {
 } from 'lucide-react'
 import { cn, formatDate } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
+import { isSupabaseConfigured } from '@/lib/db/client'
+import { updateTaskKanbanStage } from '@/lib/db/activities'
 import type { TaskKanbanStage } from '@/store/appStore'
 import type { Activity } from '@/types/database'
 
@@ -321,7 +323,12 @@ export function TaskKanbanBoard({
     const overId  = String(over.id)
     const targetStage = stages.find((s) => s.id === overId)
       ?? stages.find((s) => byStage(s.id).some((t) => t.id === overId))
-    if (targetStage) setTaskStage(taskId, targetStage.id)
+    if (!targetStage) return
+    setTaskStage(taskId, targetStage.id)
+    // DB に保存して全ユーザーに同期
+    if (isSupabaseConfigured() && !taskId.startsWith('act-local-')) {
+      updateTaskKanbanStage(taskId, targetStage.id).catch(() => {})
+    }
   }
 
   return (

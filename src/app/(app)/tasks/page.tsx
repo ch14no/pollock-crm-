@@ -11,7 +11,7 @@ import type { Challenge, TaskMeta } from '@/store/appStore'
 import { cn, formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields } from '@/lib/db/activities'
+import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields, fetchTaskKanbanStages } from '@/lib/db/activities'
 import { fetchContactsByDivision } from '@/lib/db/contacts'
 import { fetchChallenges, createChallenge, updateChallengeStatus, deleteChallenge } from '@/lib/db/challenges'
 import { DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
@@ -46,6 +46,7 @@ export default function TasksPage() {
   const taskMeta          = useAppStore((s) => s.taskMeta)
   const removeLocalActivity  = useAppStore((s) => s.removeLocalActivity)
   const updateLocalActivity  = useAppStore((s) => s.updateLocalActivity)
+  const setTaskStage         = useAppStore((s) => s.setTaskStage)
   const openActivityModal    = useAppStore((s) => s.openActivityModal)
   const activityModalIsOpen  = useAppStore((s) => s.activityModal.isOpen)
 
@@ -83,7 +84,11 @@ export default function TasksPage() {
         ? await fetchActivitiesByUser(currentUser.id)
         : await fetchActivitiesByContactIds(contactIds)
 
-      setDbTasks(rawActs.filter((a) => a.activity_type === 'task'))
+      const tasks = rawActs.filter((a) => a.activity_type === 'task')
+      setDbTasks(tasks)
+      // DBのカンバンステージをストアに反映（全員に同期）
+      const stageMap = await fetchTaskKanbanStages(tasks.map((t) => t.id)).catch(() => ({}))
+      Object.entries(stageMap).forEach(([id, stageId]) => setTaskStage(id, stageId))
     } finally {
       setLoading(false)
     }

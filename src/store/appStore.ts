@@ -172,6 +172,7 @@ interface AppState {
   localDeals: Deal[]
   addDeal: (deal: Deal) => void
   updateLocalDeal: (id: string, updates: Partial<Deal>) => void
+  removeLocalDeal: (id: string) => void
 
   // タスクのステータス（ページ横断同期）
   taskStatuses: Record<string, ActivityStatus>
@@ -347,6 +348,8 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           localDeals: state.localDeals.map((d) => d.id === id ? { ...d, ...updates } : d),
         })),
+      removeLocalDeal: (id) =>
+        set((state) => ({ localDeals: state.localDeals.filter((d) => d.id !== id) })),
 
       taskStatuses: {},
       setTaskStatus: (id, status) =>

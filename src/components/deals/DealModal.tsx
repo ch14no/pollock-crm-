@@ -7,7 +7,7 @@ import { ContactPicker } from '@/components/ui/ContactPicker'
 import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS } from '@/lib/mock-data'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { createDeal, updateDeal, updateDealStage } from '@/lib/db/deals'
+import { createDeal, updateDeal, updateDealStage, deleteDeal } from '@/lib/db/deals'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -31,14 +31,16 @@ const FALLBACK_STAGES = [
 export function DealModal() {
   const {
     dealModal, closeDealModal, activeDivisionId,
-    addDeal, updateLocalDeal, currentUser, divisionStages,
+    addDeal, updateLocalDeal, removeLocalDeal, currentUser, divisionStages,
     divisionProducts, divisionProductsEnabled, dealProducts, setDealProduct, clearDealProduct,
   } = useAppStore()
 
   const [loading, setLoading] = useState(false)
   const [amountDisplay, setAmountDisplay] = useState('')
   const [selectedProduct, setSelectedProduct] = useState('')
-  const isEdit = !!dealModal.deal
+  const isEdit     = !!dealModal.deal
+  const isLostStage = dealModal.deal ? (divisionStages[dealModal.deal.division_id ?? activeDivisionId ?? ''] ?? FALLBACK_STAGES).some((s) => (s as {id:string;isLost?:boolean}).isLost && s.id === dealModal.deal!.stage_id) || dealModal.deal.stage_id === '失注' : false
+  const isWonStage  = dealModal.deal ? (divisionStages[dealModal.deal.division_id ?? activeDivisionId ?? ''] ?? FALLBACK_STAGES).some((s) => s.isWon && s.id === dealModal.deal!.stage_id) || dealModal.deal.stage_id === '受注' : false
 
   const productList = activeDivisionId
     ? (divisionProducts[activeDivisionId] ?? DEFAULT_DIVISION_PRODUCTS[activeDivisionId] ?? [])
@@ -168,20 +170,47 @@ export function DealModal() {
 
   const handleLoseDeal = async () => {
     if (!dealModal.deal) return
-    if (!window.confirm(`「${form.title}」を失注として記録しますか？\nこの操作は取り消せません。`)) return
+    if (!window.confirm(`「${form.title}」を失注として記録しますか？`)) return
     setLoading(true)
     try {
-      if (isSupabaseConfigured()) {
-        await updateDealStage(dealModal.deal.id, '失注')
-      }
+      if (isSupabaseConfigured()) await updateDealStage(dealModal.deal.id, '失注')
       updateLocalDeal(dealModal.deal.id, { stage_id: '失注', updated_at: new Date().toISOString() })
       closeDealModal()
       toast.success(`「${form.title}」を失注として記録しました`)
     } catch {
       toast.error('失敗しました。もう一度お試しください。')
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
+  }
+
+  const handleDeleteDeal = async () => {
+    if (!dealModal.deal) return
+    if (!window.confirm(`「${form.title}」を完全に削除しますか？\nこの操作は取り消せません。`)) return
+    setLoading(true)
+    try {
+      if (isSupabaseConfigured() && !dealModal.deal.id.startsWith('deal-local-')) {
+        await deleteDeal(dealModal.deal.id)
+      }
+      removeLocalDeal(dealModal.deal.id)
+      closeDealModal()
+      toast.success(`「${form.title}」を削除しました`)
+    } catch {
+      toast.error('削除に失敗しました')
+    } finally { setLoading(false) }
+  }
+
+  const handleRestoreDeal = async () => {
+    if (!dealModal.deal) return
+    const firstActiveStage = activeStages[0]
+    if (!firstActiveStage) return
+    setLoading(true)
+    try {
+      if (isSupabaseConfigured()) await updateDealStage(dealModal.deal.id, firstActiveStage.id)
+      updateLocalDeal(dealModal.deal.id, { stage_id: firstActiveStage.id, updated_at: new Date().toISOString() })
+      closeDealModal()
+      toast.success(`「${form.title}」を復活させました`)
+    } catch {
+      toast.error('失敗しました。もう一度お試しください。')
+    } finally { setLoading(false) }
   }
 
   const amountInMan = form.amount ? Math.floor(parseInt(form.amount, 10) / 10000) : 0
@@ -316,18 +345,37 @@ export function DealModal() {
           />
         </div>
 
-        {/* 失注ボタン（編集中・受注/失注以外） */}
-        {isEdit && dealModal.deal?.stage_id !== '受注' && dealModal.deal?.stage_id !== '失注' && (
-          <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-            <span className="text-xs text-gray-400">この商談を失注として処理する場合</span>
-            <button
-              type="button"
-              onClick={handleLoseDeal}
-              disabled={loading}
-              className="text-xs text-red-500 hover:text-red-700 font-medium px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
-            >
-              失注にする
-            </button>
+        {/* 編集時のアクションボタン */}
+        {isEdit && dealModal.deal && (
+          <div className="pt-2 border-t border-gray-100 space-y-2">
+            {/* 失注ボタン（進行中の商談のみ） */}
+            {!isLostStage && !isWonStage && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-400">失注として処理する</span>
+                <button type="button" onClick={handleLoseDeal} disabled={loading}
+                  className="text-xs text-red-500 hover:text-red-700 font-medium px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50">
+                  失注にする
+                </button>
+              </div>
+            )}
+            {/* 失注からの復活 */}
+            {isLostStage && (
+              <div className="flex items-center justify-between bg-yellow-50 rounded-lg px-3 py-2">
+                <span className="text-xs text-yellow-700">失注した商談を再活性化する</span>
+                <button type="button" onClick={handleRestoreDeal} disabled={loading}
+                  className="text-xs font-medium text-yellow-700 hover:text-yellow-900 px-3 py-1.5 rounded-lg hover:bg-yellow-100 transition-colors disabled:opacity-50">
+                  復活させる
+                </button>
+              </div>
+            )}
+            {/* 削除ボタン */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-400">商談を完全に削除する</span>
+              <button type="button" onClick={handleDeleteDeal} disabled={loading}
+                className="text-xs text-gray-400 hover:text-red-500 font-medium px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50">
+                削除する
+              </button>
+            </div>
           </div>
         )}
 

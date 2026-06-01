@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   DndContext, DragEndEvent, DragStartEvent,
   PointerSensor, useSensor, useSensors, DragOverlay, closestCorners,
@@ -145,15 +145,25 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
     return [...mapped.filter((s) => !s.lost), ...mapped.filter((s) => s.lost)]
   })()
 
-  const [dealsByStage, setDealsByStage] = useState<Record<string, Deal[]>>(() => {
+  const buildMap = (deals: Deal[]) => {
     const map: Record<string, Deal[]> = {}
     stages.forEach((s) => { map[s.id] = [] })
-    initialDeals.forEach((d) => {
+    deals.forEach((d) => {
       if (map[d.stage_id]) map[d.stage_id].push(d)
       else if (map[stages[0]?.id ?? 'リード']) map[stages[0]?.id ?? 'リード'].push(d)
     })
     return map
-  })
+  }
+
+  const [dealsByStage, setDealsByStage] = useState<Record<string, Deal[]>>(() => buildMap(initialDeals))
+
+  // 初期ロード時（Supabase取得完了後）にdealsが空→非空になったら同期
+  const hasInitialized = useRef(initialDeals.length > 0)
+  useEffect(() => {
+    if (hasInitialized.current || initialDeals.length === 0) return
+    hasInitialized.current = true
+    setDealsByStage(buildMap(initialDeals))
+  }, [initialDeals]) // eslint-disable-line
 
   const [activeId, setActiveId] = useState<string | null>(null)
   const [showConfetti, setShowConfetti] = useState(false)
@@ -274,17 +284,19 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
                   items={deals.map((d) => d.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  <DroppableColumn stageId={stage.id} isEmpty={deals.length === 0}>
-                    {deals.map((deal) => (
-                      <DealCard
-                        key={deal.id}
-                        deal={deal}
-                        isDragging={deal.id === activeId}
-                        readOnly={readOnly}
-                        onEdit={readOnly ? undefined : (d) => openDealModal({ deal: d })}
-                      />
-                    ))}
-                  </DroppableColumn>
+                  <div className="max-h-[calc(100vh-320px)] overflow-y-auto">
+                    <DroppableColumn stageId={stage.id} isEmpty={deals.length === 0}>
+                      {deals.map((deal) => (
+                        <DealCard
+                          key={deal.id}
+                          deal={deal}
+                          isDragging={deal.id === activeId}
+                          readOnly={readOnly}
+                          onEdit={readOnly ? undefined : (d) => openDealModal({ deal: d })}
+                        />
+                      ))}
+                    </DroppableColumn>
+                  </div>
                 </SortableContext>
 
                 {!readOnly && !stage.lost && (

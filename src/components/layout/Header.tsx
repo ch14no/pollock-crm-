@@ -42,7 +42,7 @@ export function Header() {
   const handleSearch = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter' || !search.trim()) return
     router.push(`/contacts?q=${encodeURIComponent(search.trim())}`)
-    setSearch('')
+    // 検索後も入力値を保持（2回連続検索のため）
   }
 
   return (

@@ -54,6 +54,26 @@ export async function upsertTaskMeta(activityId: string, urgency: boolean, impor
   if (error) throw error
 }
 
+export async function updateTaskKanbanStage(activityId: string, stageId: string): Promise<void> {
+  const { error } = await getSupabase()
+    .from('task_meta')
+    .upsert({ activity_id: activityId, kanban_stage_id: stageId })
+  if (error) throw error
+}
+
+export async function fetchTaskKanbanStages(activityIds: string[]): Promise<Record<string, string>> {
+  if (activityIds.length === 0) return {}
+  const { data } = await getSupabase()
+    .from('task_meta')
+    .select('activity_id, kanban_stage_id')
+    .in('activity_id', activityIds)
+  const result: Record<string, string> = {}
+  for (const row of (data ?? [])) {
+    if (row.kanban_stage_id) result[row.activity_id as string] = row.kanban_stage_id as string
+  }
+  return result
+}
+
 export async function fetchActivitiesByDivision(divisionId: string): Promise<Activity[]> {
   const { data: contacts } = await getSupabase()
     .from('contacts').select('id').eq('division_id', divisionId)
