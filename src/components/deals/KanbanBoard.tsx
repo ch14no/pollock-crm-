@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import {
   DndContext, DragEndEvent, DragStartEvent,
   PointerSensor, useSensor, useSensors, DragOverlay, closestCorners,
@@ -157,11 +157,9 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
 
   const [dealsByStage, setDealsByStage] = useState<Record<string, Deal[]>>(() => buildMap(initialDeals))
 
-  // 初期ロード時（Supabase取得完了後）にdealsが空→非空になったら同期
-  const hasInitialized = useRef(initialDeals.length > 0)
+  // ドラッグ中でなければ initialDeals が変わったら同期
   useEffect(() => {
-    if (hasInitialized.current || initialDeals.length === 0) return
-    hasInitialized.current = true
+    if (activeId !== null) return
     setDealsByStage(buildMap(initialDeals))
   }, [initialDeals]) // eslint-disable-line
 

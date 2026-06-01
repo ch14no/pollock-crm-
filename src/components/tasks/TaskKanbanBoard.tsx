@@ -18,6 +18,7 @@ import { cn, formatDate } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { updateTaskKanbanStage } from '@/lib/db/activities'
+import toast from 'react-hot-toast'
 import type { TaskKanbanStage } from '@/store/appStore'
 import type { Activity } from '@/types/database'
 
@@ -327,7 +328,9 @@ export function TaskKanbanBoard({
     setTaskStage(taskId, targetStage.id)
     // DB に保存して全ユーザーに同期
     if (isSupabaseConfigured() && !taskId.startsWith('act-local-')) {
-      updateTaskKanbanStage(taskId, targetStage.id).catch(() => {})
+      updateTaskKanbanStage(taskId, targetStage.id).catch(() => {
+        toast.error('ステージの同期に失敗しました。SQLマイグレーションが必要な場合があります。', { duration: 4000 })
+      })
     }
   }
 

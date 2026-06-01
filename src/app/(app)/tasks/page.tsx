@@ -47,6 +47,7 @@ export default function TasksPage() {
   const removeLocalActivity  = useAppStore((s) => s.removeLocalActivity)
   const updateLocalActivity  = useAppStore((s) => s.updateLocalActivity)
   const setTaskStage         = useAppStore((s) => s.setTaskStage)
+  const taskStageMap         = useAppStore((s) => s.taskStageMap)
   const openActivityModal    = useAppStore((s) => s.openActivityModal)
   const activityModalIsOpen  = useAppStore((s) => s.activityModal.isOpen)
 
@@ -86,9 +87,11 @@ export default function TasksPage() {
 
       const tasks = rawActs.filter((a) => a.activity_type === 'task')
       setDbTasks(tasks)
-      // DBのカンバンステージをストアに反映（全員に同期）
+      // DBのカンバンステージをストアに反映（ローカルで既にドラッグ済みのものは上書きしない）
       const stageMap = await fetchTaskKanbanStages(tasks.map((t) => t.id)).catch(() => ({}))
-      Object.entries(stageMap).forEach(([id, stageId]) => setTaskStage(id, stageId))
+      Object.entries(stageMap).forEach(([id, stageId]) => {
+        if (!taskStageMap[id]) setTaskStage(id, stageId) // ローカル未設定のみDBから適用
+      })
     } finally {
       setLoading(false)
     }

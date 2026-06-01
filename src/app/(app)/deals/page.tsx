@@ -29,6 +29,7 @@ export default function DealsPage() {
     try {
       const data = await fetchDealsByDivision(activeDivisionId)
       setDbDeals(data)
+      setReloadKey((k) => k + 1) // DB取得完了後に再マウントして最新データを反映
     } finally {
       setLoading(false)
     }
