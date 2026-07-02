@@ -795,6 +795,7 @@ function DivisionStagesPanel() {
         </div>
       </CardHeader>
       <CardBody>
+        <p className="text-xs text-gray-500 mb-3">商談カンバンの列（フェーズ）を事業部ごとに設定します。「受注」「失注」として扱う列もここで指定できます。</p>
         <div className="mb-4">
           <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
           <select value={selectedDivId} onChange={(e) => setSelectedDivId(e.target.value)}
@@ -990,6 +991,7 @@ function DivisionFieldsPanel() {
         </div>
       </CardHeader>
       <CardBody>
+        <p className="text-xs text-gray-500 mb-3">顧客情報に事業部固有の入力項目を追加します。顧客詳細画面に表示され、顧客一覧の絞り込み条件にも使用できます。</p>
         <div className="mb-4">
           <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
           <select value={selectedDivId} onChange={(e) => setSelectedDivId(e.target.value)}
