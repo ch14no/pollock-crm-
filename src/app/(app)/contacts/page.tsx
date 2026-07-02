@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Search, Plus, Building2, Phone, Mail,
   LayoutList, LayoutGrid, ChevronDown, MapPin, SlidersHorizontal, Lock, CreditCard, X,
-  Trash2, Download, CheckSquare, Square, Filter,
+  Trash2, Download, CheckSquare, Square, Filter, Info,
 } from 'lucide-react'
 import { MOCK_CONTACTS, MOCK_TEAM_MEMBERS } from '@/lib/mock-data'
 import { LOCATIONS, getLocationConfig, getLocationsByRegion, sortTags } from '@/lib/config'
@@ -757,6 +757,7 @@ export default function ContactsPage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onSelect={(id: string) => router.push(`/contacts/${id}`)}
+          onViewDetail={(id: string) => router.push(`/contacts/company/${id}`)}
           isReadOnly={!isOwnDivision}
           contactStatuses={contactStatuses}
           listStatuses={listStatuses}
@@ -942,12 +943,13 @@ function ListView({
 
 // ─── Company View ─────────────────────────────────────────────────────────────
 function CompanyView({
-  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses,
+  contacts, selectedIds, onToggleSelect, onSelect, onViewDetail, isReadOnly, contactStatuses, listStatuses,
 }: {
   contacts: Contact[]
   selectedIds: Set<string>
   onToggleSelect: (id: string) => void
   onSelect: (id: string) => void
+  onViewDetail: (companyId: string) => void
   isReadOnly: boolean
   contactStatuses: ContactStatusMap
   listStatuses: Record<string, string[]>
@@ -1005,7 +1007,21 @@ function CompanyView({
                   <p className="font-semibold text-gray-800 truncate">{group.name}</p>
                   <p className="text-xs text-gray-400">{group.contacts.length}名</p>
                 </div>
-                <ChevronDown size={15} className={cn('text-gray-400 transition-transform flex-shrink-0', isOpen && 'rotate-180')} />
+              </button>
+              {group.id !== '__none__' && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onViewDetail(group.id) }}
+                  className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors flex-shrink-0"
+                >
+                  <Info size={13} />
+                  <span className="hidden sm:inline">詳細</span>
+                </button>
+              )}
+              <button
+                onClick={() => toggle(group.id)}
+                className="flex-shrink-0 text-gray-400 hover:text-gray-600"
+              >
+                <ChevronDown size={15} className={cn('transition-transform', isOpen && 'rotate-180')} />
               </button>
             </div>
 

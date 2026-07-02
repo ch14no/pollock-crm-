@@ -19,8 +19,9 @@ import {
   fetchPipelineStages, upsertPipelineStages,
   fetchDivisionCustomFields,
   createDivisionCustomField, updateDivisionCustomField, deleteDivisionCustomField,
+  fetchDivisions, createDivision, updateDivision, deleteDivision, checkDivisionReferences,
 } from '@/lib/db/divisions'
-import type { User as UserType } from '@/types/database'
+import type { User as UserType, Division } from '@/types/database'
 import toast from 'react-hot-toast'
 
 const ROLE_LABELS: Record<Role, string> = {
@@ -195,6 +196,7 @@ export default function SettingsPage() {
           </div>
 
           <AccountsPanel />
+          <DivisionsPanel />
           <DivisionStagesPanel />
           <DivisionFieldsPanel />
           <ProductsPanel />
@@ -514,6 +516,191 @@ function AccountsPanel() {
                 </div>
               )
             })}
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
+// ─── 事業部管理 ───────────────────────────────────────────────────
+const EMPTY_DIVISION_CREATE = { name: '', colorCode: '#6b7280' }
+const EMPTY_DIVISION_EDIT   = { name: '', colorCode: '#6b7280' }
+
+function DivisionsPanel() {
+  const { divisions, setDivisions } = useAppStore()
+  const [list,        setList]        = useState<Division[]>(divisions)
+  const [loading,     setLoading]     = useState(false)
+  const [showCreate,  setShowCreate]  = useState(false)
+  const [createForm,  setCreateForm]  = useState(EMPTY_DIVISION_CREATE)
+  const [saving,      setSaving]      = useState(false)
+  const [editingId,   setEditingId]   = useState<string | null>(null)
+  const [editForm,    setEditForm]    = useState(EMPTY_DIVISION_EDIT)
+
+  const reload = () => {
+    if (!isSupabaseConfigured()) { setList(divisions); return }
+    setLoading(true)
+    fetchDivisions()
+      .then((next) => { setList(next); setDivisions(next) })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { reload() }, []) // eslint-disable-line
+
+  const handleCreate = async () => {
+    if (!createForm.name.trim()) { toast.error('事業部名を入力してください'); return }
+    setSaving(true)
+    try {
+      await createDivision({ name: createForm.name.trim(), colorCode: createForm.colorCode })
+      toast.success(`${createForm.name.trim()} を追加しました`)
+      setCreateForm(EMPTY_DIVISION_CREATE)
+      setShowCreate(false)
+      reload()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally { setSaving(false) }
+  }
+
+  const openEdit = (division: Division) => {
+    setEditingId(division.id)
+    setEditForm({ name: division.name, colorCode: division.color_code ?? '#6b7280' })
+    setShowCreate(false)
+  }
+
+  const handleEdit = async (id: string) => {
+    if (!editForm.name.trim()) { toast.error('事業部名を入力してください'); return }
+    setSaving(true)
+    try {
+      await updateDivision(id, { name: editForm.name.trim(), colorCode: editForm.colorCode })
+      toast.success('更新しました')
+      setEditingId(null)
+      reload()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally { setSaving(false) }
+  }
+
+  const handleDelete = async (division: Division) => {
+    setSaving(true)
+    try {
+      const refs = await checkDivisionReferences(division.id)
+      if (!refs.deletable) {
+        const parts: string[] = []
+        if (refs.contacts > 0) parts.push(`顧客${refs.contacts}件`)
+        if (refs.deals > 0) parts.push(`商談${refs.deals}件`)
+        if (refs.tossups > 0) parts.push(`トスアップ${refs.tossups}件`)
+        toast.error(`この事業部には${parts.join('・')}が紐づいているため削除できません`)
+        return
+      }
+      if (!window.confirm(`「${division.name}」を削除しますか？\nこの操作は元に戻せません。関連するパイプラインステージ・カスタムフィールドも削除されます。`)) return
+      await deleteDivision(division.id)
+      toast.success(`${division.name} を削除しました`)
+      reload()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 font-bold text-gray-700">
+            <Building2 size={18} />事業部管理
+          </div>
+          {isSupabaseConfigured() && (
+            <Button size="sm" icon={<Plus size={14} />} onClick={() => { setShowCreate((v) => !v); setEditingId(null) }}>
+              事業部を追加
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardBody>
+        {/* ─── 新規作成フォーム ─── */}
+        {showCreate && (
+          <div className="mb-4 p-4 bg-orange-50 rounded-xl border border-orange-100 space-y-3">
+            <p className="text-xs font-bold text-gray-600">新しい事業部を追加</p>
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
+                <label className="block text-xs text-gray-500 mb-0.5">事業部名 <span className="text-red-500">*</span></label>
+                <input type="text" value={createForm.name} onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
+                  placeholder="例：ITソリューション事業部"
+                  className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">カラー</label>
+                <input type="color" value={createForm.colorCode} onChange={(e) => setCreateForm((f) => ({ ...f, colorCode: e.target.value }))}
+                  className="w-10 h-8 border border-gray-200 rounded-lg cursor-pointer bg-white" />
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button size="sm" variant="secondary" onClick={() => setShowCreate(false)}>キャンセル</Button>
+              <Button size="sm" loading={saving} onClick={handleCreate} icon={<Check size={13} />}>追加</Button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── 事業部リスト ─── */}
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : list.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-4">事業部が見つかりません</p>
+        ) : (
+          <div className="space-y-2">
+            {list.map((division) => (
+              <div key={division.id} className="border border-gray-100 rounded-xl overflow-hidden">
+                {editingId !== division.id ? (
+                  <div className="flex items-center gap-3 p-3">
+                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: division.color_code ?? '#6b7280' }} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-700">{division.name}</p>
+                    </div>
+                    {isSupabaseConfigured() && (
+                      <div className="flex gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => openEdit(division)}
+                          className="p-1.5 text-gray-300 hover:text-orange-500 rounded-lg transition-colors" title="編集">
+                          <Edit2 size={13} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(division)}
+                          disabled={saving}
+                          className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition-colors disabled:opacity-50" title="削除">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-orange-50 border-t border-orange-100 space-y-2">
+                    <div className="flex gap-3 items-end">
+                      <div className="flex-1">
+                        <label className="block text-xs text-gray-500 mb-0.5">事業部名</label>
+                        <input type="text" value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                          className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-0.5">カラー</label>
+                        <input type="color" value={editForm.colorCode} onChange={(e) => setEditForm((f) => ({ ...f, colorCode: e.target.value }))}
+                          className="w-10 h-8 border border-gray-200 rounded-lg cursor-pointer bg-white" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <button onClick={() => setEditingId(null)}
+                        className="flex items-center gap-1 text-xs text-gray-500 px-2.5 py-1.5 rounded-lg hover:bg-gray-100">
+                        <X size={11} />キャンセル
+                      </button>
+                      <button onClick={() => handleEdit(division.id)} disabled={saving}
+                        className="flex items-center gap-1 text-xs text-white bg-orange-500 px-2.5 py-1.5 rounded-lg hover:bg-orange-600 font-medium disabled:opacity-50">
+                        <Check size={11} />保存
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </CardBody>

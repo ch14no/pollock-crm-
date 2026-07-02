@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Phone, Mail, Users, CheckSquare, Rocket,
   FileText, Plus, Search, Building2, ChevronDown, Trash2,
@@ -16,6 +16,7 @@ import { fetchActivitiesByUser, fetchActivitiesByContactIds, deleteActivity, upd
 import { fetchContactsByDivision } from '@/lib/db/contacts'
 import { fetchDealsByDivision } from '@/lib/db/deals'
 import { fetchDivisionUsers } from '@/lib/db/users'
+import { MOCK_CONTACTS } from '@/lib/mock-data'
 import type { ActivityType, ActivityStatus, Activity, Deal } from '@/types/database'
 import type { Contact, User } from '@/types/database'
 import toast from 'react-hot-toast'
@@ -49,6 +50,7 @@ const DATE_GROUP_ORDER = ['今日', '昨日', '今週', '今月', 'それ以前'
 
 export default function ActivitiesPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const {
     openActivityModal, activeDivisionId, currentUser,
     localActivities, taskStatuses, setTaskStatus, removeLocalActivity, updateLocalActivity,
@@ -61,6 +63,7 @@ export default function ActivitiesPage() {
   const [typeFilter, setTypeFilter]     = useState<ActivityType | 'all'>('all')
   const [statusFilter, setStatusFilter] = useState<ActivityStatus | 'all'>('all')
   const [assigneeFilter, setAssigneeFilter] = useState<string>(isManager ? 'all' : 'mine')
+  const [contactFilter, setContactFilter] = useState<string>(() => searchParams.get('contactId') ?? 'all')
 
   // Supabase データ
   const [dbActivities, setDbActivities] = useState<Activity[]>([])
@@ -68,6 +71,7 @@ export default function ActivitiesPage() {
   const [dealsMap,    setDealsMap]      = useState<Record<string, Deal>>({})
   const [divMembers,  setDivMembers]    = useState<User[]>([])
   const [loading,     setLoading]       = useState(false)
+  const [hasLoadedContactsOnce, setHasLoadedContactsOnce] = useState(false)
   const prevModalOpen = useRef(false)
 
   const loadData = async () => {
@@ -82,6 +86,7 @@ export default function ActivitiesPage() {
       const cMap: Record<string, Contact> = {}
       contacts.forEach((c) => { cMap[c.id] = c })
       setContactsMap(cMap)
+      setHasLoadedContactsOnce(true)
       setDivMembers(members)
 
       const dMap: Record<string, Deal> = {}
@@ -148,18 +153,42 @@ export default function ActivitiesPage() {
     return { name: '商談' }
   }
 
+  // クライアントフィルター用の選択肢
+  const contactOptions: Contact[] = useMemo(() => {
+    const list = isSupabaseConfigured()
+      ? Object.values(contactsMap)
+      : (MOCK_CONTACTS as Contact[]).filter((c) => c.division_id === activeDivisionId)
+    const byId = new Map<string, Contact>()
+    list.forEach((c) => byId.set(c.id, c))
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name, 'ja'))
+  }, [contactsMap, activeDivisionId])
+
+  // contactFilter が contactOptions に存在しない場合は実質 'all' として扱う。
+  // ただし Supabase 経路でまだ一度もデータを取得できていない（読み込み中/未取得）
+  // 場合は「本当に無効な値」と誤判定しないよう、そのまま contactFilter を維持する。
+  // mock 経路は activeDivisionId が確定していれば contactOptions は同期的に正しいため区別不要。
+  const isContactDataPending = isSupabaseConfigured() && !hasLoadedContactsOnce
+  const effectiveContactFilter = useMemo(() => {
+    if (contactFilter === 'all') return 'all'
+    if (isContactDataPending) return contactFilter
+    return contactOptions.some((c) => c.id === contactFilter) ? contactFilter : 'all'
+  }, [contactFilter, contactOptions, isContactDataPending])
+
   const filtered = useMemo(() => {
     return allActivities.filter((a) => {
       const matchType   = typeFilter === 'all' || a.activity_type === typeFilter
       const effectiveStatus = taskStatuses[a.id] ?? a.status
       const matchStatus = statusFilter === 'all' || effectiveStatus === statusFilter
-      if (!matchType || !matchStatus) return false
+      const matchContact = effectiveContactFilter === 'all' ||
+        (a.target_type === 'contact' && a.target_id === effectiveContactFilter) ||
+        (a.target_type === 'deal' && dealsMap[a.target_id]?.contact_id === effectiveContactFilter)
+      if (!matchType || !matchStatus || !matchContact) return false
       if (!query) return true
       const target = resolveTarget(a)
       return a.title?.includes(query) || a.memo?.includes(query) || target.name.includes(query)
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allActivities, typeFilter, statusFilter, query, taskStatuses, contactsMap])
+  }, [allActivities, typeFilter, statusFilter, query, taskStatuses, contactsMap, effectiveContactFilter, dealsMap])
 
   const grouped = useMemo(() => {
     const map = new Map<string, Activity[]>()
@@ -319,6 +348,20 @@ export default function ActivitiesPage() {
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
+        )}
+        {contactOptions.length > 0 && (
+          <>
+            <span className="text-xs font-medium text-gray-500 ml-2">クライアント:</span>
+            <select
+              value={effectiveContactFilter}
+              onChange={(e) => setContactFilter(e.target.value)}
+              className="text-sm border border-gray-200 rounded-xl px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 text-gray-700">
+              <option value="all">全クライアント</option>
+              {contactOptions.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}{c.companies?.name ? `（${c.companies.name}）` : ''}</option>
+              ))}
+            </select>
+          </>
         )}
       </div>
 

@@ -94,6 +94,25 @@ export async function fetchActivitiesByContactIds(contactIds: string[]): Promise
   return (data ?? []).map(toActivity)
 }
 
+export async function fetchActivitiesByCompany(companyId: string, contactIds: string[]): Promise<Activity[]> {
+  const [companyActivities, contactActivities] = await Promise.all([
+    getSupabase()
+      .from('activities')
+      .select('*, users:user_id(id,name,email,role,created_at)')
+      .eq('target_type', 'company')
+      .eq('target_id', companyId)
+      .order('action_date', { ascending: false })
+      .limit(500)
+      .then(({ data, error }) => {
+        if (error) throw error
+        return (data ?? []).map(toActivity)
+      }),
+    fetchActivitiesByContactIds(contactIds),
+  ])
+  return [...companyActivities, ...contactActivities]
+    .sort((a, b) => new Date(b.action_date).getTime() - new Date(a.action_date).getTime())
+}
+
 export async function deleteActivity(id: string): Promise<void> {
   const { error } = await getSupabase().from('activities').delete().eq('id', id)
   if (error) throw error

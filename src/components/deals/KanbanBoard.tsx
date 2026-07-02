@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   DndContext, DragEndEvent, DragStartEvent,
   PointerSensor, useSensor, useSensors, DragOverlay, closestCorners,
@@ -10,6 +10,7 @@ import {
   SortableContext, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { Plus, AlertCircle, Lock, ChevronDown } from 'lucide-react'
 import { formatCurrency, getStaleDays, getInitials, cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
@@ -28,6 +29,17 @@ const FALLBACK_stages = [
   { id: '受注',         name: '受注 🎉',      won: true,  lost: false },
   { id: '失注',         name: '失注',         won: false, lost: true  },
 ]
+
+// この件数を超えるカラムのみ仮想化する。少数カラムでは仮想化のオーバーヘッド
+// （measure/absolute配置）がメリットを上回るため、閾値以下は従来の.map()を維持する。
+const VIRTUALIZE_THRESHOLD = 50
+
+// DealCard 1件分の推定高さ（px）。内訳の目安：
+// padding+border(26) + タイトル2行(44) + 会社/担当者行(24) + 金額/期日行(20) + 担当者アバター行(32) + カード間gap(8) ≈ 154px
+const ESTIMATED_CARD_SIZE = 154
+
+const DEFAULT_OVERSCAN = 5
+const DRAG_ACTIVE_OVERSCAN = 30
 
 // 空のカラムでもドロップ可能にするラッパー
 function DroppableColumn({ stageId, isEmpty, children }: {
@@ -120,6 +132,198 @@ function DealCard({
   )
 }
 
+interface Stage {
+  id: string
+  name: string
+  won: boolean
+  lost: boolean
+}
+
+interface StageColumnProps {
+  stage: Stage
+  deals: Deal[]
+  activeId: string | null
+  readOnly: boolean
+  isDragActive: boolean
+  onEdit: (deal: Deal) => void
+  onAdd: (stageId: string) => void
+  columnRef: (el: HTMLDivElement | null) => void
+}
+
+function StageColumn({
+  stage, deals, activeId, readOnly, isDragActive, onEdit, onAdd, columnRef,
+}: StageColumnProps) {
+  const total = deals.reduce((sum, d) => sum + d.amount, 0)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const shouldVirtualize = deals.length > VIRTUALIZE_THRESHOLD
+
+  // 現状は固定サイズ推定（ESTIMATED_CARD_SIZE）のみでキャッシュは実害なし。
+  // 将来 measureElement による動的計測を導入する場合、キャッシュはインデックスベースのため
+  // カラムをまたぐドラッグで別カードの実測高さが誤って流用されるおそれがある点に注意。
+  const virtualizer = useVirtualizer({
+    count: deals.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ESTIMATED_CARD_SIZE,
+    overscan: isDragActive ? DRAG_ACTIVE_OVERSCAN : DEFAULT_OVERSCAN,
+    enabled: shouldVirtualize,
+  })
+
+  return (
+    <div ref={columnRef} data-stage-id={stage.id} className="flex-shrink-0 w-64">
+      <div className={cn(
+        'rounded-xl p-3 mb-3 sticky top-0 z-10 backdrop-blur-sm',
+        stage.won ? 'bg-green-50/95 border border-green-200' :
+        stage.lost ? 'bg-gray-50/95 border border-gray-200' :
+        'bg-gray-100/95'
+      )}>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className={cn('text-sm font-bold', stage.lost ? 'text-gray-400' : 'text-gray-700')}>
+            {stage.name}
+          </h3>
+          <span className="text-xs text-gray-500 bg-white rounded-full px-2 py-0.5">{deals.length}</span>
+        </div>
+        {total > 0 && (
+          <p className={cn('text-xs', stage.lost ? 'text-gray-400 line-through' : 'text-gray-500')}>
+            {formatCurrency(total)}
+          </p>
+        )}
+      </div>
+
+      <SortableContext
+        id={stage.id}
+        // dnd-kit のソート計算にはカラム内の全件IDが必要なため、仮想化で
+        // DOMにマウントされていない件も含めた完全な配列を渡す（表示側のみ間引く）。
+        items={deals.map((d) => d.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        <div ref={scrollRef} className="max-h-[calc(100vh-320px)] overflow-y-auto">
+          <DroppableColumn stageId={stage.id} isEmpty={deals.length === 0}>
+            {shouldVirtualize ? (
+              <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
+                {virtualizer.getVirtualItems().map((item) => {
+                  const deal = deals[item.index]
+                  return (
+                    <div
+                      key={deal.id}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${item.start}px)`,
+                      }}
+                    >
+                      <DealCard
+                        deal={deal}
+                        isDragging={deal.id === activeId}
+                        readOnly={readOnly}
+                        onEdit={readOnly ? undefined : onEdit}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              deals.map((deal) => (
+                <DealCard
+                  key={deal.id}
+                  deal={deal}
+                  isDragging={deal.id === activeId}
+                  readOnly={readOnly}
+                  onEdit={readOnly ? undefined : onEdit}
+                />
+              ))
+            )}
+          </DroppableColumn>
+        </div>
+      </SortableContext>
+
+      {!readOnly && !stage.lost && (
+        <button
+          onClick={() => onAdd(stage.id)}
+          className="mt-2 w-full flex items-center justify-center gap-1 py-2 text-xs text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-colors"
+        >
+          <Plus size={14} />
+          追加
+        </button>
+      )}
+      {readOnly && (
+        <div className="mt-2 w-full flex items-center justify-center gap-1 py-2 text-xs text-gray-300">
+          <Lock size={12} />
+          閲覧のみ
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ステージ位置インジケーター：横スクロール中にどのステージを見ているか見失う問題への対応。
+// ボードの水平ビューポート内で交差しているカラムを IntersectionObserver で追跡し、
+// 対応するチップをハイライトする。クリックで該当カラムへスムーススクロールする。
+function StagePositionIndicator({
+  stages, scrollRef, columnRefs,
+}: {
+  stages: Stage[]
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  columnRefs: React.RefObject<Map<string, HTMLDivElement>>
+}) {
+  const [visibleStageIds, setVisibleStageIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    const root = scrollRef.current
+    if (!root) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setVisibleStageIds((prev) => {
+          const next = new Set(prev)
+          entries.forEach((entry) => {
+            const stageId = entry.target.getAttribute('data-stage-id')
+            if (!stageId) return
+            if (entry.isIntersecting) next.add(stageId)
+            else next.delete(stageId)
+          })
+          return next
+        })
+      },
+      { root, threshold: 0.4 }
+    )
+
+    columnRefs.current.forEach((el) => observer.observe(el))
+
+    return () => observer.disconnect()
+    // columnRefs は useRef のため依存に入れても再セットアップ判定には寄与しない（意図的に除外）。
+    // stages（= visibleStages）は showLost 切替でカラムが増減した時だけ参照が変わるようメモ化済み。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollRef, stages])
+
+  const handleChipClick = (stageId: string) => {
+    const el = columnRefs.current.get(stageId)
+    el?.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' })
+  }
+
+  return (
+    <div className="flex items-center gap-1 overflow-x-auto mb-2 pb-1">
+      {stages.map((stage) => {
+        const isActive = visibleStageIds.has(stage.id)
+        return (
+          <button
+            key={stage.id}
+            onClick={() => handleChipClick(stage.id)}
+            className={cn(
+              'flex-shrink-0 px-2 py-1 rounded-full text-xs font-medium transition-colors max-w-24 truncate',
+              isActive ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            )}
+            title={stage.name}
+          >
+            {stage.name}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 interface KanbanBoardProps {
   initialDeals: Deal[]
   readOnly?: boolean
@@ -132,7 +336,9 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
   const [showLost, setShowLost] = useState(false)
 
   // 事業部別ステージ（ストア上書き → デフォルト → フォールバック）
-  const stages = (() => {
+  // 参照の安定性が StagePositionIndicator の IntersectionObserver 再セットアップ判定に
+  // 使われるため、activeDivisionId/divisionStages が変わらない限り同一参照を保つ。
+  const stages = useMemo(() => {
     const divId = activeDivisionId ?? ''
     const raw = divisionStages[divId] ?? DEFAULT_DIVISION_STAGES[divId]
     if (!raw) return FALLBACK_stages
@@ -143,7 +349,7 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
     }
     // 受注ステージの絵文字付与漏れ対応済み・lost ステージを末尾に整列
     return [...mapped.filter((s) => !s.lost), ...mapped.filter((s) => s.lost)]
-  })()
+  }, [activeDivisionId, divisionStages])
 
   const buildMap = (deals: Deal[]) => {
     const map: Record<string, Deal[]> = {}
@@ -165,6 +371,14 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
 
   const [activeId, setActiveId] = useState<string | null>(null)
   const [showConfetti, setShowConfetti] = useState(false)
+
+  const boardScrollRef = useRef<HTMLDivElement>(null)
+  const columnRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+
+  const setColumnRef = useCallback((stageId: string) => (el: HTMLDivElement | null) => {
+    if (el) columnRefs.current.set(stageId, el)
+    else columnRefs.current.delete(stageId)
+  }, [])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -230,11 +444,18 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
   const activeDeal = activeId ? findDeal(activeId) : null
   const lostStageId = stages.find((s) => s.lost)?.id ?? '失注'
   const lostCount = dealsByStage[lostStageId]?.length ?? 0
-  const visibleStages = showLost ? stages : stages.filter((s) => !s.lost)
+  // showLost 切替時以外は同一参照を保ち、IntersectionObserver の無駄な再セットアップを防ぐ
+  const visibleStages = useMemo(
+    () => (showLost ? stages : stages.filter((s) => !s.lost)),
+    [stages, showLost]
+  )
+  const isDragActive = activeId !== null
 
   return (
     <>
       {showConfetti && <Confetti />}
+
+      <StagePositionIndicator stages={visibleStages} scrollRef={boardScrollRef} columnRefs={columnRefs} />
 
       {lostCount > 0 && (
         <button
@@ -252,67 +473,21 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex gap-4 overflow-x-auto pb-4 min-h-[calc(100vh-260px)]">
+        <div ref={boardScrollRef} className="flex gap-4 overflow-x-auto pb-4 min-h-[calc(100vh-260px)]">
           {visibleStages.map((stage) => {
             const deals = dealsByStage[stage.id] ?? []
-            const total = deals.reduce((sum, d) => sum + d.amount, 0)
             return (
-              <div key={stage.id} className="flex-shrink-0 w-64">
-                <div className={cn(
-                  'rounded-xl p-3 mb-3',
-                  stage.won ? 'bg-green-50 border border-green-200' :
-                  stage.lost ? 'bg-gray-50 border border-gray-200' :
-                  'bg-gray-100'
-                )}>
-                  <div className="flex items-center justify-between mb-1">
-                    <h3 className={cn('text-sm font-bold', stage.lost ? 'text-gray-400' : 'text-gray-700')}>
-                      {stage.name}
-                    </h3>
-                    <span className="text-xs text-gray-500 bg-white rounded-full px-2 py-0.5">{deals.length}</span>
-                  </div>
-                  {total > 0 && (
-                    <p className={cn('text-xs', stage.lost ? 'text-gray-400 line-through' : 'text-gray-500')}>
-                      {formatCurrency(total)}
-                    </p>
-                  )}
-                </div>
-
-                <SortableContext
-                  id={stage.id}
-                  items={deals.map((d) => d.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  <div className="max-h-[calc(100vh-320px)] overflow-y-auto">
-                    <DroppableColumn stageId={stage.id} isEmpty={deals.length === 0}>
-                      {deals.map((deal) => (
-                        <DealCard
-                          key={deal.id}
-                          deal={deal}
-                          isDragging={deal.id === activeId}
-                          readOnly={readOnly}
-                          onEdit={readOnly ? undefined : (d) => openDealModal({ deal: d })}
-                        />
-                      ))}
-                    </DroppableColumn>
-                  </div>
-                </SortableContext>
-
-                {!readOnly && !stage.lost && (
-                  <button
-                    onClick={() => openDealModal({ prefillStageId: stage.id })}
-                    className="mt-2 w-full flex items-center justify-center gap-1 py-2 text-xs text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-colors"
-                  >
-                    <Plus size={14} />
-                    追加
-                  </button>
-                )}
-                {readOnly && (
-                  <div className="mt-2 w-full flex items-center justify-center gap-1 py-2 text-xs text-gray-300">
-                    <Lock size={12} />
-                    閲覧のみ
-                  </div>
-                )}
-              </div>
+              <StageColumn
+                key={stage.id}
+                stage={stage}
+                deals={deals}
+                activeId={activeId}
+                readOnly={readOnly}
+                isDragActive={isDragActive}
+                onEdit={(d) => openDealModal({ deal: d })}
+                onAdd={(stageId) => openDealModal({ prefillStageId: stageId })}
+                columnRef={setColumnRef(stage.id)}
+              />
             )
           })}
         </div>

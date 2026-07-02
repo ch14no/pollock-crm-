@@ -1,6 +1,26 @@
 import { getSupabase } from './client'
+import { createClient } from '@/lib/supabase/client'
 import type { Division } from '@/types/database'
 import type { DivisionCustomField } from '@/store/appStore'
+
+async function getAuthToken(): Promise<string | null> {
+  try {
+    const { data: { session } } = await createClient().auth.getSession()
+    return session?.access_token ?? null
+  } catch { return null }
+}
+
+async function adminFetch(url: string, options: RequestInit): Promise<Response> {
+  const token = await getAuthToken()
+  return fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers ?? {}),
+    },
+  })
+}
 
 export async function fetchDivisionCustomFields(divisionId: string): Promise<DivisionCustomField[]> {
   const { data, error } = await getSupabase()
@@ -32,6 +52,56 @@ export async function fetchDivisions(): Promise<Division[]> {
     color_code: d.color_code ?? undefined,
     created_at: d.created_at,
   }))
+}
+
+export async function createDivision(input: { name: string; colorCode?: string }): Promise<Division> {
+  const res = await adminFetch('/api/admin/divisions', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error ?? '作成に失敗しました')
+  return data as Division
+}
+
+export async function updateDivision(id: string, input: { name?: string; colorCode?: string }): Promise<void> {
+  const res = await adminFetch('/api/admin/divisions', {
+    method: 'PUT',
+    body: JSON.stringify({ id, ...input }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error ?? '更新に失敗しました')
+}
+
+export class DivisionDeleteBlockedError extends Error {
+  details: { contacts: number; deals: number; tossups: number }
+  constructor(message: string, details: { contacts: number; deals: number; tossups: number }) {
+    super(message)
+    this.name = 'DivisionDeleteBlockedError'
+    this.details = details
+  }
+}
+
+export async function deleteDivision(id: string): Promise<void> {
+  const res = await adminFetch(`/api/admin/divisions?id=${id}`, { method: 'DELETE' })
+  const data = await res.json()
+  if (!res.ok) {
+    if (data.details) throw new DivisionDeleteBlockedError(data.error ?? '削除できません', data.details)
+    throw new Error(data.error ?? '削除に失敗しました')
+  }
+}
+
+export async function checkDivisionReferences(id: string): Promise<{
+  contacts: number; deals: number; tossups: number; deletable: boolean
+}> {
+  const token = await getAuthToken()
+  const res = await fetch(`/api/admin/divisions?id=${id}`, {
+    method: 'GET',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error ?? '参照チェックに失敗しました')
+  return data as { contacts: number; deals: number; tossups: number; deletable: boolean }
 }
 
 export async function fetchUserDivisions(userId: string): Promise<{ divisionId: string; isPrimary: boolean }[]> {
