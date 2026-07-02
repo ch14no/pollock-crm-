@@ -6,6 +6,11 @@ const IS_DEMO_MODE = process.env.NEXT_PUBLIC_SUPABASE_URL === 'https://placehold
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  // サーバー間Webhook（独自シークレット認証のためセッション不要）
+  if (pathname.startsWith('/api/webhooks')) {
+    return NextResponse.next({ request })
+  }
+
   // Demo mode: allow all routes, only protect nothing
   if (IS_DEMO_MODE) {
     const demoSession = request.cookies.get('pollock-demo-session')
