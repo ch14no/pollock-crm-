@@ -97,6 +97,15 @@ export interface DivisionStage {
   sortOrder: number
   isWon: boolean
   isLost: boolean
+  tabId: string | null
+}
+
+// パイプラインタブ定義（事業部内でカンバンを複数系統に分ける、任意機能）
+export interface PipelineTab {
+  id: string
+  divisionId: string
+  name: string
+  sortOrder: number
 }
 
 // タスクカンバンステージ定義
@@ -231,6 +240,14 @@ interface AppState {
   // 事業部別パイプラインステージ
   divisionStages: Record<string, DivisionStage[]>  // divisionId -> stages
   setDivisionStages: (divisionId: string, stages: DivisionStage[]) => void
+
+  // 事業部別パイプラインタブ（任意）
+  divisionTabs: Record<string, PipelineTab[]>  // divisionId -> tabs
+  setDivisionTabs: (divisionId: string, tabs: PipelineTab[]) => void
+
+  // 選択中のタブ（事業部別、セッション限定・永続化しない）
+  activeTabId: Record<string, string | null>
+  setActiveTabId: (divisionId: string, tabId: string | null) => void
 
   // 商品マスタ（事業部別）
   divisionProducts: Record<string, string[]>  // divisionId -> product names
@@ -426,6 +443,14 @@ export const useAppStore = create<AppState>()(
       setDivisionStages: (divisionId, stages) =>
         set((state) => ({ divisionStages: { ...state.divisionStages, [divisionId]: stages } })),
 
+      divisionTabs: {},
+      setDivisionTabs: (divisionId, tabs) =>
+        set((state) => ({ divisionTabs: { ...state.divisionTabs, [divisionId]: tabs } })),
+
+      activeTabId: {},
+      setActiveTabId: (divisionId, tabId) =>
+        set((state) => ({ activeTabId: { ...state.activeTabId, [divisionId]: tabId } })),
+
       divisionProducts: {},
       setDivisionProducts: (divisionId, products) =>
         set((state) => ({ divisionProducts: { ...state.divisionProducts, [divisionId]: products } })),
@@ -513,6 +538,7 @@ export const useAppStore = create<AppState>()(
         tossupStatuses: state.tossupStatuses,
         divisionCustomFields: state.divisionCustomFields,
         divisionStages: state.divisionStages,
+        divisionTabs: state.divisionTabs,
         divisionProducts: state.divisionProducts,
         divisionProductsEnabled: state.divisionProductsEnabled,
         dealProducts: state.dealProducts,

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { ContactPicker } from '@/components/ui/ContactPicker'
 import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS } from '@/lib/mock-data'
+import { hasTabs, stagesForTab, tabIdForStage } from '@/lib/pipeline-tabs'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { createDeal, updateDeal, updateDealStage, deleteDeal } from '@/lib/db/deals'
 import { cn } from '@/lib/utils'
@@ -33,12 +34,17 @@ export function DealModal() {
     dealModal, closeDealModal, activeDivisionId,
     addDeal, updateLocalDeal, removeLocalDeal, currentUser, divisionStages,
     divisionProducts, divisionProductsEnabled, dealProducts, setDealProduct, clearDealProduct,
+    divisionTabs, activeTabId,
   } = useAppStore()
 
   const [loading, setLoading] = useState(false)
   const [amountDisplay, setAmountDisplay] = useState('')
   const [selectedProduct, setSelectedProduct] = useState('')
+  const [selectedTabId, setSelectedTabId] = useState<string | null>(null)
   const isEdit     = !!dealModal.deal
+  // タブ機能を持つ事業部かどうかの判定に使う事業部ID（新規作成時は現在の事業部、編集時は商談自身の事業部）
+  const tabsDivisionId = activeDivisionId ?? dealModal.deal?.division_id ?? null
+  const tabs = tabsDivisionId ? (divisionTabs[tabsDivisionId] ?? []) : []
   const isLostStage = dealModal.deal ? (divisionStages[dealModal.deal.division_id ?? activeDivisionId ?? ''] ?? FALLBACK_STAGES).some((s) => (s as {id:string;isLost?:boolean}).isLost && s.id === dealModal.deal!.stage_id) || dealModal.deal.stage_id === '失注' : false
   const isWonStage  = dealModal.deal ? (divisionStages[dealModal.deal.division_id ?? activeDivisionId ?? ''] ?? FALLBACK_STAGES).some((s) => s.isWon && s.id === dealModal.deal!.stage_id) || dealModal.deal.stage_id === '受注' : false
 
@@ -50,21 +56,30 @@ export function DealModal() {
     title: '', contactId: '', amount: '', stageId: 'リード', closeDate: '', description: '',
   })
 
-  // ステージリスト（事業部別設定 or フォールバック、失注を除く）
-  const activeStages = (() => {
-    const divId = activeDivisionId ?? ''
+  // 指定した事業部・タブに紐づく「進行中」ステージ一覧（失注除く、受注絵文字付与、sortOrder順）。
+  // タブを持たない事業部では tabId を無視して事業部の全ステージを対象にする。
+  const computeActiveStages = (divId: string, tabId: string | null) => {
     const raw = divisionStages[divId] ?? DEFAULT_DIVISION_STAGES[divId]
     if (!raw) return FALLBACK_STAGES
-    return raw
+    const scoped = hasTabs(divisionTabs, divId) ? stagesForTab(raw, tabId) : raw
+    return scoped
       .filter((s) => !s.isLost)
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((s) => ({ id: s.id, name: s.isWon ? `${s.name} 🎉` : s.name, isWon: s.isWon }))
-  })()
+  }
+
+  // ステージリスト（事業部別設定 or フォールバック、失注を除く、タブがあれば選択中タブに限定）
+  const activeStages = computeActiveStages(activeDivisionId ?? '', selectedTabId)
 
   useEffect(() => {
     if (!dealModal.isOpen) return
     if (dealModal.deal) {
       const d = dealModal.deal
+      // 編集時：タブは「現在ボードで選択中のタブ」ではなく「商談自身が属するタブ」から求める
+      const dealTabId = hasTabs(divisionTabs, d.division_id)
+        ? tabIdForStage(divisionStages[d.division_id] ?? [], d.stage_id)
+        : null
+      setSelectedTabId(dealTabId)
       setForm({
         title: d.title,
         contactId: d.contact_id ?? '',
@@ -76,11 +91,17 @@ export function DealModal() {
       setAmountDisplay(d.amount > 0 ? d.amount.toLocaleString('ja-JP') : '')
       setSelectedProduct(dealProducts[d.id] ?? '')
     } else {
+      // 新規作成時：ボードで現在表示中のタブをデフォルトにする
+      const initialTabId = hasTabs(divisionTabs, activeDivisionId)
+        ? (activeTabId[activeDivisionId ?? ''] ?? tabs[0]?.id ?? null)
+        : null
+      setSelectedTabId(initialTabId)
+      const initialStages = computeActiveStages(activeDivisionId ?? '', initialTabId)
       setForm({
         title: '',
         contactId: dealModal.prefillContactId ?? '',
         amount: '',
-        stageId: dealModal.prefillStageId ?? activeStages[0]?.id ?? 'リード',
+        stageId: dealModal.prefillStageId ?? initialStages[0]?.id ?? 'リード',
         closeDate: '',
         description: '',
       })
@@ -100,6 +121,9 @@ export function DealModal() {
     e.preventDefault()
     if (!form.title.trim()) { toast.error('商談名を入力してください'); return }
     if (!form.contactId)    { toast.error('対象顧客を選択してください'); return }
+    if (hasTabs(divisionTabs, activeDivisionId ?? dealModal.deal?.division_id) && !selectedTabId) {
+      toast.error('タブを選択してください'); return
+    }
     const amount = parseInt(form.amount || '0', 10)
     if (isNaN(amount) || amount < 0) { toast.error('見込み額を正しく入力してください'); return }
 
@@ -200,7 +224,12 @@ export function DealModal() {
 
   const handleRestoreDeal = async () => {
     if (!dealModal.deal) return
-    const firstActiveStage = activeStages[0]
+    // モーダル上で選択中のタブではなく、商談自身が属するタブの先頭ステージへ復活させる
+    const dealDivId = dealModal.deal.division_id ?? activeDivisionId ?? ''
+    const dealTabId = hasTabs(divisionTabs, dealDivId)
+      ? tabIdForStage(divisionStages[dealDivId] ?? [], dealModal.deal.stage_id)
+      : null
+    const firstActiveStage = computeActiveStages(dealDivId, dealTabId)[0]
     if (!firstActiveStage) return
     setLoading(true)
     try {
@@ -302,6 +331,36 @@ export function DealModal() {
                   )}
                 >
                   {p}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* タブ選択（タブを持つ事業部のみ表示） */}
+        {hasTabs(divisionTabs, activeDivisionId ?? dealModal.deal?.division_id) && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              タブ <span className="text-red-500">*</span>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedTabId(tab.id)
+                    const newStages = computeActiveStages(activeDivisionId ?? '', tab.id)
+                    setForm((f) => ({ ...f, stageId: newStages[0]?.id ?? '' }))
+                  }}
+                  className={cn(
+                    'px-3 py-1.5 rounded-lg text-xs font-medium border-2 transition-all',
+                    selectedTabId === tab.id
+                      ? 'bg-orange-500 text-white border-orange-500'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300'
+                  )}
+                >
+                  {tab.name}
                 </button>
               ))}
             </div>

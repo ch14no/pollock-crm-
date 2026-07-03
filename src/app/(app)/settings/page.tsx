@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useAppStore } from '@/store/appStore'
-import type { DivisionCustomField, DivisionStage, TaskKanbanStage } from '@/store/appStore'
+import type { DivisionCustomField, DivisionStage, PipelineTab, TaskKanbanStage } from '@/store/appStore'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import {
@@ -17,6 +17,8 @@ import { isSupabaseConfigured } from '@/lib/db/client'
 import { updateUserName, fetchAllUsers, createUserAdmin, updateUserAdmin, deleteUserAdmin, fetchUserDivisionIds } from '@/lib/db/users'
 import {
   fetchPipelineStages, upsertPipelineStages,
+  fetchPipelineTabs, createPipelineTab, updatePipelineTab, deletePipelineTab, upsertPipelineStagesForTab,
+  migrateUntabbedStagesToTab,
   fetchDivisionCustomFields,
   createDivisionCustomField, updateDivisionCustomField, deleteDivisionCustomField,
   fetchDivisions, createDivision, updateDivision, deleteDivision, checkDivisionReferences,
@@ -710,7 +712,7 @@ function DivisionsPanel() {
 
 // ─── 事業部別パイプラインステージ ────────────────────────────────
 function DivisionStagesPanel() {
-  const { divisions, divisionStages, setDivisionStages } = useAppStore()
+  const { divisions, divisionStages, setDivisionStages, setDivisionTabs } = useAppStore()
   const [selectedDivId, setSelectedDivId] = useState(divisions[0]?.id ?? '')
   const [stages, setStages] = useState<DivisionStage[]>([])
   const [loading, setLoading] = useState(false)
@@ -720,14 +722,25 @@ function DivisionStagesPanel() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState({ name: '', isWon: false, isLost: false })
 
+  // パイプラインタブ（任意、事業部ごとにカンバンを複数系統に分ける機能）
+  const [tabs, setTabs] = useState<PipelineTab[]>([])
+  const [selectedTabId, setSelectedTabId] = useState<string | null>(null)
+  const [showTabForm, setShowTabForm] = useState(false)
+  const [newTabName, setNewTabName] = useState('')
+  const [editingTabId, setEditingTabId] = useState<string | null>(null)
+  const [editTabName, setEditTabName] = useState('')
+  const [tabSaving, setTabSaving] = useState(false)
+
+  const visibleStages = tabs.length > 0 ? stages.filter((s) => s.tabId === selectedTabId) : stages
+
   // 選択事業部が変わったらステージを読み込む
   useEffect(() => {
     if (!selectedDivId) return
     if (isSupabaseConfigured()) {
       setLoading(true)
       fetchPipelineStages(selectedDivId).then((raw) => {
-        const mapped: DivisionStage[] = (raw as { id: string; name: string; sort_order: number; is_won: boolean; is_lost: boolean }[]).map((s) => ({
-          id: s.id, name: s.name, sortOrder: s.sort_order, isWon: s.is_won, isLost: s.is_lost,
+        const mapped: DivisionStage[] = (raw as { id: string; name: string; sort_order: number; is_won: boolean; is_lost: boolean; tab_id: string | null }[]).map((s) => ({
+          id: s.id, name: s.name, sortOrder: s.sort_order, isWon: s.is_won, isLost: s.is_lost, tabId: s.tab_id ?? null,
         }))
         setStages(mapped)
         setDivisionStages(selectedDivId, mapped)
@@ -739,16 +752,121 @@ function DivisionStagesPanel() {
     setEditingId(null)
   }, [selectedDivId]) // eslint-disable-line
 
+  // 選択事業部が変わったらタブを読み込む（デモモードはM&A等の新規タブ対象外＝常に空）
+  useEffect(() => {
+    if (!selectedDivId) return
+    if (isSupabaseConfigured()) {
+      fetchPipelineTabs(selectedDivId).then((raw) => {
+        const mapped: PipelineTab[] = (raw as { id: string; division_id: string; name: string; sort_order: number }[]).map((r) => ({
+          id: r.id, divisionId: r.division_id, name: r.name, sortOrder: r.sort_order,
+        }))
+        setTabs(mapped)
+        setDivisionTabs(selectedDivId, mapped)
+        setSelectedTabId(mapped[0]?.id ?? null)
+      })
+    } else {
+      setTabs([])
+      setSelectedTabId(null)
+    }
+    setShowTabForm(false)
+    setEditingTabId(null)
+  }, [selectedDivId]) // eslint-disable-line
+
+  const reloadTabs = async () => {
+    const raw = await fetchPipelineTabs(selectedDivId) as { id: string; division_id: string; name: string; sort_order: number }[]
+    const mapped: PipelineTab[] = raw.map((r) => ({ id: r.id, divisionId: r.division_id, name: r.name, sortOrder: r.sort_order }))
+    setTabs(mapped)
+    setDivisionTabs(selectedDivId, mapped)
+    return mapped
+  }
+
+  const handleAddTab = async () => {
+    if (!newTabName.trim()) { toast.error('タブ名を入力してください'); return }
+    const isFirstTab = tabs.length === 0
+    setTabSaving(true)
+    try {
+      const newTabId = await createPipelineTab(selectedDivId, newTabName.trim(), tabs.length)
+      if (isFirstTab) {
+        // その事業部にとって最初のタブを作る場合のみ：既存の tab_id=NULL なステージ
+        // （＝既存商談が stage_id で参照中）を新タブへ一括で付け替える。
+        // ステージのUUIDは維持されるため deals.stage_id は壊れず、Kanban/DealModalから
+        // 見えなくなる「孤児」ステージは発生しない。2つ目以降のタブ追加では
+        // 未タブ化ステージは既に解消済みのはずなので実行しない。
+        await migrateUntabbedStagesToTab(selectedDivId, newTabId)
+        const raw = await fetchPipelineStages(selectedDivId) as { id: string; name: string; sort_order: number; is_won: boolean; is_lost: boolean; tab_id: string | null }[]
+        const refreshed: DivisionStage[] = raw.map((s) => ({ id: s.id, name: s.name, sortOrder: s.sort_order, isWon: s.is_won, isLost: s.is_lost, tabId: s.tab_id ?? null }))
+        setStages(refreshed)
+        setDivisionStages(selectedDivId, refreshed)
+      }
+      await reloadTabs()
+      setSelectedTabId(newTabId)
+      toast.success(`タブ「${newTabName.trim()}」を追加しました`)
+      setNewTabName('')
+      setShowTabForm(false)
+    } catch (e) {
+      toast.error((e as Error).message ?? 'タブの追加に失敗しました')
+    } finally {
+      setTabSaving(false)
+    }
+  }
+
+  const handleEditTab = async (id: string) => {
+    if (!editTabName.trim()) { toast.error('タブ名を入力してください'); return }
+    setTabSaving(true)
+    try {
+      await updatePipelineTab(id, { name: editTabName.trim() })
+      await reloadTabs()
+      setEditingTabId(null)
+      toast.success('タブを更新しました')
+    } catch (e) {
+      toast.error((e as Error).message ?? 'タブの更新に失敗しました')
+    } finally {
+      setTabSaving(false)
+    }
+  }
+
+  const handleDeleteTab = async (id: string, name: string) => {
+    if (!window.confirm(`「${name}」タブを削除しますか？`)) return
+    setTabSaving(true)
+    try {
+      await deletePipelineTab(id)
+      const mapped = await reloadTabs()
+      if (selectedTabId === id) setSelectedTabId(mapped[0]?.id ?? null)
+      toast.success('タブを削除しました')
+    } catch {
+      toast.error('このタブにはステージが設定されているため削除できません。先にステージを削除してください。')
+    } finally {
+      setTabSaving(false)
+    }
+  }
+
+  const handleMoveTab = (idx: number, dir: -1 | 1) => {
+    const reordered = moveItem(tabs, idx, dir).map((t, i) => ({ ...t, sortOrder: i }))
+    setTabs(reordered)
+    setDivisionTabs(selectedDivId, reordered)
+    if (isSupabaseConfigured()) {
+      for (const t of reordered) {
+        updatePipelineTab(t.id, { sortOrder: t.sortOrder }).catch(() => {})
+      }
+    }
+  }
+
   const saveToDb = async (next: DivisionStage[]) => {
     setSaving(true)
     try {
       if (isSupabaseConfigured()) {
-        await upsertPipelineStages(selectedDivId, next.map((s, i) => ({
-          name: s.name, sort_order: i, is_won: s.isWon, is_lost: s.isLost,
-        })))
+        if (tabs.length > 0 && selectedTabId) {
+          await upsertPipelineStagesForTab(selectedDivId, selectedTabId, next.map((s, i) => ({
+            name: s.name, sort_order: i, is_won: s.isWon, is_lost: s.isLost,
+          })))
+        } else {
+          await upsertPipelineStages(selectedDivId, next.map((s, i) => ({
+            name: s.name, sort_order: i, is_won: s.isWon, is_lost: s.isLost,
+          })))
+        }
         // DBから再取得してIDを更新
-        const raw = await fetchPipelineStages(selectedDivId) as { id: string; name: string; sort_order: number; is_won: boolean; is_lost: boolean }[]
-        const refreshed: DivisionStage[] = raw.map((s) => ({ id: s.id, name: s.name, sortOrder: s.sort_order, isWon: s.is_won, isLost: s.is_lost }))
+        const raw = await fetchPipelineStages(selectedDivId) as { id: string; name: string; sort_order: number; is_won: boolean; is_lost: boolean; tab_id: string | null }[]
+        const refreshed: DivisionStage[] = raw.map((s) => ({ id: s.id, name: s.name, sortOrder: s.sort_order, isWon: s.is_won, isLost: s.is_lost, tabId: s.tab_id ?? null }))
         setStages(refreshed)
         setDivisionStages(selectedDivId, refreshed)
       } else {
@@ -765,7 +883,10 @@ function DivisionStagesPanel() {
 
   const handleAdd = async () => {
     if (!newStage.name.trim()) { toast.error('ステージ名を入力してください'); return }
-    const next = [...stages, { id: `ds-${Date.now()}`, name: newStage.name.trim(), sortOrder: stages.length, isWon: newStage.isWon, isLost: newStage.isLost }]
+    const next = [...visibleStages, {
+      id: `ds-${Date.now()}`, name: newStage.name.trim(), sortOrder: visibleStages.length,
+      isWon: newStage.isWon, isLost: newStage.isLost, tabId: tabs.length > 0 ? selectedTabId : null,
+    }]
     await saveToDb(next)
     toast.success(`ステージ「${newStage.name}」を追加しました`)
     setNewStage({ name: '', isWon: false, isLost: false })
@@ -774,7 +895,7 @@ function DivisionStagesPanel() {
 
   const handleEdit = async (id: string) => {
     if (!editForm.name.trim()) { toast.error('ステージ名を入力してください'); return }
-    const next = stages.map((s) => s.id === id ? { ...s, ...editForm, name: editForm.name.trim() } : s)
+    const next = visibleStages.map((s) => s.id === id ? { ...s, ...editForm, name: editForm.name.trim() } : s)
     await saveToDb(next)
     setEditingId(null)
     toast.success('ステージを更新しました')
@@ -782,7 +903,7 @@ function DivisionStagesPanel() {
 
   const handleDelete = async (id: string, name: string) => {
     if (!window.confirm(`「${name}」を削除しますか？`)) return
-    await saveToDb(stages.filter((s) => s.id !== id))
+    await saveToDb(visibleStages.filter((s) => s.id !== id))
     toast.success('ステージを削除しました')
   }
 
@@ -802,6 +923,84 @@ function DivisionStagesPanel() {
             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
             {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
+        </div>
+
+        {/* ─── パイプラインタブ（任意） ─── */}
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-gray-500 mb-1">パイプラインタブ（任意）</label>
+          {tabs.length === 0 ? (
+            <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+              <p className="text-xs text-gray-400 mb-2">このアイテムにタブは設定されていません。タブを使うとカンバンを複数の系統（例: 売主／買主）に分けて表示できます。</p>
+              {!showTabForm ? (
+                <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={() => setShowTabForm(true)}>タブを追加</Button>
+              ) : (
+                <div className="flex gap-2 items-center">
+                  <input type="text" value={newTabName} onChange={(e) => setNewTabName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddTab()}
+                    placeholder="タブ名（例: 売主）"
+                    className="flex-1 px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+                  <button onClick={() => setShowTabForm(false)} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-white"><X size={13} /></button>
+                  <button onClick={handleAddTab} disabled={tabSaving}
+                    className="flex items-center gap-1 text-xs text-white bg-orange-500 px-3 py-1.5 rounded-lg hover:bg-orange-600 font-medium disabled:opacity-50">
+                    <Check size={12} />追加
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2 items-center">
+                {tabs.map((t, i) => (
+                  <div key={t.id} className="flex items-center gap-1 bg-gray-50 border border-gray-100 rounded-full pl-2 pr-1 py-1">
+                    {editingTabId === t.id ? (
+                      <>
+                        <input type="text" value={editTabName} onChange={(e) => setEditTabName(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleEditTab(t.id)}
+                          className="w-24 px-1.5 py-0.5 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-orange-500 bg-white" />
+                        <button onClick={() => setEditingTabId(null)} className="p-1 text-gray-300 hover:text-gray-500"><X size={11} /></button>
+                        <button onClick={() => handleEditTab(t.id)} className="p-1 text-orange-500 hover:text-orange-600"><Check size={11} /></button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => handleMoveTab(i, -1)} disabled={i === 0}
+                          className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowUp size={11} /></button>
+                        <button onClick={() => handleMoveTab(i, 1)} disabled={i === tabs.length - 1}
+                          className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowDown size={11} /></button>
+                        <span className="text-xs font-medium text-gray-700 px-0.5">{t.name}</span>
+                        <button onClick={() => { setEditingTabId(t.id); setEditTabName(t.name) }} className="p-1 text-gray-300 hover:text-orange-500"><Edit2 size={11} /></button>
+                        <button onClick={() => handleDeleteTab(t.id, t.name)} className="p-1 text-gray-300 hover:text-red-500"><Trash2 size={11} /></button>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {!showTabForm ? (
+                  <button onClick={() => setShowTabForm(true)}
+                    className="flex items-center gap-1 text-xs text-gray-500 border border-dashed border-gray-300 rounded-full px-3 py-1.5 hover:border-orange-400 hover:text-orange-500">
+                    <Plus size={12} />タブを追加
+                  </button>
+                ) : (
+                  <div className="flex gap-2 items-center">
+                    <input type="text" value={newTabName} onChange={(e) => setNewTabName(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddTab()}
+                      placeholder="タブ名"
+                      className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+                    <button onClick={() => setShowTabForm(false)} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-white"><X size={13} /></button>
+                    <button onClick={handleAddTab} disabled={tabSaving}
+                      className="flex items-center gap-1 text-xs text-white bg-orange-500 px-3 py-1.5 rounded-lg hover:bg-orange-600 font-medium disabled:opacity-50">
+                      <Check size={12} />追加
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">表示するタブ（下のステージ一覧の対象）</label>
+                <select value={selectedTabId ?? ''} onChange={(e) => setSelectedTabId(e.target.value || null)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
+                  {tabs.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
 
         {showForm && (
@@ -834,9 +1033,9 @@ function DivisionStagesPanel() {
           </div>
         ) : (
           <div className="space-y-1">
-            {stages.length === 0 ? (
+            {visibleStages.length === 0 ? (
               <p className="text-sm text-gray-400 py-4 text-center">ステージが未設定です</p>
-            ) : stages.map((s, i) => (
+            ) : visibleStages.map((s, i) => (
               <div key={s.id} className="border border-gray-100 rounded-xl overflow-hidden">
                 {editingId === s.id ? (
                   <div className="p-3 bg-orange-50 space-y-2">
@@ -862,9 +1061,9 @@ function DivisionStagesPanel() {
                 ) : (
                   <div className="flex items-center gap-2 px-3 py-2.5">
                     <div className="flex flex-col gap-0.5 flex-shrink-0">
-                      <button onClick={() => saveToDb(moveItem(stages, i, -1))} disabled={i === 0 || saving}
+                      <button onClick={() => saveToDb(moveItem(visibleStages, i, -1))} disabled={i === 0 || saving}
                         className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowUp size={12} /></button>
-                      <button onClick={() => saveToDb(moveItem(stages, i, 1))} disabled={i === stages.length - 1 || saving}
+                      <button onClick={() => saveToDb(moveItem(visibleStages, i, 1))} disabled={i === visibleStages.length - 1 || saving}
                         className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowDown size={12} /></button>
                     </div>
                     <span className="text-xs text-gray-300 w-4 flex-shrink-0">{i + 1}</span>

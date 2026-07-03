@@ -15,6 +15,7 @@ import { Plus, AlertCircle, Lock, ChevronDown } from 'lucide-react'
 import { formatCurrency, getStaleDays, getInitials, cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
+import { hasTabs, stagesForTab, tabIdForStage } from '@/lib/pipeline-tabs'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { updateDealStage } from '@/lib/db/deals'
 import type { Deal } from '@/types/database'
@@ -333,28 +334,41 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
   const { openDealModal, updateLocalDeal } = useAppStore()
   const activeDivisionId = useAppStore((s) => s.activeDivisionId)
   const divisionStages = useAppStore((s) => s.divisionStages)
+  const divisionTabs = useAppStore((s) => s.divisionTabs)
+  const activeTabId = useAppStore((s) => s.activeTabId)
+  const setActiveTabId = useAppStore((s) => s.setActiveTabId)
   const [showLost, setShowLost] = useState(false)
+
+  // 事業部内パイプラインタブ（任意機能）。タブが1件も無い事業部は従来通り全ステージを表示する。
+  const tabs = activeDivisionId ? (divisionTabs[activeDivisionId] ?? []) : []
+  const currentTabId = activeDivisionId ? (activeTabId[activeDivisionId] ?? tabs[0]?.id ?? null) : null
 
   // 事業部別ステージ（ストア上書き → デフォルト → フォールバック）
   // 参照の安定性が StagePositionIndicator の IntersectionObserver 再セットアップ判定に
-  // 使われるため、activeDivisionId/divisionStages が変わらない限り同一参照を保つ。
+  // 使われるため、activeDivisionId/divisionStages/タブ関連の値が変わらない限り同一参照を保つ。
   const stages = useMemo(() => {
     const divId = activeDivisionId ?? ''
     const raw = divisionStages[divId] ?? DEFAULT_DIVISION_STAGES[divId]
     if (!raw) return FALLBACK_stages
-    const mapped = raw.map((s) => ({ id: s.id, name: s.isWon ? `${s.name} 🎉` : s.name, won: s.isWon, lost: s.isLost }))
+    const scoped = tabs.length > 0 ? stagesForTab(raw, currentTabId) : raw
+    const mapped = scoped.map((s) => ({ id: s.id, name: s.isWon ? `${s.name} 🎉` : s.name, won: s.isWon, lost: s.isLost }))
     // 失注ステージが定義されていない場合のみ追加
     if (!mapped.some((s) => s.lost)) {
       mapped.push({ id: '失注', name: '失注', won: false, lost: true })
     }
     // 受注ステージの絵文字付与漏れ対応済み・lost ステージを末尾に整列
     return [...mapped.filter((s) => !s.lost), ...mapped.filter((s) => s.lost)]
-  }, [activeDivisionId, divisionStages])
+  }, [activeDivisionId, divisionStages, tabs.length, currentTabId])
 
   const buildMap = (deals: Deal[]) => {
     const map: Record<string, Deal[]> = {}
     stages.forEach((s) => { map[s.id] = [] })
     deals.forEach((d) => {
+      // タブがある事業部では、選択中のタブに属するステージの商談のみを対象にする
+      if (tabs.length > 0) {
+        const rawStages = divisionStages[activeDivisionId ?? ''] ?? []
+        if (tabIdForStage(rawStages, d.stage_id) !== currentTabId) return
+      }
       if (map[d.stage_id]) map[d.stage_id].push(d)
       else if (map[stages[0]?.id ?? 'リード']) map[stages[0]?.id ?? 'リード'].push(d)
     })
@@ -363,11 +377,12 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
 
   const [dealsByStage, setDealsByStage] = useState<Record<string, Deal[]>>(() => buildMap(initialDeals))
 
-  // ドラッグ中でなければ initialDeals が変わったら同期
+  // ドラッグ中でなければ initialDeals またはタブ切替時に同期
   useEffect(() => {
     if (activeId !== null) return
     setDealsByStage(buildMap(initialDeals))
-  }, [initialDeals]) // eslint-disable-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDeals, currentTabId])
 
   const [activeId, setActiveId] = useState<string | null>(null)
   const [showConfetti, setShowConfetti] = useState(false)
@@ -454,6 +469,25 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
   return (
     <>
       {showConfetti && <Confetti />}
+
+      {hasTabs(divisionTabs, activeDivisionId) && (
+        <div className="flex items-center gap-1.5 mb-3">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => activeDivisionId && setActiveTabId(activeDivisionId, tab.id)}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                tab.id === currentTabId
+                  ? 'bg-orange-500 text-white'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              )}
+            >
+              {tab.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       <StagePositionIndicator stages={visibleStages} scrollRef={boardScrollRef} columnRefs={columnRefs} />
 

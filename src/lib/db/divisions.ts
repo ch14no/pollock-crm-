@@ -127,10 +127,69 @@ export async function upsertPipelineStages(
   divisionId: string,
   stages: { name: string; sort_order: number; is_won: boolean; is_lost: boolean }[]
 ): Promise<void> {
-  await getSupabase().from('pipeline_stages').delete().eq('division_id', divisionId)
+  await getSupabase().from('pipeline_stages').delete().eq('division_id', divisionId).is('tab_id', null)
   if (stages.length === 0) return
   const { error } = await getSupabase().from('pipeline_stages').insert(
     stages.map((s) => ({ division_id: divisionId, name: s.name, sort_order: s.sort_order, is_won: s.is_won, is_lost: s.is_lost }))
+  )
+  if (error) throw error
+}
+
+export async function fetchPipelineTabs(divisionId: string) {
+  const { data, error } = await getSupabase()
+    .from('pipeline_tabs')
+    .select('*')
+    .eq('division_id', divisionId)
+    .order('sort_order')
+  if (error) throw error
+  return data ?? []
+}
+
+export async function createPipelineTab(divisionId: string, name: string, sortOrder: number): Promise<string> {
+  const { data, error } = await getSupabase()
+    .from('pipeline_tabs')
+    .insert({ division_id: divisionId, name, sort_order: sortOrder })
+    .select('id').single()
+  if (error) throw error
+  return data.id as string
+}
+
+export async function updatePipelineTab(id: string, updates: { name?: string; sortOrder?: number }): Promise<void> {
+  const patch: Record<string, unknown> = {}
+  if (updates.name !== undefined) patch.name = updates.name
+  if (updates.sortOrder !== undefined) patch.sort_order = updates.sortOrder
+  const { error } = await getSupabase().from('pipeline_tabs').update(patch).eq('id', id)
+  if (error) throw error
+}
+
+export async function deletePipelineTab(id: string): Promise<void> {
+  const { error } = await getSupabase().from('pipeline_tabs').delete().eq('id', id)
+  if (error) throw error
+}
+
+// その事業部の tab_id=NULL（未タブ化）なステージを、新規作成したタブへ一括で付け替える。
+// ステージ行のUUIDは維持されるため、既存商談の deals.stage_id 参照は壊れない。
+export async function migrateUntabbedStagesToTab(divisionId: string, tabId: string): Promise<void> {
+  const { error } = await getSupabase()
+    .from('pipeline_stages')
+    .update({ tab_id: tabId })
+    .eq('division_id', divisionId)
+    .is('tab_id', null)
+  if (error) throw error
+}
+
+export async function upsertPipelineStagesForTab(
+  divisionId: string,
+  tabId: string,
+  stages: { name: string; sort_order: number; is_won: boolean; is_lost: boolean }[]
+): Promise<void> {
+  await getSupabase().from('pipeline_stages').delete().eq('tab_id', tabId)
+  if (stages.length === 0) return
+  const { error } = await getSupabase().from('pipeline_stages').insert(
+    stages.map((s) => ({
+      division_id: divisionId, tab_id: tabId,
+      name: s.name, sort_order: s.sort_order, is_won: s.is_won, is_lost: s.is_lost,
+    }))
   )
   if (error) throw error
 }
