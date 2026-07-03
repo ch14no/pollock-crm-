@@ -13,13 +13,17 @@ import { getSupabase } from '@/lib/db/client'
 import { fetchDivisions, fetchUserDivisions } from '@/lib/db/divisions'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { setDivisions, setCurrentUser, setUserOwnDivisions, initialized } = useAppStore()
+  const { setDivisions, setCurrentUser, setUserOwnDivisions, setActiveDivision, initialized } = useAppStore()
 
   useEffect(() => {
-    useAppStore.persist.rehydrate()
-
     const supabase = getSupabase()
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
+
+    const run = async () => {
+      // rehydrate() は同期storage実装では同期完結するが、型上はPromiseを
+      // 返し得るため、以降のactiveDivisionId読み取りより確実に先に完了させる
+      await Promise.resolve(useAppStore.persist.rehydrate())
+
+      const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
       const { data: profileRaw } = await supabase
@@ -45,12 +49,34 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       const userDivs = await fetchUserDivisions(user.id)
       if (profile?.role === 'super_admin') {
-        setUserOwnDivisions(divisions.map((d) => d.id))
+        const ownDivisionIds = divisions.map((d) => d.id)
+        setUserOwnDivisions(ownDivisionIds)
+
+        const currentActiveId = useAppStore.getState().activeDivisionId
+        const needsDefaultDivision = !currentActiveId || !ownDivisionIds.includes(currentActiveId)
+        if (needsDefaultDivision) {
+          const primary = userDivs.find((d) => d.isPrimary)
+          const defaultId = primary?.divisionId ?? ownDivisionIds[0] ?? divisions[0]?.id
+          const defaultDivision = divisions.find((d) => d.id === defaultId)
+          if (defaultDivision) setActiveDivision(defaultDivision)
+        }
       } else {
-        setUserOwnDivisions(userDivs.map((d) => d.divisionId))
+        const ownDivisionIds = userDivs.map((d) => d.divisionId)
+        setUserOwnDivisions(ownDivisionIds)
+
+        const currentActiveId = useAppStore.getState().activeDivisionId
+        const needsDefaultDivision = !currentActiveId || !ownDivisionIds.includes(currentActiveId)
+        if (needsDefaultDivision) {
+          const primary = userDivs.find((d) => d.isPrimary)
+          const defaultId = primary?.divisionId ?? ownDivisionIds[0] ?? divisions[0]?.id
+          const defaultDivision = divisions.find((d) => d.id === defaultId)
+          if (defaultDivision) setActiveDivision(defaultDivision)
+        }
       }
-    })
-  }, [setDivisions, setCurrentUser, setUserOwnDivisions])
+    }
+
+    run()
+  }, [setDivisions, setCurrentUser, setUserOwnDivisions, setActiveDivision])
 
   return (
     <div className="min-h-screen bg-gray-50">
