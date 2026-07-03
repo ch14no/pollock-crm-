@@ -4,7 +4,7 @@ import { useState, useRef, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeft, CreditCard, UserPlus, CheckCircle2, AlertCircle,
-  ChevronRight, RotateCcw, Sparkles, MapPin, Phone, Mail,
+  ChevronRight, RotateCw, X, Sparkles, MapPin, Phone, Mail,
   Users, Building2, Globe, Home,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -136,6 +136,7 @@ export default function NewContactPage() {
   const backRef  = useRef<HTMLInputElement>(null)
   const [frontImage, setFrontImage] = useState<string | null>(null)
   const [backImage,  setBackImage]  = useState<string | null>(null)
+  const [isRotating, setIsRotating] = useState(false)
   const [activeCard, setActiveCard] = useState<'front' | 'back'>('front')
   const [isDragOver, setIsDragOver] = useState(false)
 
@@ -162,6 +163,42 @@ export default function NewContactPage() {
   }, [])
 
   // ─── Image handling ────────────────────────────────────────────────────────
+
+  const rotateImageDataUrl = (dataUrl: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.height
+        canvas.height = img.width
+        const ctx = canvas.getContext('2d')
+        if (!ctx) { reject(new Error('canvas unsupported')); return }
+        ctx.translate(canvas.width / 2, canvas.height / 2)
+        ctx.rotate(Math.PI / 2)
+        ctx.drawImage(img, -img.width / 2, -img.height / 2)
+        const mediaType = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? 'image/jpeg'
+        const outputType = mediaType === 'image/png' || mediaType === 'image/gif' ? mediaType : 'image/jpeg'
+        resolve(canvas.toDataURL(outputType, 0.92))
+      }
+      img.onerror = () => reject(new Error('画像の読み込みに失敗しました'))
+      img.src = dataUrl
+    })
+  }
+
+  const rotateActiveImage = async () => {
+    const current = activeCard === 'front' ? frontImage : backImage
+    if (!current) return
+    setIsRotating(true)
+    try {
+      const rotated = await rotateImageDataUrl(current)
+      if (activeCard === 'front') setFrontImage(rotated)
+      else setBackImage(rotated)
+    } catch {
+      toast.error('画像の回転に失敗しました')
+    } finally {
+      setIsRotating(false)
+    }
+  }
 
   const loadImage = (file: File, side: 'front' | 'back') => {
     if (file.size > 10 * 1024 * 1024) {
@@ -461,16 +498,28 @@ export default function NewContactPage() {
                   alt={`名刺${activeCard === 'front' ? '表面' : '裏面'}`}
                   className="w-full h-full object-cover rounded-xl"
                 />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    activeCard === 'front' ? setFrontImage(null) : setBackImage(null)
-                  }}
-                  className="absolute top-2 right-2 p-1.5 bg-white/90 rounded-full shadow-md hover:bg-white"
-                >
-                  <RotateCcw size={14} className="text-gray-600" />
-                </button>
+                <div className="absolute top-2 right-2 flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); rotateActiveImage() }}
+                    disabled={isRotating}
+                    title="90度回転"
+                    className="p-1.5 bg-white/90 rounded-full shadow-md hover:bg-white disabled:opacity-50"
+                  >
+                    <RotateCw size={14} className={cn('text-gray-600', isRotating && 'animate-spin')} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      activeCard === 'front' ? setFrontImage(null) : setBackImage(null)
+                    }}
+                    title="削除"
+                    className="p-1.5 bg-white/90 rounded-full shadow-md hover:bg-white"
+                  >
+                    <X size={14} className="text-gray-600" />
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -494,7 +543,7 @@ export default function NewContactPage() {
 
           <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700">
             <span>💡</span>
-            <span>名刺は明るい場所で水平に撮影すると読み取り精度が上がります。裏面に住所や別連絡先がある場合は追加すると自動でマージされます。</span>
+            <span>名刺は明るい場所で水平に撮影すると読み取り精度が上がります。向きが横向きの場合は右上の回転ボタンで直せます。裏面に住所や別連絡先がある場合は追加すると自動でマージされます。</span>
           </div>
 
           <div className="flex justify-between">
