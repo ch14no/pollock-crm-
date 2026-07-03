@@ -15,6 +15,7 @@ import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { createContact } from '@/lib/db/contacts'
 import { findOrCreateCompany } from '@/lib/db/companies'
+import { createClient } from '@/lib/supabase/client'
 import { Activity } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -45,20 +46,35 @@ const EMPTY_FIELDS: ContactFields = {
   phone: '', mobile: '', address: '', website: '',
 }
 
-// ─── OCR Simulation ───────────────────────────────────────────────────────────
+// ─── OCR (Claude Vision API) ──────────────────────────────────────────────────
 
-async function simulateOcr(): Promise<OcrField[]> {
-  await new Promise((r) => setTimeout(r, 2000))
-  return [
-    { key: 'name',     label: '氏名',   value: '渡辺 雅人',                      confidence: 'high' },
-    { key: 'company',  label: '会社名', value: '株式会社デジタルフォワード',     confidence: 'high' },
-    { key: 'position', label: '役職',   value: '代表取締役',                     confidence: 'high' },
-    { key: 'email',    label: 'メール', value: 'watanabe@digitalforward.co.jp',   confidence: 'high' },
-    { key: 'phone',    label: '電話',   value: '03-5555-1234',                    confidence: 'medium' },
-    { key: 'mobile',   label: '携帯',   value: '090-1234-5678',                   confidence: 'medium' },
-    { key: 'address',  label: '住所',   value: '東京都渋谷区恵比寿1-2-3 XXXビル', confidence: 'low' },
-    { key: 'website',  label: 'URL',    value: 'https://digitalforward.co.jp',    confidence: 'medium' },
-  ]
+async function getAuthToken(): Promise<string | null> {
+  try {
+    const { data: { session } } = await createClient().auth.getSession()
+    return session?.access_token ?? null
+  } catch { return null }
+}
+
+async function runBusinessCardOcr(frontImage: string, backImage: string | null): Promise<OcrField[]> {
+  const token = await getAuthToken()
+  const res = await fetch('/api/ocr/business-card', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ frontImage, backImage: backImage ?? undefined }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error ?? '名刺の読み取りに失敗しました。もう一度お試しください。')
+
+  const fields = data.fields as Record<keyof ContactFields, { value: string; confidence: 'high' | 'medium' | 'low' }>
+  return (Object.keys(FIELD_LABELS) as (keyof ContactFields)[]).map((key) => ({
+    key,
+    label: FIELD_LABELS[key].label,
+    value: fields[key]?.value ?? '',
+    confidence: fields[key]?.confidence ?? 'low',
+  }))
 }
 
 // ─── Duplicate check（Supabase モードでは常に null） ──────────────────────────
@@ -181,10 +197,15 @@ export default function NewContactPage() {
   const startOcr = async () => {
     if (!frontImage) { toast.error('表面の画像をアップロードしてください'); return }
     setStep('scanning')
-    const ocr = await simulateOcr()
-    setOcrFields(ocr)
-    applyOcr(ocr)
-    setStep('review')
+    try {
+      const ocr = await runBusinessCardOcr(frontImage, backImage)
+      setOcrFields(ocr)
+      applyOcr(ocr)
+      setStep('review')
+    } catch (e) {
+      toast.error((e as Error).message || '名刺の読み取りに失敗しました。もう一度お試しください。')
+      setStep('upload')
+    }
   }
 
   // ─── Validation ───────────────────────────────────────────────────────────
@@ -466,9 +487,9 @@ export default function NewContactPage() {
           </div>
 
           {/* Separate inputs for front and back to avoid same-file caching */}
-          <input ref={frontRef} type="file" accept="image/*" capture="environment" className="hidden"
+          <input ref={frontRef} type="file" accept="image/*" className="hidden"
             onChange={(e) => e.target.files?.[0] && loadImage(e.target.files[0], 'front')} />
-          <input ref={backRef}  type="file" accept="image/*" capture="environment" className="hidden"
+          <input ref={backRef}  type="file" accept="image/*" className="hidden"
             onChange={(e) => e.target.files?.[0] && loadImage(e.target.files[0], 'back')} />
 
           <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700">
