@@ -50,6 +50,11 @@ interface ImportError {
   message: string
 }
 
+interface CompanyOnlyEntry {
+  row: number
+  company: string
+}
+
 function validateEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
@@ -78,7 +83,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
   const [mapping, setMapping]   = useState<Record<string, string>>({})
   const [progress, setProgress] = useState(0)
   const [progressMsg, setProgressMsg] = useState('')
-  const [importResult, setImportResult] = useState<{ success: number; updated: number; skipped: number; errors: ImportError[] } | null>(null)
+  const [importResult, setImportResult] = useState<{ success: number; updated: number; skipped: number; companyOnly: number; companyOnlyList: CompanyOnlyEntry[]; errors: ImportError[] } | null>(null)
   const [duplicateMode, setDuplicateMode] = useState<'skip' | 'update'>('skip')
   const [customFields, setCustomFields] = useState<DivisionCustomField[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
@@ -187,8 +192,10 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
     setProgress(0)
 
     const errors: ImportError[] = []
+    const companyOnlyList: CompanyOnlyEntry[] = []
     let success = 0
     let skipped = 0
+    let companyOnly = 0
 
     // 既存データを取得。email+name → contactId のマップを構築
     // ※メールのみ一致でも名前が違う場合は別人として取り込む（共通メール対応）
@@ -226,7 +233,27 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
       setProgressMsg(`${i + 1}/${rows.length} 件処理中: ${name || `行${rowNum}`}`)
       setProgress(Math.round(((i + 1) / rows.length) * 100))
 
-      if (!name) { errors.push({ row: rowNum, name: '(空)', message: '担当者名が空です' }); continue }
+      if (!name) {
+        // 担当者名は必須（contactsテーブルのNOT NULL制約）だが、会社名だけは
+        // companiesテーブルが担当者に依存しない独立マスタのため先行登録できる
+        if (company) {
+          if (isSupabaseConfigured()) {
+            try {
+              await findOrCreateCompany(company)
+            } catch (err) {
+              errors.push({ row: rowNum, name: '(空)', message: err instanceof Error ? err.message : '企業の登録に失敗しました' })
+              continue
+            }
+          } else {
+            await new Promise((r) => setTimeout(r, 30))
+          }
+          companyOnly++
+          companyOnlyList.push({ row: rowNum, company })
+        } else {
+          errors.push({ row: rowNum, name: '(空)', message: '担当者名が空です（会社名もありません）' })
+        }
+        continue
+      }
       if (email && !validateEmail(email)) {
         errors.push({ row: rowNum, name, message: `メールアドレスの形式が正しくありません: ${email}` }); continue
       }
@@ -289,11 +316,12 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
       }
     }
 
-    setImportResult({ success, updated, skipped, errors })
+    setImportResult({ success, updated, skipped, companyOnly, companyOnlyList, errors })
     setStep('done')
     const parts = [
       success  > 0 ? `${success}件登録`  : '',
       updated  > 0 ? `${updated}件更新`  : '',
+      companyOnly > 0 ? `${companyOnly}件は会社のみ登録` : '',
       skipped  > 0 ? `${skipped}件スキップ` : '',
       errors.length > 0 ? `${errors.length}件エラー` : '',
     ].filter(Boolean).join('、')
@@ -334,6 +362,9 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
           {(importResult?.updated ?? 0) > 0 && (
             <p>更新: <strong className="text-blue-600">{importResult?.updated}件</strong></p>
           )}
+          {(importResult?.companyOnly ?? 0) > 0 && (
+            <p>会社のみ登録（担当者名なし）: <strong className="text-blue-600">{importResult?.companyOnly}件</strong></p>
+          )}
           {(importResult?.skipped ?? 0) > 0 && (
             <p>スキップ（重複）: <strong className="text-yellow-600">{importResult?.skipped}件</strong></p>
           )}
@@ -341,6 +372,17 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
             <p>エラー: <strong className="text-red-500">{importResult?.errors.length}件</strong></p>
           )}
         </div>
+        {(importResult?.companyOnlyList.length ?? 0) > 0 && (
+          <div className="mb-4 text-left bg-blue-50 border border-blue-100 rounded-xl p-3 max-h-40 overflow-y-auto">
+            <p className="text-xs text-blue-700 font-medium mb-1">担当者未登録のまま会社のみ登録した行（後日、担当者情報を追記してください）</p>
+            {importResult!.companyOnlyList.slice(0, 10).map((e, i) => (
+              <p key={i} className="text-xs text-blue-600">行{e.row} <strong>{e.company}</strong></p>
+            ))}
+            {importResult!.companyOnlyList.length > 10 && (
+              <p className="text-xs text-blue-400">... 他{importResult!.companyOnlyList.length - 10}件</p>
+            )}
+          </div>
+        )}
         {(importResult?.errors.length ?? 0) > 0 && (
           <div className="mb-4 text-left bg-red-50 border border-red-100 rounded-xl p-3 max-h-40 overflow-y-auto">
             {importResult!.errors.slice(0, 10).map((e, i) => (
