@@ -17,6 +17,7 @@ import type { Contact, Activity, Deal } from '@/types/database'
 import { getLocationConfig, sortTags } from '@/lib/config'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
 import { cn, formatDate, formatRelativeTime, getInitials, formatCurrency } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { STATUS_CONFIG } from '@/lib/contactStatus'
@@ -459,12 +460,12 @@ export default function ContactDetailPage() {
                 ))}
                 <div>
                   <label className="block text-xs text-gray-400 mb-0.5">メモ・備考</label>
-                  <textarea
+                  <AutoGrowTextarea
                     value={infoForm.notes}
                     onChange={(e) => setInfoForm((f) => ({ ...f, notes: e.target.value }))}
                     rows={3}
                     placeholder="メモを入力..."
-                    className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+                    className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
                   />
                 </div>
 
@@ -702,12 +703,12 @@ export default function ContactDetailPage() {
                                     placeholder="件名"
                                     className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
                                   />
-                                  <textarea
+                                  <AutoGrowTextarea
                                     value={actEditForm.memo}
                                     onChange={(e) => setActEditForm((f) => ({ ...f, memo: e.target.value }))}
                                     placeholder="メモ"
                                     rows={2}
-                                    className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white resize-none"
+                                    className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
                                   />
                                   <div className="flex gap-2 justify-end">
                                     <button onClick={() => setEditingActId(null)}
@@ -874,12 +875,12 @@ export default function ContactDetailPage() {
                                   onChange={(e) => setEditForm((f) => ({ ...f, dueDate: e.target.value }))}
                                   className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
                                 />
-                                <textarea
+                                <AutoGrowTextarea
                                   value={editForm.memo}
                                   onChange={(e) => setEditForm((f) => ({ ...f, memo: e.target.value }))}
                                   placeholder="メモ"
                                   rows={2}
-                                  className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white resize-none"
+                                  className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
                                 />
                                 <div className="flex gap-2 justify-end">
                                   <button onClick={() => setEditingTaskId(null)}

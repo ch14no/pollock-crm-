@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Search, Plus, Building2, Phone, Mail,
   LayoutList, LayoutGrid, ChevronDown, MapPin, SlidersHorizontal, Lock, CreditCard, X,
-  Trash2, Download, CheckSquare, Square, Filter, Info,
+  Trash2, Download, CheckSquare, Square, Filter, Info, Briefcase,
 } from 'lucide-react'
 import { MOCK_CONTACTS, MOCK_TEAM_MEMBERS } from '@/lib/mock-data'
 import { LOCATIONS, getLocationConfig, getLocationsByRegion, sortTags } from '@/lib/config'
@@ -18,6 +18,7 @@ import type { ContactStatus } from '@/store/appStore'
 import { STATUS_CONFIG } from '@/lib/contactStatus'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchContactsByDivision, deleteContacts, fetchContactStatusesBatch, fetchContactsCustomValues, updateContact } from '@/lib/db/contacts'
+import { fetchDealsByDivision } from '@/lib/db/deals'
 import type { Contact } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -94,9 +95,11 @@ export default function ContactsPage() {
   const contactStatuses   = useAppStore((s) => s.contactStatuses)
   const localContactEdits = useAppStore((s) => s.localContactEdits)
   const divisionCustomFields = useAppStore((s) => s.divisionCustomFields)
+  const localDeals        = useAppStore((s) => s.localDeals)
 
   const [dbContacts, setDbContacts] = useState<Contact[]>([])
   const [dbLoading, setDbLoading] = useState(false)
+  const [dealCounts, setDealCounts] = useState<Record<string, number>>({})
   const [query, setQuery]               = useState(() => searchParams.get('q') ?? '')
   useEffect(() => { setQuery(searchParams.get('q') ?? '') }, [searchParams])
   const [sortKey, setSortKey]           = useState<SortKey>('updated_desc')
@@ -140,10 +143,42 @@ export default function ContactsPage() {
     }
   }, [activeDivisionId])
 
+  // 事業部を素早く切り替えたとき、古いレスポンスが後から届いて
+  // 別事業部の件数バッジを表示しないよう、リクエストの通し番号で破棄する
+  const dealCountsSeq = useRef(0)
+  const loadDealCounts = useCallback(async () => {
+    if (!activeDivisionId || !isSupabaseConfigured()) return
+    const seq = ++dealCountsSeq.current
+    try {
+      const deals = await fetchDealsByDivision(activeDivisionId)
+      if (dealCountsSeq.current !== seq) return
+      const counts: Record<string, number> = {}
+      for (const deal of deals) {
+        if (!deal.contact_id) continue
+        counts[deal.contact_id] = (counts[deal.contact_id] ?? 0) + 1
+      }
+      setDealCounts(counts)
+    } catch {
+      if (dealCountsSeq.current === seq) setDealCounts({})
+    }
+  }, [activeDivisionId])
+
   useEffect(() => {
     loadContacts()
+    loadDealCounts()
     setSelectedIds(new Set())
-  }, [loadContacts])
+  }, [loadContacts, loadDealCounts])
+
+  // デモモード：Zustandのローカル商談を事業部で集計
+  useEffect(() => {
+    if (isSupabaseConfigured() || !activeDivisionId) return
+    const counts: Record<string, number> = {}
+    for (const deal of localDeals) {
+      if (deal.division_id !== activeDivisionId || !deal.contact_id) continue
+      counts[deal.contact_id] = (counts[deal.contact_id] ?? 0) + 1
+    }
+    setDealCounts(counts)
+  }, [activeDivisionId, localDeals])
 
   useEffect(() => {
     if (!showSortMenu) return
@@ -759,6 +794,7 @@ export default function ContactsPage() {
           isReadOnly={!isOwnDivision}
           contactStatuses={contactStatuses}
           listStatuses={listStatuses}
+          dealCounts={dealCounts}
         />
       ) : viewMode === 'company' ? (
         <CompanyView
@@ -780,6 +816,7 @@ export default function ContactsPage() {
           isReadOnly={!isOwnDivision}
           contactStatuses={contactStatuses}
           listStatuses={listStatuses}
+          dealCounts={dealCounts}
         />
       )}
 
@@ -835,6 +872,19 @@ function StatusIcons({ contactId, contactStatuses, listStatuses }: { contactId: 
   )
 }
 
+function DealBadge({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 flex-shrink-0 text-xs bg-orange-50 text-orange-600 rounded-full px-1.5 py-0.5"
+      title={`商談${count}件`}
+    >
+      <Briefcase size={11} />
+      {count}
+    </span>
+  )
+}
+
 function AssigneeChip({ userId }: { userId?: string }) {
   if (!userId) return null
   const member = MOCK_TEAM_MEMBERS.find((m) => m.id === userId)
@@ -851,7 +901,7 @@ function AssigneeChip({ userId }: { userId?: string }) {
 
 // ─── List View ────────────────────────────────────────────────────────────────
 function ListView({
-  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses,
+  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses, dealCounts,
 }: {
   contacts: Contact[]
   selectedIds: Set<string>
@@ -860,6 +910,7 @@ function ListView({
   isReadOnly: boolean
   contactStatuses: ContactStatusMap
   listStatuses: Record<string, string[]>
+  dealCounts: Record<string, number>
 }) {
   return (
     <div className="space-y-2">
@@ -898,6 +949,7 @@ function ListView({
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-gray-800">{contact.name}</span>
                   <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} listStatuses={listStatuses} />
+                  <DealBadge count={dealCounts[contact.id] ?? 0} />
                   {isReadOnly && (
                     <span className="inline-flex items-center gap-1 text-xs text-gray-400">
                       <Lock size={10} /> 閲覧のみ
@@ -1094,7 +1146,7 @@ function CompanyView({
 
 // ─── Card View ────────────────────────────────────────────────────────────────
 function CardView({
-  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses,
+  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses, dealCounts,
 }: {
   contacts: Contact[]
   selectedIds: Set<string>
@@ -1103,6 +1155,7 @@ function CardView({
   isReadOnly: boolean
   contactStatuses: ContactStatusMap
   listStatuses: Record<string, string[]>
+  dealCounts: Record<string, number>
 }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1135,7 +1188,10 @@ function CardView({
                 {getInitials(contact.name)}
               </div>
               <div className="flex flex-col items-end gap-1.5">
-                <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} listStatuses={listStatuses} />
+                <div className="flex items-center gap-1.5">
+                  <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} listStatuses={listStatuses} />
+                  <DealBadge count={dealCounts[contact.id] ?? 0} />
+                </div>
                 {isReadOnly && (
                   <span className="inline-flex items-center gap-1 text-xs text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">
                     <Lock size={10} /> 閲覧のみ

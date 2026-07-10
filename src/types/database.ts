@@ -67,6 +67,8 @@ export interface PipelineStage {
   created_at: string
 }
 
+export type DealPriority = 'high' | 'medium' | 'low'
+
 export interface Deal {
   id: string
   contact_id?: string
@@ -78,6 +80,7 @@ export interface Deal {
   close_date?: string
   description?: string
   product_name?: string
+  priority?: DealPriority
   created_at: string
   updated_at: string
   // joined

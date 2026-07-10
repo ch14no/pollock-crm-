@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { ContactPicker } from '@/components/ui/ContactPicker'
+import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
+import type { DealPriority } from '@/types/database'
 import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS } from '@/lib/mock-data'
 import { hasTabs, stagesForTab, tabIdForStage } from '@/lib/pipeline-tabs'
@@ -19,7 +21,14 @@ interface DealFormState {
   stageId: string
   closeDate: string
   description: string
+  priority: DealPriority
 }
+
+const PRIORITY_OPTIONS: { value: DealPriority; label: string; activeClass: string }[] = [
+  { value: 'high',   label: '高', activeClass: 'bg-red-500 text-white border-red-500' },
+  { value: 'medium', label: '中', activeClass: 'bg-orange-500 text-white border-orange-500' },
+  { value: 'low',    label: '低', activeClass: 'bg-gray-400 text-white border-gray-400' },
+]
 
 const FALLBACK_STAGES = [
   { id: 'リード',       name: 'リード',       isWon: false },
@@ -53,7 +62,7 @@ export function DealModal() {
     : []
 
   const [form, setForm] = useState<DealFormState>({
-    title: '', contactId: '', amount: '', stageId: 'リード', closeDate: '', description: '',
+    title: '', contactId: '', amount: '', stageId: 'リード', closeDate: '', description: '', priority: 'medium',
   })
 
   // 指定した事業部・タブに紐づく「進行中」ステージ一覧（失注除く、受注絵文字付与、sortOrder順）。
@@ -87,6 +96,7 @@ export function DealModal() {
         stageId: d.stage_id,
         closeDate: d.close_date ? d.close_date.slice(0, 10) : '',
         description: d.description ?? '',
+        priority: d.priority ?? 'medium',
       })
       setAmountDisplay(d.amount > 0 ? d.amount.toLocaleString('ja-JP') : '')
       // 本番はDBのproduct_nameが真実源（nullは「未選択」の意味なので旧localStorage値で復活させない）。
@@ -106,6 +116,7 @@ export function DealModal() {
         stageId: dealModal.prefillStageId ?? initialStages[0]?.id ?? 'リード',
         closeDate: '',
         description: '',
+        priority: 'medium',
       })
       setAmountDisplay('')
       setSelectedProduct('')
@@ -142,6 +153,7 @@ export function DealModal() {
             closeDate: form.closeDate || null,
             description: form.description.trim() || null,
             productName: selectedProduct || null,
+            priority: form.priority,
           })
         }
         updateLocalDeal(dealModal.deal.id, {
@@ -151,6 +163,7 @@ export function DealModal() {
           close_date: form.closeDate || undefined,
           description: form.description.trim() || undefined,
           product_name: selectedProduct || undefined,
+          priority: form.priority,
           updated_at: now,
         })
         // デモモードのみ旧localStorage保存を維持（本番はdeals.product_nameが真実源）
@@ -173,6 +186,7 @@ export function DealModal() {
             closeDate: form.closeDate || undefined,
             description: form.description.trim() || undefined,
             productName: selectedProduct || undefined,
+            priority: form.priority,
           })
         }
         addDeal({
@@ -186,6 +200,7 @@ export function DealModal() {
           close_date: form.closeDate || undefined,
           description: form.description.trim() || undefined,
           product_name: selectedProduct || undefined,
+          priority: form.priority,
           created_at: now,
           updated_at: now,
           users: currentUser ?? undefined,
@@ -400,16 +415,38 @@ export function DealModal() {
           </div>
         </div>
 
+        {/* 優先度 */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">優先度</label>
+          <div className="flex gap-2">
+            {PRIORITY_OPTIONS.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, priority: p.value }))}
+                className={cn(
+                  'px-4 py-1.5 rounded-lg text-xs font-medium border-2 transition-all',
+                  form.priority === p.value
+                    ? p.activeClass
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300'
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* メモ */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">メモ・備考</label>
-          <textarea
+          <AutoGrowTextarea
             value={form.description}
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
             rows={3}
             placeholder="商談の背景、課題、ネクストアクションなど..."
             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
-              focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50 resize-none"
+              focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
           />
         </div>
 

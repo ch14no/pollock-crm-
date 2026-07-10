@@ -5,6 +5,7 @@ import { Phone, Mail, Users, FileText, CheckSquare, UserCircle, Zap, Target } fr
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { ContactPicker } from '@/components/ui/ContactPicker'
+import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { createActivity, upsertTaskMeta } from '@/lib/db/activities'
@@ -225,11 +226,11 @@ export function ActivityModal() {
         {/* メモ */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">メモ・内容</label>
-          <textarea value={form.memo}
+          <AutoGrowTextarea value={form.memo}
             onChange={(e) => setForm((f) => ({ ...f, memo: e.target.value }))}
             rows={3}
             placeholder={isTask ? '詳細や注意事項...' : '話した内容、確認事項、ネクストアクションなど...'}
-            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50 resize-none"
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
           />
         </div>
 

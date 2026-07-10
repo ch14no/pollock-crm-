@@ -42,6 +42,25 @@ const ESTIMATED_CARD_SIZE = 154
 const DEFAULT_OVERSCAN = 5
 const DRAG_ACTIVE_OVERSCAN = 30
 
+// 優先度の表示順（高→中→低）。未設定は「中」扱い
+const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 }
+
+function sortByPriority(list: Deal[]): Deal[] {
+  return [...list].sort(
+    (a, b) => (PRIORITY_RANK[a.priority ?? 'medium'] ?? 1) - (PRIORITY_RANK[b.priority ?? 'medium'] ?? 1)
+  )
+}
+
+// DATE型文字列（YYYY-MM-DD）をローカルタイムの日付として解釈し、今日からの残日数を返す。
+// new Date('YYYY-MM-DD') はUTC解釈になり、JSTの朝の時間帯に1日ずれるため使わない
+function daysUntilLocal(dateStr: string): number {
+  const [y, m, d] = dateStr.slice(0, 10).split('-').map(Number)
+  const target = new Date(y, m - 1, d)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return Math.round((target.getTime() - today.getTime()) / 86_400_000)
+}
+
 // 空のカラムでもドロップ可能にするラッパー
 function DroppableColumn({ stageId, isEmpty, children }: {
   stageId: string
@@ -70,10 +89,14 @@ function DroppableColumn({ stageId, isEmpty, children }: {
 }
 
 function DealCard({
-  deal, isDragging, readOnly, onEdit,
-}: { deal: Deal; isDragging?: boolean; readOnly?: boolean; onEdit?: (deal: Deal) => void }) {
+  deal, isDragging, readOnly, onEdit, stageDone,
+}: { deal: Deal; isDragging?: boolean; readOnly?: boolean; onEdit?: (deal: Deal) => void; stageDone?: boolean }) {
   const staleDays = getStaleDays(deal.updated_at)
   const isStale = staleDays >= 5
+
+  // クロージング予定日の接近・超過（受注/失注済みのカラムでは表示しない）
+  const daysUntilClose = deal.close_date ? daysUntilLocal(deal.close_date) : null
+  const showDeadlineAlert = !stageDone && daysUntilClose !== null && daysUntilClose <= 7
 
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: deal.id,
@@ -98,7 +121,8 @@ function DealCard({
       className={cn(
         'bg-white rounded-xl p-3 border shadow-sm transition-all duration-200',
         readOnly ? 'cursor-default' : 'cursor-grab active:cursor-grabbing hover:shadow-md hover:-translate-y-0.5',
-        isStale ? 'border-red-400' : 'border-gray-100'
+        isStale || (showDeadlineAlert && daysUntilClose !== null && daysUntilClose < 0)
+          ? 'border-red-400' : 'border-gray-100'
       )}
     >
       {isStale && (
@@ -107,18 +131,40 @@ function DealCard({
           <span className="text-xs text-red-500 font-medium">{staleDays}日遅延</span>
         </div>
       )}
-      <p className="text-sm font-medium text-gray-800 mb-1 line-clamp-2">{deal.title}</p>
+      <div className="flex items-start gap-1.5 mb-1">
+        {deal.priority === 'high' && (
+          <span className="flex-shrink-0 mt-0.5 text-[10px] font-bold text-red-600 bg-red-50 border border-red-200 rounded px-1 leading-4">高</span>
+        )}
+        {deal.priority === 'low' && (
+          <span className="flex-shrink-0 mt-0.5 text-[10px] font-bold text-gray-500 bg-gray-50 border border-gray-200 rounded px-1 leading-4">低</span>
+        )}
+        <p className="text-sm font-medium text-gray-800 line-clamp-2 flex-1">{deal.title}</p>
+      </div>
       {deal.contacts && (
-        <p className="text-xs text-gray-500 mb-2 truncate">
+        <p className="text-xs text-gray-500 mb-1 truncate">
           {deal.contacts.companies?.name ?? ''} / {deal.contacts.name}
         </p>
+      )}
+      {deal.description && (
+        <p className="text-xs text-gray-400 mb-2 line-clamp-2 whitespace-pre-wrap">{deal.description}</p>
       )}
       <div className="flex items-center justify-between">
         <span className="text-sm font-bold text-gray-700">{formatCurrency(deal.amount)}</span>
         {deal.close_date && (
-          <span className="text-xs text-gray-400">
-            {new Date(deal.close_date).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
-          </span>
+          showDeadlineAlert && daysUntilClose !== null ? (
+            <span className={cn(
+              'text-xs font-bold',
+              daysUntilClose < 0 ? 'text-red-600' : 'text-amber-600'
+            )}>
+              {daysUntilClose < 0
+                ? `期限超過 ${-daysUntilClose}日`
+                : daysUntilClose === 0 ? '本日期限' : `期限まで${daysUntilClose}日`}
+            </span>
+          ) : (
+            <span className="text-xs text-gray-400">
+              {new Date(deal.close_date).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
+            </span>
+          )
         )}
       </div>
       {assignee && (
@@ -219,6 +265,7 @@ function StageColumn({
                         isDragging={deal.id === activeId}
                         readOnly={readOnly}
                         onEdit={readOnly ? undefined : onEdit}
+                        stageDone={stage.won || stage.lost}
                       />
                     </div>
                   )
@@ -232,6 +279,7 @@ function StageColumn({
                   isDragging={deal.id === activeId}
                   readOnly={readOnly}
                   onEdit={readOnly ? undefined : onEdit}
+                  stageDone={stage.won || stage.lost}
                 />
               ))
             )}
@@ -380,6 +428,8 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
       if (map[d.stage_id]) map[d.stage_id].push(d)
       else if (map[stages[0]?.id ?? 'リード']) map[stages[0]?.id ?? 'リード'].push(d)
     })
+    // 各カラム内を優先度順（高→中→低）に整列。同順位は元の並び（最終更新の新しい順）を維持
+    Object.keys(map).forEach((k) => { map[k] = sortByPriority(map[k]) })
     return map
   }
 
@@ -441,7 +491,8 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
     setDealsByStage((prev) => {
       const next = { ...prev }
       next[fromStage] = next[fromStage].filter((d) => d.id !== deal.id)
-      next[toStage] = [...next[toStage], { ...deal, stage_id: toStage, updated_at: updatedAt }]
+      // 移動先カラムも優先度順を維持（末尾appendのままだと「高」が「低」の下に表示される）
+      next[toStage] = sortByPriority([...next[toStage], { ...deal, stage_id: toStage, updated_at: updatedAt }])
       return next
     })
     // DB 商談はSupabaseへ反映、ローカル商談はストアへ反映
