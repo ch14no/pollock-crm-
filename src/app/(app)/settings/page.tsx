@@ -23,6 +23,9 @@ import {
   createDivisionCustomField, updateDivisionCustomField, deleteDivisionCustomField,
   fetchDivisions, createDivision, updateDivision, deleteDivision, checkDivisionReferences,
 } from '@/lib/db/divisions'
+import {
+  fetchDivisionProductsData, addDivisionProduct, removeDivisionProduct, saveDivisionProductsEnabled,
+} from '@/lib/db/products'
 import type { User as UserType, Division } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -1307,19 +1310,68 @@ function ProductsPanel() {
   const products = divisionProducts[selectedDivId] ?? DEFAULT_DIVISION_PRODUCTS[selectedDivId] ?? []
   const enabled = divisionProductsEnabled[selectedDivId] ?? false
   const [newProduct, setNewProduct] = useState('')
+  // 010マイグレーション（division_products）適用済みか。未適用ならローカル保存にフォールバック
+  const [dbReady, setDbReady] = useState(!isSupabaseConfigured())
+  // 初回読み込みが終わるまで操作をブロック（読み込み前の追加が後から届いた
+  // フェッチ結果に上書きされて静かに消えるのを防ぐ）
+  const [productsLoading, setProductsLoading] = useState(isSupabaseConfigured())
+  const [saving, setSaving] = useState(false)
 
-  const handleAdd = () => {
+  // 事業部を切り替えたらDBから商品マスタを読み込む（真実源はDB）
+  useEffect(() => {
+    if (!selectedDivId || !isSupabaseConfigured()) return
+    setProductsLoading(true)
+    fetchDivisionProductsData(selectedDivId).then((data) => {
+      if (data) {
+        setDbReady(true)
+        setDivisionProducts(selectedDivId, data.products)
+        setDivisionProductsEnabled(selectedDivId, data.enabled)
+      } else {
+        setDbReady(false)
+      }
+    }).finally(() => setProductsLoading(false))
+  }, [selectedDivId]) // eslint-disable-line
+
+  const handleAdd = async () => {
     const trimmed = newProduct.trim()
     if (!trimmed) return
     if (products.includes(trimmed)) { toast.error('同じ商品名がすでに存在します'); return }
-    setDivisionProducts(selectedDivId, [...products, trimmed])
-    setNewProduct('')
-    toast.success(`「${trimmed}」を追加しました`)
+    setSaving(true)
+    try {
+      if (isSupabaseConfigured() && dbReady) {
+        await addDivisionProduct(selectedDivId, trimmed, products.length)
+      }
+      setDivisionProducts(selectedDivId, [...products, trimmed])
+      setNewProduct('')
+      toast.success(`「${trimmed}」を追加しました`)
+    } catch {
+      toast.error('商品の保存に失敗しました')
+    } finally { setSaving(false) }
   }
 
-  const handleToggleEnabled = () => {
-    setDivisionProductsEnabled(selectedDivId, !enabled)
-    toast.success(!enabled ? '商品選択を有効にしました' : '商品選択を無効にしました')
+  const handleRemove = async (name: string) => {
+    setSaving(true)
+    try {
+      if (isSupabaseConfigured() && dbReady) {
+        await removeDivisionProduct(selectedDivId, name)
+      }
+      setDivisionProducts(selectedDivId, products.filter((x) => x !== name))
+    } catch {
+      toast.error('商品の削除に失敗しました')
+    } finally { setSaving(false) }
+  }
+
+  const handleToggleEnabled = async () => {
+    const next = !enabled
+    try {
+      if (isSupabaseConfigured() && dbReady) {
+        await saveDivisionProductsEnabled(selectedDivId, next)
+      }
+      setDivisionProductsEnabled(selectedDivId, next)
+      toast.success(next ? '商品選択を有効にしました' : '商品選択を無効にしました')
+    } catch {
+      toast.error('設定の保存に失敗しました')
+    }
   }
 
   return (
@@ -1331,6 +1383,13 @@ function ProductsPanel() {
       </CardHeader>
       <CardBody>
         <p className="text-xs text-gray-500 mb-4">事業部ごとに商談登録画面で選択できる提案商品・サービスを管理します。</p>
+
+        {isSupabaseConfigured() && !dbReady && (
+          <div className="mb-4 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-800">
+            商品マスタのDBテーブル（010_products.sql）が未適用のため、この端末のローカル保存で動作しています。
+            他のユーザー・端末には共有されません。
+          </div>
+        )}
 
         <div className="mb-4">
           <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
@@ -1348,7 +1407,8 @@ function ProductsPanel() {
           </div>
           <button
             onClick={handleToggleEnabled}
-            className={cn('relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0',
+            disabled={productsLoading}
+            className={cn('relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 disabled:opacity-50',
               enabled ? 'bg-orange-500' : 'bg-gray-200')}
           >
             <span className={cn('inline-block h-4 w-4 rounded-full bg-white transition-transform',
@@ -1362,8 +1422,8 @@ function ProductsPanel() {
           {products.map((p) => (
             <div key={p} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
               <span className="flex-1 text-sm text-gray-700">{p}</span>
-              <button onClick={() => setDivisionProducts(selectedDivId, products.filter((x) => x !== p))}
-                className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
+              <button onClick={() => handleRemove(p)} disabled={saving || productsLoading}
+                className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50"><Trash2 size={13} /></button>
             </div>
           ))}
         </div>
@@ -1372,8 +1432,8 @@ function ProductsPanel() {
             onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
             placeholder="商品名を入力（例: assiST）"
             className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
-          <button onClick={handleAdd}
-            className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors">
+          <button onClick={handleAdd} disabled={saving || productsLoading}
+            className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50">
             <Plus size={13} />追加
           </button>
         </div>

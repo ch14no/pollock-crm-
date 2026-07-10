@@ -294,6 +294,7 @@ export default function ContactsPage() {
     if (!isSupabaseConfigured()) { toast.error('Supabase未接続'); return }
     setAutoTagRunning(true)
     let updated = 0
+    let failed = 0
     try {
       for (const contact of contactsWithAddress) {
         const addr = (contact.address || (contact.custom_attributes?.address as string) || '').toLowerCase()
@@ -310,9 +311,17 @@ export default function ContactsPage() {
           }
         }
         if (changed) {
-          await updateContact(contact.id, { tags: newTags })
-          updated++
+          // 1件の失敗（権限のない顧客等）で残りの一括処理を中断しない
+          try {
+            await updateContact(contact.id, { tags: newTags })
+            updated++
+          } catch {
+            failed++
+          }
         }
+      }
+      if (failed > 0) {
+        toast.error(`${failed}件の更新に失敗しました（編集権限のない顧客が含まれている可能性があります）`)
       }
       toast.success(`${updated}件のタグを更新しました`)
       setShowAutoTag(false)

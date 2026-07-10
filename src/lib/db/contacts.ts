@@ -92,11 +92,17 @@ export async function updateContact(id: string, updates: {
   position?: string | null; address?: string | null; department?: string | null
   notes?: string | null; tags?: string[]
 }): Promise<void> {
-  const { error } = await getSupabase()
+  // .select() を付けないと、RLSに拒否された0件更新でもエラーにならず
+  // 「保存できたように見えて実際は保存されていない」状態になるため、更新行を必ず検証する
+  const { data, error } = await getSupabase()
     .from('contacts')
     .update({ ...updates })
     .eq('id', id)
+    .select('id')
   if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('更新が保存されませんでした（編集権限がないか、対象が存在しません）')
+  }
 }
 
 export async function fetchContactsCustomValues(contactIds: string[]): Promise<Record<string, Record<string, string>>> {

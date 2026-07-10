@@ -89,7 +89,9 @@ export function DealModal() {
         description: d.description ?? '',
       })
       setAmountDisplay(d.amount > 0 ? d.amount.toLocaleString('ja-JP') : '')
-      setSelectedProduct(dealProducts[d.id] ?? '')
+      // 本番はDBのproduct_nameが真実源（nullは「未選択」の意味なので旧localStorage値で復活させない）。
+      // デモモードのみ旧localStorage保存分（dealProducts）を使う
+      setSelectedProduct(isSupabaseConfigured() ? (d.product_name ?? '') : (dealProducts[d.id] ?? ''))
     } else {
       // 新規作成時：ボードで現在表示中のタブをデフォルトにする
       const initialTabId = hasTabs(divisionTabs, activeDivisionId)
@@ -139,6 +141,7 @@ export function DealModal() {
             stageId: form.stageId,
             closeDate: form.closeDate || null,
             description: form.description.trim() || null,
+            productName: selectedProduct || null,
           })
         }
         updateLocalDeal(dealModal.deal.id, {
@@ -147,10 +150,14 @@ export function DealModal() {
           stage_id: form.stageId,
           close_date: form.closeDate || undefined,
           description: form.description.trim() || undefined,
+          product_name: selectedProduct || undefined,
           updated_at: now,
         })
-        if (selectedProduct) setDealProduct(dealModal.deal.id, selectedProduct)
-        else clearDealProduct(dealModal.deal.id)
+        // デモモードのみ旧localStorage保存を維持（本番はdeals.product_nameが真実源）
+        if (!isSupabaseConfigured()) {
+          if (selectedProduct) setDealProduct(dealModal.deal.id, selectedProduct)
+          else clearDealProduct(dealModal.deal.id)
+        }
         toast.success(`「${form.title}」を更新しました`)
       } else {
         // ── 新規作成 ──
@@ -165,6 +172,7 @@ export function DealModal() {
             stageId: form.stageId,
             closeDate: form.closeDate || undefined,
             description: form.description.trim() || undefined,
+            productName: selectedProduct || undefined,
           })
         }
         addDeal({
@@ -177,11 +185,12 @@ export function DealModal() {
           stage_id: form.stageId,
           close_date: form.closeDate || undefined,
           description: form.description.trim() || undefined,
+          product_name: selectedProduct || undefined,
           created_at: now,
           updated_at: now,
           users: currentUser ?? undefined,
         })
-        if (selectedProduct) setDealProduct(dealId, selectedProduct)
+        if (!isSupabaseConfigured() && selectedProduct) setDealProduct(dealId, selectedProduct)
         toast.success(`商談「${form.title}」を作成しました`)
       }
       closeDealModal()

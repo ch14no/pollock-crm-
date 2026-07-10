@@ -53,6 +53,15 @@ export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const { activeDivision, divisions, setActiveDivision, openTossupModal, currentUser, localTossups, tossupStatuses } = useAppStore()
+  const userOwnDivisionIds = useAppStore((s) => s.userOwnDivisionIds)
+
+  // 事業部セレクタは自分の所属事業部のみに制限する（super_adminは全事業部が
+  // userOwnDivisionIds に入るため全件表示）。所属未取得（デモモード・初期化中）は
+  // 従来通り全件表示にフォールバックする。
+  const selectableDivisions = useMemo(() => {
+    if (userOwnDivisionIds.length === 0) return divisions
+    return divisions.filter((d) => userOwnDivisionIds.includes(d.id))
+  }, [divisions, userOwnDivisionIds])
 
   const [dbUnreadCount, setDbUnreadCount] = useState(0)
   const [appsOpen, setAppsOpen] = useState(false)
@@ -127,14 +136,14 @@ export function Sidebar() {
           <select
             value={activeDivision?.id ?? ''}
             onChange={(e) => {
-              const div = divisions.find((d) => d.id === e.target.value)
+              const div = selectableDivisions.find((d) => d.id === e.target.value)
               if (div) setActiveDivision(div)
             }}
             className="w-full appearance-none pl-3 pr-8 py-2 text-sm font-medium text-gray-700
               bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2
               focus:ring-orange-500 focus:border-transparent cursor-pointer"
           >
-            {divisions.map((d) => (
+            {selectableDivisions.map((d) => (
               <option key={d.id} value={d.id}>{d.name}</option>
             ))}
           </select>

@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeft, CreditCard, UserPlus, CheckCircle2, AlertCircle,
   ChevronRight, RotateCw, X, Sparkles, MapPin, Phone, Mail,
-  Users, Building2, Globe, Home,
+  Users, Building2, Globe, Home, Camera, FolderOpen,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { LOCATIONS } from '@/lib/config'
@@ -134,6 +134,9 @@ export default function NewContactPage() {
   // Card images – separate refs to avoid reuse caching issue
   const frontRef = useRef<HTMLInputElement>(null)
   const backRef  = useRef<HTMLInputElement>(null)
+  // カメラ起動用（capture="environment"）。スマホでは背面カメラが直接起動する
+  const frontCameraRef = useRef<HTMLInputElement>(null)
+  const backCameraRef  = useRef<HTMLInputElement>(null)
   const [frontImage, setFrontImage] = useState<string | null>(null)
   const [backImage,  setBackImage]  = useState<string | null>(null)
   const [isRotating, setIsRotating] = useState(false)
@@ -410,9 +413,9 @@ export default function NewContactPage() {
             活動を記録する
           </Button>
         </div>
-        <div className="flex gap-3 justify-center">
-          <Button variant="secondary" onClick={() => router.push('/contacts')}>顧客一覧へ</Button>
-          <Button onClick={handleContinue}>続けて登録</Button>
+        <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <Button variant="secondary" className="min-h-11" onClick={() => router.push('/contacts')}>顧客一覧へ</Button>
+          <Button className="min-h-11" onClick={handleContinue}>続けて登録</Button>
         </div>
       </div>
     )
@@ -455,7 +458,7 @@ export default function NewContactPage() {
                 key={side}
                 onClick={() => setActiveCard(side)}
                 className={cn(
-                  'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors relative',
+                  'px-4 py-2.5 sm:py-1.5 rounded-lg text-sm font-medium transition-colors relative',
                   activeCard === side ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'
                 )}
               >
@@ -481,7 +484,7 @@ export default function NewContactPage() {
               isDragOver ? 'border-orange-500 bg-orange-50 scale-[1.01]' :
               (activeCard === 'front' ? frontImage : backImage)
                 ? 'border-green-300 p-2'
-                : 'border-gray-200 p-12 hover:border-orange-400 hover:bg-orange-50/20'
+                : 'border-gray-200 p-6 sm:p-12 hover:border-orange-400 hover:bg-orange-50/20'
             )}
             style={{ aspectRatio: '1.586 / 1', maxHeight: 300 }}
           >
@@ -504,9 +507,10 @@ export default function NewContactPage() {
                     onClick={(e) => { e.stopPropagation(); rotateActiveImage() }}
                     disabled={isRotating}
                     title="90度回転"
-                    className="p-1.5 bg-white/90 rounded-full shadow-md hover:bg-white disabled:opacity-50"
+                    aria-label="画像を90度回転"
+                    className="w-11 h-11 flex items-center justify-center bg-white/90 rounded-full shadow-md hover:bg-white disabled:opacity-50"
                   >
-                    <RotateCw size={14} className={cn('text-gray-600', isRotating && 'animate-spin')} />
+                    <RotateCw size={16} className={cn('text-gray-600', isRotating && 'animate-spin')} />
                   </button>
                   <button
                     type="button"
@@ -515,9 +519,10 @@ export default function NewContactPage() {
                       activeCard === 'front' ? setFrontImage(null) : setBackImage(null)
                     }}
                     title="削除"
-                    className="p-1.5 bg-white/90 rounded-full shadow-md hover:bg-white"
+                    aria-label="画像を削除"
+                    className="w-11 h-11 flex items-center justify-center bg-white/90 rounded-full shadow-md hover:bg-white"
                   >
-                    <X size={14} className="text-gray-600" />
+                    <X size={16} className="text-gray-600" />
                   </button>
                 </div>
               </>
@@ -526,11 +531,39 @@ export default function NewContactPage() {
                 <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center mb-3">
                   <CreditCard size={26} className="text-gray-400" />
                 </div>
-                <p className="text-gray-600 font-medium mb-0.5">
+                <p className="text-gray-600 font-medium mb-0.5 text-center">
                   {activeCard === 'front' ? '名刺の表面をアップロード' : '名刺の裏面をアップロード（任意）'}
                 </p>
-                <p className="text-xs text-gray-400">ドラッグ＆ドロップ、またはタップして選択</p>
-                <p className="text-xs text-gray-300 mt-1">JPG / PNG / HEIC / 最大10MB</p>
+                <p className="text-xs text-gray-400 hidden sm:block">ドラッグ＆ドロップ、またはタップして選択</p>
+                <p className="text-xs text-gray-300 mt-1 mb-4">JPG / PNG / HEIC / 最大10MB</p>
+
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto px-4 sm:px-0">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="w-full sm:w-auto min-h-11"
+                    icon={<Camera size={15} />}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      ;(activeCard === 'front' ? frontCameraRef : backCameraRef).current?.click()
+                    }}
+                  >
+                    カメラで撮影
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="w-full sm:w-auto min-h-11"
+                    icon={<FolderOpen size={15} />}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      ;(activeCard === 'front' ? frontRef : backRef).current?.click()
+                    }}
+                  >
+                    ファイルを選択
+                  </Button>
+                </div>
               </>
             )}
           </div>
@@ -540,15 +573,20 @@ export default function NewContactPage() {
             onChange={(e) => e.target.files?.[0] && loadImage(e.target.files[0], 'front')} />
           <input ref={backRef}  type="file" accept="image/*" className="hidden"
             onChange={(e) => e.target.files?.[0] && loadImage(e.target.files[0], 'back')} />
+          {/* カメラ起動用（capture="environment"）。PCでは無視され通常のファイル選択になる */}
+          <input ref={frontCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+            onChange={(e) => e.target.files?.[0] && loadImage(e.target.files[0], 'front')} />
+          <input ref={backCameraRef}  type="file" accept="image/*" capture="environment" className="hidden"
+            onChange={(e) => e.target.files?.[0] && loadImage(e.target.files[0], 'back')} />
 
           <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700">
             <span>💡</span>
             <span>名刺は明るい場所で水平に撮影すると読み取り精度が上がります。向きが横向きの場合は右上の回転ボタンで直せます。裏面に住所や別連絡先がある場合は追加すると自動でマージされます。</span>
           </div>
 
-          <div className="flex justify-between">
-            <Button variant="secondary" onClick={() => { setFlow(null); setStep('select') }}>戻る</Button>
-            <Button onClick={startOcr} disabled={!frontImage} icon={<Sparkles size={15} />}>
+          <div className="flex justify-between gap-2">
+            <Button variant="secondary" className="min-h-11" onClick={() => { setFlow(null); setStep('select') }}>戻る</Button>
+            <Button className="min-h-11" onClick={startOcr} disabled={!frontImage} icon={<Sparkles size={15} />}>
               AIで読み取る
             </Button>
           </div>
@@ -622,18 +660,24 @@ export default function NewContactPage() {
                 const Ico = cfg.icon
                 const isEdited = fields[f.key] !== f.value
                 return (
-                  <div key={f.key} className="flex items-center gap-3 px-4 py-2.5">
-                    <span className="w-14 text-xs text-gray-400 font-medium flex-shrink-0">{f.label}</span>
+                  <div key={f.key} className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 px-4 py-2.5">
+                    <div className="flex items-center justify-between gap-2 sm:contents">
+                      <span className="text-xs text-gray-400 font-medium sm:w-14 sm:flex-shrink-0">{f.label}</span>
+                      <div className={cn('sm:hidden flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border flex-shrink-0', cfg.bg)}>
+                        <Ico size={10} className={cfg.text} />
+                        <span className={cfg.text}>{cfg.label}</span>
+                      </div>
+                    </div>
                     <input
                       type="text"
                       value={fields[f.key]}
                       onChange={(e) => setFields((p) => ({ ...p, [f.key]: e.target.value }))}
                       className={cn(
-                        'flex-1 px-2.5 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500',
+                        'flex-1 min-w-0 px-2.5 py-2 sm:py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500',
                         isEdited ? 'border-orange-400 bg-orange-50' : 'border-gray-200 bg-gray-50'
                       )}
                     />
-                    <div className={cn('flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border flex-shrink-0', cfg.bg)}>
+                    <div className={cn('hidden sm:flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border flex-shrink-0', cfg.bg)}>
                       <Ico size={10} className={cfg.text} />
                       <span className={cfg.text}>{cfg.label}</span>
                     </div>
@@ -643,9 +687,9 @@ export default function NewContactPage() {
             </div>
           </div>
 
-          <div className="flex justify-between">
-            <Button variant="secondary" onClick={() => setStep('upload')}>戻る</Button>
-            <Button onClick={handleNextFromReview}>次へ：取得状況</Button>
+          <div className="flex justify-between gap-2">
+            <Button variant="secondary" className="min-h-11" onClick={() => setStep('upload')}>戻る</Button>
+            <Button className="min-h-11" onClick={handleNextFromReview}>次へ：取得状況</Button>
           </div>
         </div>
       )}
@@ -703,16 +747,16 @@ export default function NewContactPage() {
                         }
                       />
                     </div>
-                    {error && <p className="ml-19 text-xs text-red-500 mt-1 pl-20">{error}</p>}
+                    {error && <p className="text-xs text-red-500 mt-1 pl-[76px]">{error}</p>}
                   </div>
                 )
               })}
             </div>
           </div>
 
-          <div className="flex justify-between">
-            <Button variant="secondary" onClick={() => { setFlow(null); setStep('select') }}>戻る</Button>
-            <Button onClick={handleNextFromManualFields}>次へ：取得状況</Button>
+          <div className="flex justify-between gap-2">
+            <Button variant="secondary" className="min-h-11" onClick={() => { setFlow(null); setStep('select') }}>戻る</Button>
+            <Button className="min-h-11" onClick={handleNextFromManualFields}>次へ：取得状況</Button>
           </div>
         </div>
       )}
@@ -789,9 +833,9 @@ export default function NewContactPage() {
             </div>
           </div>
 
-          <div className="flex justify-between">
-            <Button variant="secondary" onClick={() => setStep(flow === 'card' ? 'review' : 'manual_fields')}>戻る</Button>
-            <Button onClick={() => setStep('confirm')}>次へ：確認</Button>
+          <div className="flex justify-between gap-2">
+            <Button variant="secondary" className="min-h-11" onClick={() => setStep(flow === 'card' ? 'review' : 'manual_fields')}>戻る</Button>
+            <Button className="min-h-11" onClick={() => setStep('confirm')}>次へ：確認</Button>
           </div>
         </div>
       )}
@@ -824,18 +868,18 @@ export default function NewContactPage() {
           {/* Preview */}
           <div className="bg-white border border-gray-100 rounded-2xl p-5">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-4">登録内容プレビュー</p>
-            <div className="flex items-start gap-4 mb-4">
-              <div className="w-14 h-14 rounded-full bg-orange-100 flex items-center justify-center
+            <div className="flex items-start gap-3 sm:gap-4 mb-4">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-orange-100 flex items-center justify-center
                 text-orange-600 font-black text-lg flex-shrink-0">
                 {fields.name ? getInitials(fields.name) : '?'}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-lg font-bold text-gray-800">{fields.name || '（未入力）'}</p>
-                {fields.position && <p className="text-sm text-gray-500">{fields.position}</p>}
-                <p className="text-sm font-medium text-gray-600">{fields.company || '（未入力）'}</p>
+                <p className="text-lg font-bold text-gray-800 truncate">{fields.name || '（未入力）'}</p>
+                {fields.position && <p className="text-sm text-gray-500 truncate">{fields.position}</p>}
+                <p className="text-sm font-medium text-gray-600 truncate">{fields.company || '（未入力）'}</p>
               </div>
               {flow === 'card' && frontImage && (
-                <img src={frontImage} alt="" className="h-14 rounded-lg object-cover border border-gray-200 opacity-80 ml-auto" />
+                <img src={frontImage} alt="" className="h-12 sm:h-14 rounded-lg object-cover border border-gray-200 opacity-80 ml-auto flex-shrink-0" />
               )}
             </div>
 
@@ -857,9 +901,9 @@ export default function NewContactPage() {
             </div>
           </div>
 
-          <div className="flex justify-between">
-            <Button variant="secondary" onClick={() => setStep('meta')}>戻って修正</Button>
-            <Button loading={saving} onClick={handleSave} icon={<CheckCircle2 size={15} />}>
+          <div className="flex justify-between gap-2">
+            <Button variant="secondary" className="min-h-11" onClick={() => setStep('meta')}>戻って修正</Button>
+            <Button className="min-h-11" loading={saving} onClick={handleSave} icon={<CheckCircle2 size={15} />}>
               登録する
             </Button>
           </div>

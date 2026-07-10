@@ -341,7 +341,12 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
 
   // 事業部内パイプラインタブ（任意機能）。タブが1件も無い事業部は従来通り全ステージを表示する。
   const tabs = activeDivisionId ? (divisionTabs[activeDivisionId] ?? []) : []
-  const currentTabId = activeDivisionId ? (activeTabId[activeDivisionId] ?? tabs[0]?.id ?? null) : null
+  // 選択中タブIDが現在のタブ一覧に存在しない（タブ削除・別データの残骸）場合は先頭タブへフォールバックし、
+  // 「どのタブにも属さない空ボード」が表示されるのを防ぐ
+  const storedTabId = activeDivisionId ? (activeTabId[activeDivisionId] ?? null) : null
+  const currentTabId = storedTabId && tabs.some((t) => t.id === storedTabId)
+    ? storedTabId
+    : (tabs[0]?.id ?? null)
 
   // 事業部別ステージ（ストア上書き → デフォルト → フォールバック）
   // 参照の安定性が StagePositionIndicator の IntersectionObserver 再セットアップ判定に
@@ -364,6 +369,9 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
     const map: Record<string, Deal[]> = {}
     stages.forEach((s) => { map[s.id] = [] })
     deals.forEach((d) => {
+      // 他事業部の商談は表示しない。事業部切替直後に前事業部のデータが渡ってきた場合、
+      // ステージ不一致のフォールバックで先頭カラムに紛れ込んでいたのを防ぐ
+      if (activeDivisionId && d.division_id !== activeDivisionId) return
       // タブがある事業部では、選択中のタブに属するステージの商談のみを対象にする
       if (tabs.length > 0) {
         const rawStages = divisionStages[activeDivisionId ?? ''] ?? []

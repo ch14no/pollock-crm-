@@ -269,7 +269,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         // 更新モード: 非空の項目だけ上書き
         if (!isSupabaseConfigured()) { updated++; await new Promise((r) => setTimeout(r, 30)); continue }
         try {
-          const tags = tagsRaw ? tagsRaw.split('|').map((t) => t.trim()).filter(Boolean) : []
+          const tags = tagsRaw ? tagsRaw.split(/[|,、]/).map((t) => t.trim()).filter(Boolean) : []
           await updateContact(existingId, {
             ...(phone      && { phone }),
             ...(position   && { position }),
@@ -293,7 +293,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
 
       try {
         const companyId = company ? (await findOrCreateCompany(company)) ?? undefined : undefined
-        const tags = tagsRaw ? tagsRaw.split('|').map((t) => t.trim()).filter(Boolean) : []
+        const tags = tagsRaw ? tagsRaw.split(/[|,、]/).map((t) => t.trim()).filter(Boolean) : []
 
         const contact = await createContact({
           divisionId: targetDivisionId, name,

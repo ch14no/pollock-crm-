@@ -9,6 +9,7 @@ import { formatCurrency } from '@/lib/utils'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchDealsByDivision } from '@/lib/db/deals'
 import type { Deal } from '@/types/database'
+import toast from 'react-hot-toast'
 
 export default function DealsPage() {
   const activeDivisionId = useAppStore((s) => s.activeDivisionId)
@@ -22,21 +23,35 @@ export default function DealsPage() {
   const [loading, setLoading] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const prevModalOpen = useRef(false)
+  // リクエストの通し番号。事業部切替や連続リロードで古いレスポンスが
+  // 後から届いて最新の表示を上書きするのを防ぐ（同一事業部への連続リクエストも区別できる）
+  const requestSeq = useRef(0)
 
   const loadDeals = async () => {
-    if (!activeDivisionId || !isSupabaseConfigured()) return
+    const divId = activeDivisionId
+    if (!divId || !isSupabaseConfigured()) return
+    const seq = ++requestSeq.current
     setLoading(true)
     try {
-      const data = await fetchDealsByDivision(activeDivisionId)
+      const data = await fetchDealsByDivision(divId)
+      if (requestSeq.current !== seq) return // 古いレスポンスは破棄
       setDbDeals(data)
       setReloadKey((k) => k + 1) // DB取得完了後に再マウントして最新データを反映
+    } catch {
+      if (requestSeq.current === seq) {
+        toast.error('商談の読み込みに失敗しました。再読み込みしてください')
+      }
     } finally {
-      setLoading(false)
+      if (requestSeq.current === seq) setLoading(false)
     }
   }
 
-  // 事業部変更時に再取得
-  useEffect(() => { loadDeals() }, [activeDivisionId]) // eslint-disable-line
+  // 事業部変更時に再取得。前事業部の商談を即座にクリアし、
+  // 取得完了までの間に他事業部のカードが新しいボードへ紛れ込むのを防ぐ
+  useEffect(() => {
+    setDbDeals([])
+    loadDeals()
+  }, [activeDivisionId]) // eslint-disable-line
 
   // モーダルが閉じたタイミングで再取得（追加・編集・失注後の反映）
   useEffect(() => {
@@ -48,10 +63,12 @@ export default function DealsPage() {
   }, [dealModalIsOpen]) // eslint-disable-line
 
   // localDeals の編集を dbDeals に即時パッチ、かつ DB未取得の新規商談も表示
+  // dbDeals は念のため現在の事業部のものだけに絞る（切替直後の残骸対策の二重防御）
+  const scopedDbDeals = dbDeals.filter((d) => d.division_id === activeDivisionId)
   const divisionDeals: Deal[] = isSupabaseConfigured()
     ? [
-        ...dbDeals.map((d) => { const p = localDeals.find((l) => l.id === d.id); return p ? { ...d, ...p } : d }),
-        ...localDeals.filter((l) => l.division_id === activeDivisionId && !dbDeals.some((d) => d.id === l.id)),
+        ...scopedDbDeals.map((d) => { const p = localDeals.find((l) => l.id === d.id); return p ? { ...d, ...p } : d }),
+        ...localDeals.filter((l) => l.division_id === activeDivisionId && !scopedDbDeals.some((d) => d.id === l.id)),
       ]
     : localDeals.filter((d) => d.division_id === activeDivisionId)
 

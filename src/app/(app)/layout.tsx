@@ -9,11 +9,51 @@ import { TossupModal } from '@/components/tossup/TossupModal'
 import { ActivityModal } from '@/components/activities/ActivityModal'
 import { DealModal } from '@/components/deals/DealModal'
 import { useAppStore } from '@/store/appStore'
-import { getSupabase } from '@/lib/db/client'
-import { fetchDivisions, fetchUserDivisions } from '@/lib/db/divisions'
+import { getSupabase, isSupabaseConfigured } from '@/lib/db/client'
+import {
+  fetchDivisions, fetchUserDivisions,
+  fetchDivisionStagesMapped, fetchDivisionTabsMapped, fetchDivisionCustomFields,
+} from '@/lib/db/divisions'
+import { fetchDivisionProductsData } from '@/lib/db/products'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { setDivisions, setCurrentUser, setUserOwnDivisions, setActiveDivision, initialized } = useAppStore()
+  const activeDivisionId = useAppStore((s) => s.activeDivisionId)
+  const setDivisionStages = useAppStore((s) => s.setDivisionStages)
+  const setDivisionTabs = useAppStore((s) => s.setDivisionTabs)
+  const setDivisionCustomFields = useAppStore((s) => s.setDivisionCustomFields)
+  const setDivisionProducts = useAppStore((s) => s.setDivisionProducts)
+  const setDivisionProductsEnabled = useAppStore((s) => s.setDivisionProductsEnabled)
+
+  // 閲覧中の事業部が変わるたびに、その事業部のマスタ（ステージ・タブ・カスタム項目・商品）を
+  // DBからストアへ同期する。従来は設定画面を開いた端末のlocalStorageにしか入らず、
+  // 他ユーザーのカンバンが古いステージ定義やフォールバック表示のままになる原因だった。
+  useEffect(() => {
+    if (!activeDivisionId || !isSupabaseConfigured()) return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const [stages, tabs, fields, productsData] = await Promise.all([
+          fetchDivisionStagesMapped(activeDivisionId),
+          fetchDivisionTabsMapped(activeDivisionId),
+          fetchDivisionCustomFields(activeDivisionId),
+          fetchDivisionProductsData(activeDivisionId),
+        ])
+        if (cancelled) return
+        setDivisionStages(activeDivisionId, stages)
+        setDivisionTabs(activeDivisionId, tabs)
+        setDivisionCustomFields(activeDivisionId, fields)
+        if (productsData) {
+          setDivisionProducts(activeDivisionId, productsData.products)
+          setDivisionProductsEnabled(activeDivisionId, productsData.enabled)
+        }
+      } catch {
+        // 取得失敗時は既存のローカルキャッシュ表示を維持する（画面を壊さない）
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [activeDivisionId, setDivisionStages, setDivisionTabs, setDivisionCustomFields, setDivisionProducts, setDivisionProductsEnabled])
 
   useEffect(() => {
     const supabase = getSupabase()

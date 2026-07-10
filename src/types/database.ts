@@ -77,6 +77,7 @@ export interface Deal {
   stage_id: string
   close_date?: string
   description?: string
+  product_name?: string
   created_at: string
   updated_at: string
   // joined

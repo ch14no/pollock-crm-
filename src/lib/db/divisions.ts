@@ -1,7 +1,7 @@
 import { getSupabase } from './client'
 import { createClient } from '@/lib/supabase/client'
 import type { Division } from '@/types/database'
-import type { DivisionCustomField } from '@/store/appStore'
+import type { DivisionCustomField, DivisionStage, PipelineTab } from '@/store/appStore'
 
 async function getAuthToken(): Promise<string | null> {
   try {
@@ -133,6 +133,23 @@ export async function upsertPipelineStages(
     stages.map((s) => ({ division_id: divisionId, name: s.name, sort_order: s.sort_order, is_won: s.is_won, is_lost: s.is_lost }))
   )
   if (error) throw error
+}
+
+// ストアの型に変換済みのステージ一覧（設定画面以外の画面からも共通で使う）
+export async function fetchDivisionStagesMapped(divisionId: string): Promise<DivisionStage[]> {
+  const raw = await fetchPipelineStages(divisionId) as {
+    id: string; name: string; sort_order: number; is_won: boolean; is_lost: boolean; tab_id: string | null
+  }[]
+  return raw.map((s) => ({
+    id: s.id, name: s.name, sortOrder: s.sort_order, isWon: s.is_won, isLost: s.is_lost, tabId: s.tab_id ?? null,
+  }))
+}
+
+export async function fetchDivisionTabsMapped(divisionId: string): Promise<PipelineTab[]> {
+  const raw = await fetchPipelineTabs(divisionId) as {
+    id: string; division_id: string; name: string; sort_order: number
+  }[]
+  return raw.map((r) => ({ id: r.id, divisionId: r.division_id, name: r.name, sortOrder: r.sort_order }))
 }
 
 export async function fetchPipelineTabs(divisionId: string) {

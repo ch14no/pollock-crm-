@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import { MOCK_DEALS, DEFAULT_DIVISION_CUSTOM_FIELDS } from '@/lib/mock-data'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchContactById, updateContact, fetchContactCustomValues } from '@/lib/db/contacts'
+import { fetchContactById, updateContact, fetchContactCustomValues, upsertContactCustomValue } from '@/lib/db/contacts'
 import { fetchActivitiesByTarget, updateActivityStatus, updateActivityFields } from '@/lib/db/activities'
 import { fetchDealsByContact } from '@/lib/db/deals'
 import type { Contact, Activity, Deal } from '@/types/database'
@@ -18,9 +18,10 @@ import { getLocationConfig, sortTags } from '@/lib/config'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { cn, formatDate, formatRelativeTime, getInitials, formatCurrency } from '@/lib/utils'
-import { useAppStore, selectIsOwnDivision } from '@/store/appStore'
+import { useAppStore } from '@/store/appStore'
 import { STATUS_CONFIG } from '@/lib/contactStatus'
 import type { ActivityType } from '@/types/database'
+import toast from 'react-hot-toast'
 
 // ボタン用のスタイルマップ（詳細ページ専用）
 const BUTTON_STYLE: Record<string, { activeClass: string; inactiveClass: string }> = {
@@ -69,7 +70,8 @@ export default function ContactDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const { openTossupModal, openActivityModal, openDealModal } = useAppStore()
-  const isOwnDivision  = useAppStore(selectIsOwnDivision)
+  const userOwnDivisionIds = useAppStore((s) => s.userOwnDivisionIds)
+  const divisions = useAppStore((s) => s.divisions)
   const activeDivision = useAppStore((s) => s.activeDivision)
   const divisionStages = useAppStore((s) => s.divisionStages)
   const activityModal  = useAppStore((s) => s.activityModal)
@@ -134,6 +136,13 @@ export default function ContactDetailPage() {
   }, [dealModal.isOpen]) // eslint-disable-line
 
   const contact: Contact | null = dbContact
+
+  // 編集可否は「現在閲覧中の事業部タブ」ではなく「この顧客の担当事業部」への所属で判定する。
+  // タブがズレた状態で編集UIが出て、RLSに拒否され保存が無音で失敗する問題の対策。
+  const isOwnDivision = contact ? userOwnDivisionIds.includes(contact.division_id) : false
+  const contactDivisionName = contact
+    ? (divisions.find((d) => d.id === contact.division_id)?.name ?? activeDivision?.name ?? '担当事業部')
+    : ''
 
   // 事業部別フィールド定義
   const divFields = useMemo(() => {
@@ -208,6 +217,7 @@ export default function ContactDetailPage() {
       notes: infoForm.notes.trim() || null,
       tags: infoForm.tags,
     }
+    const prevEdit = localContactEdits[id]
     setLocalContactEdit(id, {
       name: updates.name,
       position: updates.position ?? undefined,
@@ -219,9 +229,30 @@ export default function ContactDetailPage() {
       tags: updates.tags,
     })
     if (isSupabaseConfigured()) {
-      await updateContact(id, updates).catch(() => {})
+      try {
+        await updateContact(id, updates)
+        toast.success('顧客情報を保存しました')
+      } catch {
+        // 楽観的更新をロールバックし、保存されたように見えて実際は未保存の状態を防ぐ
+        setLocalContactEdit(id, prevEdit ?? {})
+        toast.error('保存に失敗しました。編集権限とネットワークを確認してください')
+        return
+      }
     }
     setEditingInfo(false)
+  }
+
+  // カスタムフィールド値をDBへ保存する（ローカルStoreだけに残って他端末に反映されない問題の対策）
+  const persistCustomValue = (fieldId: string, value: string) => {
+    if (!isSupabaseConfigured()) return
+    upsertContactCustomValue(id, fieldId, value).catch(async () => {
+      toast.error('カスタム項目の保存に失敗しました。編集権限とネットワークを確認してください')
+      // DB上の実値へ巻き戻し、「保存されたように見えて未保存」の表示を残さない
+      try {
+        const vals = await fetchContactCustomValues(id)
+        setContactCustomValue(id, fieldId, vals[fieldId] ?? '')
+      } catch { /* 再取得も失敗した場合は表示は維持（次回ロードで解消） */ }
+    })
   }
 
   const addTag = (tag: string) => {
@@ -292,8 +323,8 @@ export default function ContactDetailPage() {
         <div className="flex items-center gap-2 px-4 py-3 mb-4 bg-yellow-50 border border-yellow-200 rounded-xl text-sm text-yellow-800">
           <Lock size={15} className="flex-shrink-0 text-yellow-600" />
           <span>
-            <strong>{activeDivision?.name}</strong> の顧客を閲覧中です。
-            情報の編集・追加は担当事業部のみ可能です。
+            <strong>{contactDivisionName}</strong> の顧客を閲覧中です。
+            情報の編集・追加は担当事業部のメンバーのみ可能です。
           </span>
         </div>
       )}
@@ -522,7 +553,10 @@ export default function ContactDetailPage() {
                           field.fieldType === 'select' ? (
                             <select
                               value={val}
-                              onChange={(e) => setContactCustomValue(id, field.id, e.target.value)}
+                              onChange={(e) => {
+                                setContactCustomValue(id, field.id, e.target.value)
+                                persistCustomValue(field.id, e.target.value)
+                              }}
                               className="w-full px-2 py-1 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
                             >
                               <option value="">未選択</option>
@@ -535,6 +569,7 @@ export default function ContactDetailPage() {
                               type={field.fieldType === 'number' ? 'number' : 'text'}
                               value={val}
                               onChange={(e) => setContactCustomValue(id, field.id, e.target.value)}
+                              onBlur={(e) => persistCustomValue(field.id, e.target.value)}
                               placeholder={`${field.label}を入力`}
                               className="w-full px-2 py-1 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
                             />
