@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { FileText, ExternalLink, Plus, Trash2 } from 'lucide-react'
 import {
   fetchDealDocuments,
@@ -29,7 +29,8 @@ interface DocumentFormState {
 }
 
 function isHttpUrl(value: string): boolean {
-  return /^https?:\/\//.test(value.trim())
+  // モバイルの自動大文字化（HTTPS://...）も有効なURLとして受け付ける
+  return /^https?:\/\//i.test(value.trim())
 }
 
 export function DealDocumentsSection({ dealId, divisionId }: DealDocumentsSectionProps) {
@@ -43,20 +44,24 @@ export function DealDocumentsSection({ dealId, divisionId }: DealDocumentsSectio
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<DocumentFormState>({ docType: '', name: '', url: '' })
 
+  // 連続操作や商談切替時に古いレスポンスが新しい表示を上書きしないよう通し番号で破棄する
+  const loadSeq = useRef(0)
   const loadData = useCallback(async () => {
+    const seq = ++loadSeq.current
     try {
       const [docs, types] = await Promise.all([
         fetchDealDocuments(dealId),
         fetchDivisionDocTypes(divisionId),
       ])
+      if (loadSeq.current !== seq) return
       setDocuments(docs)
       setDocTypes(types.length > 0 ? types : DEFAULT_DOC_TYPES)
       setVisible(true)
     } catch {
       // 013マイグレーション未適用など。エラーは画面に出さずセクション自体を隠す
-      setVisible(false)
+      if (loadSeq.current === seq) setVisible(false)
     } finally {
-      setLoaded(true)
+      if (loadSeq.current === seq) setLoaded(true)
     }
   }, [dealId, divisionId])
 
@@ -76,11 +81,15 @@ export function DealDocumentsSection({ dealId, divisionId }: DealDocumentsSectio
   }, [pinnedTypes, documents])
 
   const otherDocuments = useMemo(() => {
-    const pinnedNames = new Set(pinnedTypes.map((t) => t.name))
+    // 常設スロットに「表示されている資料」だけを除外する。カテゴリ名で丸ごと除外すると、
+    // 同じ常設カテゴリに2件以上登録された場合に2件目以降がどこにも表示されなくなる
+    const shownInSlots = new Set(
+      pinnedSlots.map((s) => s.document?.id).filter((id): id is string => !!id)
+    )
     return documents
-      .filter((d) => !pinnedNames.has(d.doc_type))
+      .filter((d) => !shownInSlots.has(d.id))
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-  }, [documents, pinnedTypes])
+  }, [documents, pinnedSlots])
 
   const openFormWithType = useCallback((docType: string) => {
     setForm({ docType, name: '', url: '' })
@@ -106,7 +115,7 @@ export function DealDocumentsSection({ dealId, divisionId }: DealDocumentsSectio
       await createDealDocument({
         dealId,
         divisionId,
-        docType: form.docType || DEFAULT_DOC_TYPES[0].name,
+        docType: form.docType || docTypes[0]?.name || 'その他',
         name: form.name.trim(),
         url: form.url.trim(),
         createdBy: currentUser?.id,
@@ -259,6 +268,7 @@ export function DealDocumentsSection({ dealId, divisionId }: DealDocumentsSectio
               <input
                 id="deal-doc-name"
                 type="text"
+                maxLength={255}
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 placeholder="例: ノンネームシート"
@@ -294,7 +304,6 @@ export function DealDocumentsSection({ dealId, divisionId }: DealDocumentsSectio
               type="button"
               onClick={() => setFormOpen(false)}
               disabled={saving}
-              aria-label="資料追加フォームを閉じる"
               className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
             >
               キャンセル

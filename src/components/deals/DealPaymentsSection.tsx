@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Banknote, Plus, Trash2 } from 'lucide-react'
 import {
   fetchDealPayments, createDealPayment, updateDealPayment, deleteDealPayment,
@@ -52,15 +52,20 @@ export function DealPaymentsSection({ dealId, divisionId }: DealPaymentsSectionP
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<PaymentFormState>(EMPTY_FORM)
 
+  // 連続操作や商談切替時に古いレスポンスが新しい表示を上書きしないよう通し番号で破棄する
+  const loadSeq = useRef(0)
   const loadData = useCallback(async () => {
+    const seq = ++loadSeq.current
     try {
-      setPayments(await fetchDealPayments(dealId))
+      const data = await fetchDealPayments(dealId)
+      if (loadSeq.current !== seq) return
+      setPayments(data)
       setVisible(true)
     } catch {
       // 014マイグレーション未適用など。セクション自体を隠す
-      setVisible(false)
+      if (loadSeq.current === seq) setVisible(false)
     } finally {
-      setLoaded(true)
+      if (loadSeq.current === seq) setLoaded(true)
     }
   }, [dealId])
 
@@ -109,10 +114,18 @@ export function DealPaymentsSection({ dealId, divisionId }: DealPaymentsSectionP
     }
   }, [form, dealId, divisionId, currentUser, loadData])
 
-  // 請求状況をインラインで変更。請求済/入金済にした際、日付が未設定なら今日を自動記録
+  // 請求状況をインラインで変更。前進時は未設定の日付に今日を自動記録し、
+  // 差し戻し時は該当日付をクリアする（誤操作時のスタンプが残らないように）
   const handleStatusChange = useCallback(async (payment: DealPayment, status: PaymentBillingStatus) => {
     const updates: Parameters<typeof updateDealPayment>[1] = { billingStatus: status }
-    if (status === 'billed' && !payment.invoice_date) updates.invoiceDate = todayISO()
+    if (status === 'unbilled') {
+      updates.invoiceDate = null
+      updates.paidDate = null
+    }
+    if (status === 'billed') {
+      if (!payment.invoice_date) updates.invoiceDate = todayISO()
+      updates.paidDate = null
+    }
     if (status === 'paid') {
       if (!payment.invoice_date) updates.invoiceDate = todayISO()
       if (!payment.paid_date) updates.paidDate = todayISO()
@@ -122,6 +135,8 @@ export function DealPaymentsSection({ dealId, divisionId }: DealPaymentsSectionP
       await loadData()
     } catch {
       toast.error('請求状況の更新に失敗しました')
+      // 失敗時も再取得して、selectの見た目だけが変わったまま残るのを防ぐ
+      await loadData()
     }
   }, [loadData])
 
@@ -235,6 +250,7 @@ export function DealPaymentsSection({ dealId, divisionId }: DealPaymentsSectionP
                 id="deal-pay-amount"
                 type="text"
                 inputMode="numeric"
+                maxLength={15}
                 value={form.amount}
                 onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value.replace(/[^0-9]/g, '') }))}
                 placeholder="1000000"
@@ -287,7 +303,6 @@ export function DealPaymentsSection({ dealId, divisionId }: DealPaymentsSectionP
               type="button"
               onClick={() => setFormOpen(false)}
               disabled={saving}
-              aria-label="金銭情報の追加フォームを閉じる"
               className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
             >
               キャンセル

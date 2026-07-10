@@ -66,23 +66,6 @@ export async function createDealDocument(input: {
   return toDocument(data)
 }
 
-export async function updateDealDocument(id: string, updates: {
-  docType?: string; name?: string; url?: string; note?: string | null
-}): Promise<void> {
-  const patch: Record<string, unknown> = {}
-  if (updates.docType !== undefined) patch.doc_type = updates.docType
-  if (updates.name !== undefined) patch.name = updates.name
-  if (updates.url !== undefined) patch.url = updates.url
-  if (updates.note !== undefined) patch.note = updates.note
-  const { data, error } = await getSupabase()
-    .from('deal_documents')
-    .update(patch)
-    .eq('id', id)
-    .select('id')
-  if (error) throw error
-  if (!data || data.length === 0) throw new Error('資料の更新が保存されませんでした（権限がないか、対象が存在しません）')
-}
-
 export async function deleteDealDocument(id: string): Promise<void> {
   const { error } = await getSupabase().from('deal_documents').delete().eq('id', id)
   if (error) throw error

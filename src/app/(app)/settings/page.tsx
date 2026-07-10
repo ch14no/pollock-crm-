@@ -8,7 +8,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import {
   Save, User, Building2, Bell, Shield, Users,
   Settings2, Tag, Trash2, Plus,
-  Check, X, ArrowUp, ArrowDown, Edit2, Eye, EyeOff, KeyRound, Info,
+  Check, X, ArrowUp, ArrowDown, Edit2, Eye, EyeOff, KeyRound, Info, FileText,
 } from 'lucide-react'
 import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS, DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
 import type { Role } from '@/types/database'
@@ -26,6 +26,10 @@ import {
 import {
   fetchDivisionProductsData, addDivisionProduct, removeDivisionProduct, saveDivisionProductsEnabled,
 } from '@/lib/db/products'
+import {
+  fetchDivisionDocTypes, createDivisionDocType, updateDivisionDocType, deleteDivisionDocType,
+} from '@/lib/db/documents'
+import type { DivisionDocType } from '@/types/database'
 import type { User as UserType, Division } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -205,6 +209,7 @@ export default function SettingsPage() {
           <DivisionStagesPanel />
           <DivisionFieldsPanel />
           <ProductsPanel />
+          <DocTypesPanel />
           <TaskStagesPanel />
         </>
       )}
@@ -1433,6 +1438,139 @@ function ProductsPanel() {
             placeholder="商品名を入力（例: assiST）"
             className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
           <button onClick={handleAdd} disabled={saving || productsLoading}
+            className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50">
+            <Plus size={13} />追加
+          </button>
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+// ─── 資料カテゴリ管理 ─────────────────────────────────────────────
+function DocTypesPanel() {
+  const { divisions } = useAppStore()
+  const [selectedDivId, setSelectedDivId] = useState(divisions[0]?.id ?? '')
+  const [docTypes, setDocTypes] = useState<DivisionDocType[]>([])
+  // 013マイグレーション（division_document_types）が利用可能か
+  const [dbReady, setDbReady] = useState(false)
+  const [docsLoading, setDocsLoading] = useState(false)
+  const [docSaving, setDocSaving] = useState(false)
+  const [newTypeName, setNewTypeName] = useState('')
+
+  const reload = async (divId: string) => {
+    const types = await fetchDivisionDocTypes(divId)
+    setDocTypes(types)
+  }
+
+  useEffect(() => {
+    if (!selectedDivId || !isSupabaseConfigured()) return
+    setDocsLoading(true)
+    reload(selectedDivId)
+      .then(() => setDbReady(true))
+      .catch(() => setDbReady(false))
+      .finally(() => setDocsLoading(false))
+  }, [selectedDivId]) // eslint-disable-line
+
+  const handleAddType = async () => {
+    const trimmed = newTypeName.trim()
+    if (!trimmed) return
+    if (docTypes.some((t) => t.name === trimmed)) { toast.error('同じカテゴリ名がすでに存在します'); return }
+    setDocSaving(true)
+    try {
+      await createDivisionDocType({ divisionId: selectedDivId, name: trimmed, sortOrder: docTypes.length, isPinned: false })
+      await reload(selectedDivId)
+      setNewTypeName('')
+      toast.success(`「${trimmed}」を追加しました`)
+    } catch {
+      toast.error('カテゴリの追加に失敗しました')
+    } finally { setDocSaving(false) }
+  }
+
+  const handleTogglePin = async (t: DivisionDocType) => {
+    setDocSaving(true)
+    try {
+      await updateDivisionDocType(t.id, { isPinned: !t.is_pinned })
+      await reload(selectedDivId)
+    } catch {
+      toast.error('更新に失敗しました')
+    } finally { setDocSaving(false) }
+  }
+
+  const handleDeleteType = async (t: DivisionDocType) => {
+    if (!window.confirm(`カテゴリ「${t.name}」を削除しますか？\n（登録済み資料は削除されず、カテゴリ名だけが残ります）`)) return
+    setDocSaving(true)
+    try {
+      await deleteDivisionDocType(t.id)
+      await reload(selectedDivId)
+      toast.success(`「${t.name}」を削除しました`)
+    } catch {
+      toast.error('削除に失敗しました')
+    } finally { setDocSaving(false) }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2 font-bold text-gray-700">
+          <FileText size={18} />資料カテゴリ管理
+        </div>
+      </CardHeader>
+      <CardBody>
+        <p className="text-xs text-gray-500 mb-4">
+          商談の「資料（Driveリンク）」で選択できるカテゴリを事業部ごとに管理します。
+          「常設」にしたカテゴリは、資料が未登録でも商談画面に枠が常に表示されます（例: ノンネームシート・IMシート）。
+        </p>
+
+        {isSupabaseConfigured() && !dbReady && !docsLoading && (
+          <div className="mb-4 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-800">
+            資料管理のDBテーブル（013_deal_documents.sql）が未適用のため利用できません。
+          </div>
+        )}
+
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
+          <select value={selectedDivId} onChange={(e) => { setSelectedDivId(e.target.value); setNewTypeName('') }}
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
+            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </div>
+
+        <div className="space-y-1.5 mb-3">
+          {docTypes.length === 0 && !docsLoading && dbReady && (
+            <p className="text-xs text-gray-400 py-2 text-center">
+              カテゴリ未設定（既定の「契約書・提案資料・その他」が使われます）
+            </p>
+          )}
+          {docTypes.map((t) => (
+            <div key={t.id} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
+              <span className="flex-1 text-sm text-gray-700">{t.name}</span>
+              <button
+                onClick={() => handleTogglePin(t)}
+                disabled={docSaving || docsLoading}
+                aria-pressed={t.is_pinned}
+                aria-label={`${t.name}を常設${t.is_pinned ? '解除' : 'に設定'}`}
+                className={cn(
+                  'px-2 py-0.5 text-[11px] font-medium rounded-full border transition-colors disabled:opacity-50',
+                  t.is_pinned
+                    ? 'bg-orange-500 text-white border-orange-500'
+                    : 'bg-white text-gray-400 border-gray-200 hover:border-orange-300'
+                )}
+              >
+                常設
+              </button>
+              <button onClick={() => handleDeleteType(t)} disabled={docSaving || docsLoading}
+                aria-label={`${t.name}を削除`}
+                className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50"><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input type="text" value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAddType()}
+            placeholder="カテゴリ名を入力（例: 契約書）"
+            className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
+          <button onClick={handleAddType} disabled={docSaving || docsLoading || !dbReady}
             className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50">
             <Plus size={13} />追加
           </button>

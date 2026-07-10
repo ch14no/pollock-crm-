@@ -51,13 +51,14 @@ export function Modal({
       />
       <div
         className={cn(
-          'relative w-full rounded-2xl bg-white shadow-xl',
+          // コンテンツが増えてもビューポートを超えないよう上限を設け、本文側をスクロールさせる
+          'relative w-full rounded-2xl bg-white shadow-xl flex flex-col max-h-[85vh]',
           sizeClasses[size]
         )}
       >
         <div
           className={cn(
-            'flex items-center justify-between px-5 py-4 rounded-t-2xl',
+            'flex-shrink-0 flex items-center justify-between px-5 py-4 rounded-t-2xl',
             headerColor === 'orange'
               ? 'bg-orange-500 text-white'
               : 'border-b border-gray-100'
@@ -76,7 +77,7 @@ export function Modal({
             <X size={18} />
           </button>
         </div>
-        <div className="p-5">{children}</div>
+        <div className="p-5 overflow-y-auto">{children}</div>
       </div>
     </div>
   )

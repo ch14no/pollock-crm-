@@ -59,6 +59,7 @@ export default function DocumentsPage() {
   useEffect(() => {
     setDocuments([])
     setCategoryFilter('all')
+    setQuery('') // 前事業部の検索条件が残ると「資料がありません」に見えるためリセット
     loadDocuments()
   }, [activeDivisionId]) // eslint-disable-line
 
