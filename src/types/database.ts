@@ -69,6 +69,51 @@ export interface PipelineStage {
 
 export type DealPriority = 'high' | 'medium' | 'low'
 
+// 案件資料（Google Drive等へのリンク。ファイル実体は保存しない）
+export interface DealDocument {
+  id: string
+  deal_id: string
+  division_id: string
+  doc_type: string
+  name: string
+  url: string
+  note?: string
+  created_by?: string
+  created_at: string
+  updated_at: string
+  // joined（資料一覧ページ用）
+  deals?: { id: string; title: string }
+}
+
+// 事業部ごとの資料カテゴリ。is_pinned=trueは案件の資料セクションに常設スロット表示
+export interface DivisionDocType {
+  id: string
+  division_id: string
+  name: string
+  sort_order: number
+  is_pinned: boolean
+}
+
+// 案件の金銭管理（手数料・報酬の請求/入金状況）
+export type PaymentBillingStatus = 'unbilled' | 'billed' | 'paid'
+export type PaymentParty = 'seller' | 'buyer'
+
+export interface DealPayment {
+  id: string
+  deal_id: string
+  division_id: string
+  payment_type: string
+  party?: PaymentParty
+  amount: number
+  billing_status: PaymentBillingStatus
+  invoice_date?: string
+  paid_date?: string
+  note?: string
+  created_by?: string
+  created_at: string
+  updated_at: string
+}
+
 export interface Deal {
   id: string
   contact_id?: string

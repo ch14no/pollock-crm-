@@ -5,6 +5,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { ContactPicker } from '@/components/ui/ContactPicker'
 import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
+import { DealDocumentsSection } from '@/components/deals/DealDocumentsSection'
+import { DealPaymentsSection } from '@/components/deals/DealPaymentsSection'
 import type { DealPriority } from '@/types/database'
 import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS } from '@/lib/mock-data'
@@ -488,6 +490,15 @@ export function DealModal() {
           {loading ? '保存中...' : isEdit ? '更新する' : '商談を登録する'}
         </Button>
       </form>
+
+      {/* 資料・金銭管理（登録済み商談の編集時のみ。013/014マイグレーション未適用時は自動的に非表示）
+          ※ それぞれ内部に独自のformを持つため、上の商談フォームの外に配置する（ネストフォーム防止） */}
+      {isEdit && dealModal.deal && isSupabaseConfigured() && !dealModal.deal.id.startsWith('deal-local-') && (
+        <div className="mt-4 space-y-3">
+          <DealDocumentsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
+          <DealPaymentsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
+        </div>
+      )}
     </Modal>
   )
 }
