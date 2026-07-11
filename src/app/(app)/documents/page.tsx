@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Search, ExternalLink, X, AlertTriangle, FileText } from 'lucide-react'
+import { Search, ExternalLink, X, AlertTriangle, FileText, HelpCircle } from 'lucide-react'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Badge } from '@/components/ui/Badge'
 import { formatRelativeTime, cn, matchSearch } from '@/lib/utils'
@@ -9,6 +9,39 @@ import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchDocumentsByDivision } from '@/lib/db/documents'
 import type { DealDocument } from '@/types/database'
+
+// 資料の追加手順を？マークのホバー/フォーカスで表示するチュートリアル
+function DocumentsHowToTooltip() {
+  return (
+    <span
+      tabIndex={0}
+      className="relative group inline-flex items-center gap-1.5 text-xs font-medium text-gray-400
+        hover:text-orange-600 focus:text-orange-600 cursor-help focus:outline-none"
+      aria-label="資料の追加方法を表示"
+    >
+      <HelpCircle size={15} />
+      資料の追加方法
+      <span
+        role="tooltip"
+        className="hidden group-hover:block group-focus:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2
+          w-80 max-w-[90vw] p-4 bg-gray-800 text-white text-xs rounded-xl text-left shadow-xl z-20 cursor-auto"
+      >
+        <span className="block font-bold mb-2 text-sm">資料を追加するには</span>
+        <span className="block space-y-1.5">
+          <span className="block">1. サイドバーの「商談」を開く</span>
+          <span className="block">2. 資料を紐づけたい商談カードをクリックして編集画面を開く</span>
+          <span className="block">3. 「資料（Driveリンク）」セクションの「追加」を押す</span>
+          <span className="block">4. 資料名・カテゴリと、Google Drive等に置いたファイルのURLを入力して保存</span>
+        </span>
+        <span className="block mt-2.5 pt-2 border-t border-gray-600 text-gray-300">
+          保存した資料はこのページに自動で一覧表示されます。ファイル本体はCRMに保存されず、Driveへのリンクだけを管理します。
+        </span>
+        {/* 吹き出しの矢印 */}
+        <span className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-gray-800" />
+      </span>
+    </span>
+  )
+}
 
 export default function DocumentsPage() {
   const activeDivisionId = useAppStore((s) => s.activeDivisionId)
@@ -151,6 +184,7 @@ export default function DocumentsPage() {
               icon={<FileText size={48} />}
               title="資料がありません"
               description="資料リンクは商談の編集画面から登録できます。"
+              action={<DocumentsHowToTooltip />}
             />
           ) : filtered.length === 0 ? (
             <p className="text-sm text-gray-500 text-center py-10">条件に一致する資料が見つかりません</p>

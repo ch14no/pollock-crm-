@@ -72,6 +72,15 @@ export default function SettingsPage() {
   const [name, setName] = useState(currentUser?.name ?? '')
   const [saving, setSaving] = useState(false)
 
+  // マスタ管理（パイプライン・カスタム項目・商品・資料カテゴリ・ナレッジカテゴリ・
+  // タスクカンバン）の対象事業部。各パネルで個別に選ぶのではなく、ここで一括して切り替える
+  const [masterDivId, setMasterDivId] = useState(divisions[0]?.id ?? '')
+  // マウント時に事業部一覧が未取得だった場合、取得後に先頭を選択し直す
+  if (!masterDivId && divisions.length > 0) {
+    setMasterDivId(divisions[0].id)
+  }
+  const masterDivName = divisions.find((d) => d.id === masterDivId)?.name ?? ''
+
   // 通知設定
   const [notif, setNotif] = useState(loadNotifSettings)
   const toggleNotif = (key: keyof typeof DEFAULT_NOTIF) => {
@@ -209,16 +218,49 @@ export default function SettingsPage() {
 
           <AccountsPanel />
           <DivisionsPanel />
-          <DivisionStagesPanel />
-          <DivisionFieldsPanel />
-          <ProductsPanel />
-          <DocTypesPanel />
-          <KnowledgeCategoriesPanel />
-          <TaskStagesPanel />
+
+          {/* ─── マスタ管理の対象事業部（以下のパネル共通） ─── */}
+          <Card className="border-orange-200 ring-1 ring-orange-100">
+            <CardHeader>
+              <div className="flex items-center gap-2 font-bold text-gray-700">
+                <Building2 size={18} className="text-orange-500" />マスタ管理の対象事業部
+              </div>
+            </CardHeader>
+            <CardBody>
+              <p className="text-xs text-gray-500 mb-3">
+                ここで選んだ事業部に対して、以下のマスタ設定
+                （パイプラインステージ・カスタム項目・商品・資料カテゴリ・ナレッジカテゴリ・タスクカンバン）
+                をまとめて編集します。
+              </p>
+              <select
+                value={masterDivId}
+                onChange={(e) => setMasterDivId(e.target.value)}
+                aria-label="マスタ管理の対象事業部"
+                className="w-full px-3 py-2.5 text-sm font-bold text-gray-700 border-2 border-orange-200 rounded-lg
+                  focus:outline-none focus:ring-2 focus:ring-orange-500 bg-orange-50/50 cursor-pointer"
+              >
+                {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </CardBody>
+          </Card>
+
+          {/* 対象事業部が変わったらパネルの内部状態（編集途中のフォーム等）ごと作り直す */}
+          <DivisionStagesPanel key={`stages-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+          <DivisionFieldsPanel key={`fields-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+          <ProductsPanel key={`products-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+          <DocTypesPanel key={`doctypes-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+          <KnowledgeCategoriesPanel key={`knowledge-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+          <TaskStagesPanel key={`tasks-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
         </>
       )}
     </div>
   )
+}
+
+// マスタ管理パネル共通のprops（対象事業部はページ上部のセレクタで一括選択）
+interface MasterPanelProps {
+  divisionId: string
+  divisionName: string
 }
 
 // ─── アカウント管理 ───────────────────────────────────────────────
@@ -723,9 +765,9 @@ function DivisionsPanel() {
 }
 
 // ─── 事業部別パイプラインステージ ────────────────────────────────
-function DivisionStagesPanel() {
-  const { divisions, divisionStages, setDivisionStages, setDivisionTabs } = useAppStore()
-  const [selectedDivId, setSelectedDivId] = useState(divisions[0]?.id ?? '')
+function DivisionStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
+  const { divisionStages, setDivisionStages, setDivisionTabs } = useAppStore()
+  const selectedDivId = divisionId
   const [stages, setStages] = useState<DivisionStage[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -923,19 +965,12 @@ function DivisionStagesPanel() {
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-gray-700"><Settings2 size={18} />事業部別パイプラインステージ</div>
+          <div className="flex items-center gap-2 font-bold text-gray-700"><Settings2 size={18} />パイプラインステージ（{divisionName}）</div>
           <Button size="sm" icon={<Plus size={14} />} onClick={() => { setShowForm((v) => !v); setEditingId(null) }}>ステージ追加</Button>
         </div>
       </CardHeader>
       <CardBody>
-        <p className="text-xs text-gray-500 mb-3">商談カンバンの列（フェーズ）を事業部ごとに設定します。「受注」「失注」として扱う列もここで指定できます。</p>
-        <div className="mb-4">
-          <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
-          <select value={selectedDivId} onChange={(e) => setSelectedDivId(e.target.value)}
-            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
-            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </div>
+        <p className="text-xs text-gray-500 mb-3">商談カンバンの列（フェーズ）を設定します。「受注」「失注」として扱う列もここで指定できます。</p>
 
         {/* ─── パイプラインタブ（任意） ─── */}
         <div className="mb-4">
@@ -1098,9 +1133,9 @@ function DivisionStagesPanel() {
 }
 
 // ─── 事業部別カスタムフィールド ──────────────────────────────────
-function DivisionFieldsPanel() {
-  const { divisions, divisionCustomFields, setDivisionCustomFields } = useAppStore()
-  const [selectedDivId, setSelectedDivId] = useState(divisions[0]?.id ?? '')
+function DivisionFieldsPanel({ divisionId, divisionName }: MasterPanelProps) {
+  const { divisionCustomFields, setDivisionCustomFields } = useAppStore()
+  const selectedDivId = divisionId
   const [fields, setFields] = useState<DivisionCustomField[]>([])
   const [loading, setLoading] = useState(false)
   const [showForm, setShowForm] = useState(false)
@@ -1197,19 +1232,12 @@ function DivisionFieldsPanel() {
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-gray-700"><Tag size={18} />事業部別カスタムフィールド</div>
+          <div className="flex items-center gap-2 font-bold text-gray-700"><Tag size={18} />カスタムフィールド（{divisionName}）</div>
           <Button size="sm" icon={<Plus size={14} />} onClick={() => { setShowForm((v) => !v); setEditingId(null) }}>フィールド追加</Button>
         </div>
       </CardHeader>
       <CardBody>
         <p className="text-xs text-gray-500 mb-3">顧客情報に事業部固有の入力項目を追加します。顧客詳細画面に表示され、顧客一覧の絞り込み条件にも使用できます。</p>
-        <div className="mb-4">
-          <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
-          <select value={selectedDivId} onChange={(e) => setSelectedDivId(e.target.value)}
-            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
-            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </div>
 
         {showForm && (
           <div className="mb-4 p-3 bg-orange-50 rounded-xl border border-orange-100 space-y-3">
@@ -1312,9 +1340,9 @@ function DivisionFieldsPanel() {
 }
 
 // ─── 商品マスタ管理 ───────────────────────────────────────────────
-function ProductsPanel() {
-  const { divisions, divisionProducts, setDivisionProducts, divisionProductsEnabled, setDivisionProductsEnabled } = useAppStore()
-  const [selectedDivId, setSelectedDivId] = useState(divisions[0]?.id ?? '')
+function ProductsPanel({ divisionId, divisionName }: MasterPanelProps) {
+  const { divisionProducts, setDivisionProducts, divisionProductsEnabled, setDivisionProductsEnabled } = useAppStore()
+  const selectedDivId = divisionId
 
   const products = divisionProducts[selectedDivId] ?? DEFAULT_DIVISION_PRODUCTS[selectedDivId] ?? []
   const enabled = divisionProductsEnabled[selectedDivId] ?? false
@@ -1387,11 +1415,11 @@ function ProductsPanel() {
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2 font-bold text-gray-700">
-          <Tag size={18} />商品マスタ管理
+          <Tag size={18} />商品マスタ管理（{divisionName}）
         </div>
       </CardHeader>
       <CardBody>
-        <p className="text-xs text-gray-500 mb-4">事業部ごとに商談登録画面で選択できる提案商品・サービスを管理します。</p>
+        <p className="text-xs text-gray-500 mb-4">商談登録画面で選択できる提案商品・サービスを管理します。</p>
 
         {isSupabaseConfigured() && !dbReady && (
           <div className="mb-4 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-800">
@@ -1399,14 +1427,6 @@ function ProductsPanel() {
             他のユーザー・端末には共有されません。
           </div>
         )}
-
-        <div className="mb-4">
-          <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
-          <select value={selectedDivId} onChange={(e) => { setSelectedDivId(e.target.value); setNewProduct('') }}
-            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
-            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </div>
 
         {/* 表示ON/OFFトグル */}
         <div className="flex items-center justify-between mb-4 p-3 bg-gray-50 rounded-xl border border-gray-100">
@@ -1452,9 +1472,8 @@ function ProductsPanel() {
 }
 
 // ─── 資料カテゴリ管理 ─────────────────────────────────────────────
-function DocTypesPanel() {
-  const { divisions } = useAppStore()
-  const [selectedDivId, setSelectedDivId] = useState(divisions[0]?.id ?? '')
+function DocTypesPanel({ divisionId, divisionName }: MasterPanelProps) {
+  const selectedDivId = divisionId
   const [docTypes, setDocTypes] = useState<DivisionDocType[]>([])
   // 013マイグレーション（division_document_types）が利用可能か
   const [dbReady, setDbReady] = useState(false)
@@ -1517,12 +1536,12 @@ function DocTypesPanel() {
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2 font-bold text-gray-700">
-          <FileText size={18} />資料カテゴリ管理
+          <FileText size={18} />資料カテゴリ管理（{divisionName}）
         </div>
       </CardHeader>
       <CardBody>
         <p className="text-xs text-gray-500 mb-4">
-          商談の「資料（Driveリンク）」で選択できるカテゴリを事業部ごとに管理します。
+          商談の「資料（Driveリンク）」で選択できるカテゴリを管理します。
           「常設」にしたカテゴリは、資料が未登録でも商談画面に枠が常に表示されます（例: ノンネームシート・IMシート）。
         </p>
 
@@ -1531,14 +1550,6 @@ function DocTypesPanel() {
             資料管理のDBテーブル（013_deal_documents.sql）が未適用のため利用できません。
           </div>
         )}
-
-        <div className="mb-4">
-          <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
-          <select value={selectedDivId} onChange={(e) => { setSelectedDivId(e.target.value); setNewTypeName('') }}
-            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
-            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </div>
 
         <div className="space-y-1.5 mb-3">
           {docTypes.length === 0 && !docsLoading && dbReady && (
@@ -1585,20 +1596,14 @@ function DocTypesPanel() {
 }
 
 // ─── ナレッジカテゴリ管理 ─────────────────────────────────────────
-function KnowledgeCategoriesPanel() {
-  const { divisions } = useAppStore()
-  const [selectedDivId, setSelectedDivId] = useState(divisions[0]?.id ?? '')
+function KnowledgeCategoriesPanel({ divisionId, divisionName }: MasterPanelProps) {
+  const selectedDivId = divisionId
   const [categories, setCategories] = useState<DivisionKnowledgeCategory[]>([])
   // 018マイグレーション（division_knowledge_categories）が利用可能か
   const [dbReady, setDbReady] = useState(false)
   const [catLoading, setCatLoading] = useState(false)
   const [catSaving, setCatSaving] = useState(false)
   const [newCatName, setNewCatName] = useState('')
-
-  // マウント時に事業部一覧が未取得だった場合、取得後に先頭を選択し直す
-  if (!selectedDivId && divisions.length > 0) {
-    setSelectedDivId(divisions[0].id)
-  }
 
   const reload = async (divId: string) => {
     const data = await fetchDivisionKnowledgeCategories(divId)
@@ -1647,12 +1652,12 @@ function KnowledgeCategoriesPanel() {
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2 font-bold text-gray-700">
-          <BookOpen size={18} />ナレッジカテゴリ管理
+          <BookOpen size={18} />ナレッジカテゴリ管理（{divisionName}）
         </div>
       </CardHeader>
       <CardBody>
         <p className="text-xs text-gray-500 mb-4">
-          ナレッジページの投稿で選択できるカテゴリを事業部ごとに管理します。
+          ナレッジページの投稿で選択できるカテゴリを管理します。
         </p>
 
         {isSupabaseConfigured() && !dbReady && !catLoading && (
@@ -1660,14 +1665,6 @@ function KnowledgeCategoriesPanel() {
             ナレッジベースのDBテーブル（018_knowledge_base.sql）が未適用のため利用できません。
           </div>
         )}
-
-        <div className="mb-4">
-          <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
-          <select value={selectedDivId} onChange={(e) => { setSelectedDivId(e.target.value); setNewCatName('') }}
-            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
-            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </div>
 
         <div className="space-y-1.5 mb-3">
           {categories.length === 0 && !catLoading && dbReady && (
@@ -1715,9 +1712,9 @@ const COLOR_DOT: Record<string, string> = {
   orange: 'bg-orange-500', green: 'bg-green-500', red: 'bg-red-500', purple: 'bg-purple-500',
 }
 
-function TaskStagesPanel() {
-  const { activeDivision, activeDivisionId, divisionTaskStages, setDivisionTaskStages } = useAppStore()
-  const divId = activeDivisionId ?? ''
+function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
+  const { divisionTaskStages, setDivisionTaskStages } = useAppStore()
+  const divId = divisionId
   const stages: TaskKanbanStage[] = divisionTaskStages[divId] ?? DEFAULT_DIVISION_TASK_STAGES[divId] ?? []
   const [newName, setNewName]   = useState('')
   const [newColor, setNewColor] = useState('blue')
@@ -1725,9 +1722,10 @@ function TaskStagesPanel() {
   const handleAdd = () => {
     const trimmed = newName.trim()
     if (!trimmed) return
+    if (stages.some((s) => s.name === trimmed)) { toast.error('同じ名前の列がすでに存在します'); return }
     setDivisionTaskStages(divId, [...stages, { id: `stage-${Date.now()}`, name: trimmed, color: newColor }])
     setNewName('')
-    toast.success(`ステージ「${trimmed}」を追加しました`)
+    toast.success(`列「${trimmed}」を追加しました`)
   }
 
   const move = (idx: number, dir: -1 | 1) => {
@@ -1740,33 +1738,62 @@ function TaskStagesPanel() {
 
   return (
     <Card>
-      <CardHeader><div className="flex items-center gap-2"><Settings2 size={16} /><span className="font-bold text-gray-800">タスクカンバン設定（{activeDivision?.name ?? ''}）</span></div></CardHeader>
+      <CardHeader><div className="flex items-center gap-2"><Settings2 size={16} /><span className="font-bold text-gray-800">タスクカンバン設定（{divisionName}）</span></div></CardHeader>
       <CardBody>
-        <p className="text-xs text-gray-500 mb-3">タスクカンバンの列を管理します。財務支援では補助金フロー用の列がデフォルト設定されています。</p>
+        {/* 何を設定する画面かをUIだけで理解できるよう、対象と操作方法を明示する */}
+        <div className="mb-4 p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs text-gray-500 space-y-2">
+          <p>
+            サイドバーの<span className="font-bold text-gray-700">「タスク管理」ページに表示されるカンバンの列（＝タスクの進行段階）</span>を編集します。
+            タスクはカンバン上でドラッグして列間を移動できます。
+          </p>
+          {/* 列並びのイメージ */}
+          <div className="flex items-center gap-1.5 flex-wrap" aria-hidden="true">
+            <span className="text-gray-400">例:</span>
+            {['未着手', '対応中', '完了'].map((label, i) => (
+              <span key={label} className="flex items-center gap-1.5">
+                {i > 0 && <span className="text-gray-300">→</span>}
+                <span className="px-2 py-0.5 bg-white border border-gray-200 rounded-md text-gray-600 font-medium">{label}</span>
+              </span>
+            ))}
+          </div>
+          <ul className="list-disc pl-4 space-y-0.5 text-gray-400">
+            <li>下の入力欄で色と列名を決めて「追加」</li>
+            <li><ArrowUp size={10} className="inline" /><ArrowDown size={10} className="inline" /> で列の並び順を変更、ゴミ箱アイコンで削除</li>
+            <li>変更はこの事業部のタスクカンバンに即時反映されます</li>
+          </ul>
+          <p className="text-gray-400">財務支援では補助金フロー用の列（例: 申請中）がデフォルト設定されています。</p>
+        </div>
+
+        <p className="text-xs font-medium text-gray-500 mb-1.5">現在の列（上から順にカンバンの左→右に並びます）</p>
         <div className="space-y-1.5 mb-3">
+          {stages.length === 0 && (
+            <p className="text-xs text-gray-400 py-2 text-center">列が未設定です。下から追加してください</p>
+          )}
           {stages.map((s, idx) => (
             <div key={s.id} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
               <span className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', COLOR_DOT[s.color] ?? 'bg-gray-400')} />
               <span className="flex-1 text-sm text-gray-700">{s.name}</span>
               <div className="flex gap-0.5">
-                <button onClick={() => move(idx, -1)} disabled={idx === 0}
+                <button onClick={() => move(idx, -1)} disabled={idx === 0} aria-label={`${s.name}を上へ`}
                   className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowUp size={12} /></button>
-                <button onClick={() => move(idx, 1)} disabled={idx === stages.length - 1}
+                <button onClick={() => move(idx, 1)} disabled={idx === stages.length - 1} aria-label={`${s.name}を下へ`}
                   className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowDown size={12} /></button>
               </div>
               <button onClick={() => setDivisionTaskStages(divId, stages.filter((x) => x.id !== s.id))}
+                aria-label={`${s.name}を削除`}
                 className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
             </div>
           ))}
         </div>
+        <p className="text-xs font-medium text-gray-500 mb-1.5">列を追加</p>
         <div className="flex gap-2">
-          <select value={newColor} onChange={(e) => setNewColor(e.target.value)}
+          <select value={newColor} onChange={(e) => setNewColor(e.target.value)} aria-label="列の色"
             className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white">
             {STAGE_COLOR_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
           <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-            placeholder="ステージ名（例: 申請中）"
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleAdd() }}
+            placeholder="列名（例: 申請中）"
             className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
           <button onClick={handleAdd}
             className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors">

@@ -7,6 +7,14 @@ function toCompany(data: Record<string, unknown>): Company {
     corporate_number: data.corporate_number ?? undefined,
     website: data.website ?? undefined,
     ir_url: data.ir_url ?? undefined,
+    address: data.address ?? undefined,
+    phone: data.phone ?? undefined,
+    industry: data.industry ?? undefined,
+    representative: data.representative ?? undefined,
+    employee_count: data.employee_count ?? undefined,
+    capital: data.capital ?? undefined,
+    established_on: data.established_on ?? undefined,
+    note: data.note ?? undefined,
   } as Company
 }
 
@@ -20,16 +28,27 @@ export async function fetchCompanyById(id: string): Promise<Company | null> {
   return toCompany(data)
 }
 
-// 会社情報の更新。RLS上、更新できるのは manager / super_admin のみ
-// （companies_updateポリシー。IRリンク＝M&A事業部要望⑳もこの権限に従う）
+// 会社情報の更新。019適用後はログイン済みの全ユーザーが更新可能
+// （companies_updateポリシー。会社は全社共有マスタのため変更は全事業部に反映される）
 export async function updateCompany(id: string, updates: {
   name?: string; corporateNumber?: string | null; website?: string | null; irUrl?: string | null
+  address?: string | null; phone?: string | null; industry?: string | null
+  representative?: string | null; employeeCount?: number | null; capital?: number | null
+  establishedOn?: string | null; note?: string | null
 }): Promise<Company> {
   const patch: Record<string, unknown> = {}
   if (updates.name !== undefined) patch.name = updates.name
   if (updates.corporateNumber !== undefined) patch.corporate_number = updates.corporateNumber
   if (updates.website !== undefined) patch.website = updates.website
   if (updates.irUrl !== undefined) patch.ir_url = updates.irUrl
+  if (updates.address !== undefined) patch.address = updates.address
+  if (updates.phone !== undefined) patch.phone = updates.phone
+  if (updates.industry !== undefined) patch.industry = updates.industry
+  if (updates.representative !== undefined) patch.representative = updates.representative
+  if (updates.employeeCount !== undefined) patch.employee_count = updates.employeeCount
+  if (updates.capital !== undefined) patch.capital = updates.capital
+  if (updates.establishedOn !== undefined) patch.established_on = updates.establishedOn
+  if (updates.note !== undefined) patch.note = updates.note
   const { data, error } = await getSupabase()
     .from('companies')
     .update(patch)

@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Building2, Phone, Mail, Rocket,
-  MessageSquare, CheckSquare, Users, FileText, ChevronDown, ExternalLink, Hash,
-  Landmark, Edit2,
+  CheckSquare, Users, FileText, ChevronDown, ExternalLink, Hash,
+  Landmark, Edit2, MapPin, Factory, User as UserIcon, Banknote, Calendar,
 } from 'lucide-react'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchCompanyById, fetchContactsByCompany } from '@/lib/db/companies'
@@ -13,7 +13,7 @@ import { CompanyEditModal } from '@/components/contacts/CompanyEditModal'
 import { fetchActivitiesByCompany } from '@/lib/db/activities'
 import type { Company, Contact, Activity } from '@/types/database'
 import { Button } from '@/components/ui/Button'
-import { cn, formatRelativeTime, getInitials } from '@/lib/utils'
+import { cn, formatRelativeTime, formatDate, formatCurrency, getInitials } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import type { ActivityType } from '@/types/database'
 
@@ -58,8 +58,8 @@ export default function CompanyDetailPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [editOpen, setEditOpen] = useState(false)
 
-  // 会社は全社共有マスタのため、編集はDBのcompanies_updateポリシーと同じ manager / super_admin のみ
-  const canEditCompany = currentUser?.role === 'super_admin' || currentUser?.role === 'manager'
+  // 019適用後はログイン済みの全ユーザーが編集可能（companies_updateポリシーと同期）
+  const canEditCompany = !!currentUser
 
   useEffect(() => {
     let cancelled = false
@@ -129,10 +129,12 @@ export default function CompanyDetailPage() {
             {canEditCompany && (
               <button
                 onClick={() => setEditOpen(true)}
-                aria-label="会社情報を編集"
-                className="absolute top-3 right-3 p-1.5 rounded-lg text-gray-300 hover:text-orange-500 hover:bg-orange-50 transition-colors"
+                className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium
+                  text-gray-500 border border-gray-200 bg-white
+                  hover:text-orange-600 hover:border-orange-300 hover:bg-orange-50 transition-colors"
               >
-                <Edit2 size={15} />
+                <Edit2 size={13} />
+                編集
               </button>
             )}
             <div className="flex flex-col items-center mb-4">
@@ -140,6 +142,9 @@ export default function CompanyDetailPage() {
                 <Building2 size={28} className="text-blue-500" />
               </div>
               <h1 className="text-lg font-bold text-gray-800 text-center">{company.name}</h1>
+              {company.industry && (
+                <p className="text-xs text-gray-500 mt-1">{company.industry}</p>
+              )}
             </div>
 
             <div className="space-y-2 text-sm">
@@ -147,9 +152,46 @@ export default function CompanyDetailPage() {
                 <Hash size={14} className="flex-shrink-0 text-gray-400" />
                 {company.corporate_number
                   ? <span>{company.corporate_number}</span>
-                  : <span className="text-gray-300 text-xs">未登録</span>
+                  : <span className="text-gray-300 text-xs">法人番号 未登録</span>
                 }
               </div>
+              {company.representative && (
+                <div className="flex items-center gap-2 text-gray-600">
+                  <UserIcon size={14} className="flex-shrink-0 text-gray-400" />
+                  <span>{company.representative}</span>
+                </div>
+              )}
+              {company.address && (
+                <div className="flex items-center gap-2 text-gray-600 min-w-0">
+                  <MapPin size={14} className="flex-shrink-0 text-gray-400" />
+                  <span className="break-words">{company.address}</span>
+                </div>
+              )}
+              {company.phone && (
+                <div className="flex items-center gap-2 text-gray-600">
+                  <Phone size={14} className="flex-shrink-0 text-gray-400" />
+                  <a href={`tel:${company.phone}`} className="hover:text-orange-600">{company.phone}</a>
+                </div>
+              )}
+              {(company.employee_count !== undefined || company.capital !== undefined) && (
+                <div className="flex items-center gap-2 text-gray-600 flex-wrap">
+                  <Factory size={14} className="flex-shrink-0 text-gray-400" />
+                  <span className="flex items-center gap-2 flex-wrap">
+                    {company.employee_count !== undefined && <span>従業員 {company.employee_count.toLocaleString()}名</span>}
+                    {company.capital !== undefined && (
+                      <span className="flex items-center gap-1">
+                        <Banknote size={13} className="text-gray-400" />資本金 {formatCurrency(company.capital)}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
+              {company.established_on && (
+                <div className="flex items-center gap-2 text-gray-600">
+                  <Calendar size={14} className="flex-shrink-0 text-gray-400" />
+                  <span>設立 {formatDate(company.established_on)}</span>
+                </div>
+              )}
               {company.website && (
                 <div className="flex items-center gap-2 text-gray-600 min-w-0">
                   <ExternalLink size={14} className="flex-shrink-0 text-gray-400" />
@@ -178,6 +220,12 @@ export default function CompanyDetailPage() {
                 </div>
               )}
             </div>
+
+            {company.note && (
+              <p className="text-xs text-gray-500 mt-4 pt-4 border-t border-gray-100 whitespace-pre-wrap leading-relaxed">
+                {company.note}
+              </p>
+            )}
 
             <p className="text-xs text-gray-400 mt-4 pt-4 border-t border-gray-100">
               最終更新: {formatRelativeTime(company.updated_at)}

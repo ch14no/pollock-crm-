@@ -32,6 +32,14 @@ export interface Company {
   corporate_number?: string
   website?: string
   ir_url?: string
+  address?: string
+  phone?: string
+  industry?: string
+  representative?: string
+  employee_count?: number
+  capital?: number
+  established_on?: string
+  note?: string
   created_at: string
   updated_at: string
 }
