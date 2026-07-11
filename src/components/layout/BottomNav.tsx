@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, Activity, CheckSquare, Rocket, Menu, X, LogOut, ChevronDown, Search } from 'lucide-react'
+import { LayoutDashboard, Briefcase, Activity, CheckSquare, CreditCard, Menu, X, LogOut, ChevronDown, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { NAV_ITEMS } from '@/components/layout/Sidebar'
@@ -12,7 +12,7 @@ import toast from 'react-hot-toast'
 
 const NAV_LEFT  = [
   { href: '/dashboard', label: 'ホーム', icon: LayoutDashboard },
-  { href: '/contacts',  label: '顧客',  icon: Users },
+  { href: '/deals',     label: '商談',   icon: Briefcase },
 ]
 const NAV_RIGHT = [
   { href: '/activities', label: '活動',     icon: Activity },
@@ -162,7 +162,7 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
 
 export function BottomNav() {
   const pathname = usePathname()
-  const { openTossupModal } = useAppStore()
+  const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
 
   // BottomNavに無いページを開いているときは「メニュー」をアクティブ表示にする
@@ -182,16 +182,17 @@ export function BottomNav() {
             </Link>
           ))}
 
-          {/* Center FAB - Tossup */}
+          {/* Center FAB - 名刺から顧客登録（外出先での最頻アクション） */}
           <div className="flex-1 flex flex-col items-center relative">
             <button
-              onClick={() => openTossupModal()}
+              onClick={() => router.push('/contacts/new?mode=card')}
+              aria-label="名刺から顧客を登録"
               className="absolute -top-5 w-14 h-14 bg-orange-500 rounded-full flex items-center justify-center
                 shadow-lg shadow-orange-200 hover:bg-orange-600 active:bg-orange-700 transition-all"
             >
-              <Rocket size={24} className="text-white" />
+              <CreditCard size={24} className="text-white" />
             </button>
-            <span className="mt-9 text-xs text-gray-400">トスアップ</span>
+            <span className="mt-9 text-xs text-gray-400">名刺登録</span>
           </div>
 
           {NAV_RIGHT.map(({ href, label, icon: Icon }) => (
