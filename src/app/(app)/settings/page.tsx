@@ -8,7 +8,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import {
   Save, User, Building2, Bell, Shield, Users,
   Settings2, Tag, Trash2, Plus,
-  Check, X, ArrowUp, ArrowDown, Edit2, Eye, EyeOff, KeyRound, Info, FileText, BookOpen,
+  Check, X, ArrowUp, ArrowDown, Edit2, Eye, EyeOff, KeyRound, Info, FileText, BookOpen, Activity,
 } from 'lucide-react'
 import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS, DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
 import type { Role } from '@/types/database'
@@ -32,7 +32,10 @@ import {
 import {
   fetchDivisionKnowledgeCategories, createDivisionKnowledgeCategory, deleteDivisionKnowledgeCategory,
 } from '@/lib/db/knowledge'
-import type { DivisionDocType, DivisionKnowledgeCategory } from '@/types/database'
+import {
+  fetchDivisionMemoCategories, createDivisionMemoCategory, deleteDivisionMemoCategory,
+} from '@/lib/db/activities'
+import type { DivisionDocType } from '@/types/database'
 import type { User as UserType, Division } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -250,6 +253,7 @@ export default function SettingsPage() {
           <ProductsPanel key={`products-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <DocTypesPanel key={`doctypes-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <KnowledgeCategoriesPanel key={`knowledge-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+          <MemoCategoriesPanel key={`memo-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <TaskStagesPanel key={`tasks-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
         </>
       )}
@@ -1595,29 +1599,50 @@ function DocTypesPanel({ divisionId, divisionName }: MasterPanelProps) {
   )
 }
 
-// ─── ナレッジカテゴリ管理 ─────────────────────────────────────────
-function KnowledgeCategoriesPanel({ divisionId, divisionName }: MasterPanelProps) {
+// ─── 事業部別カテゴリ管理の共通パネル ─────────────────────────────
+// ナレッジ（018）・活動メモ（020）のカテゴリ管理はUI・挙動が同一のため共通化。
+// 資料カテゴリ（013）は「常設」トグルがあるため別実装（DocTypesPanel）のまま
+interface DivisionCategoryPanelProps extends MasterPanelProps {
+  title: string
+  icon: React.ReactNode
+  description: string
+  /** マイグレーション未適用時の案内文 */
+  migrationHint: string
+  /** カテゴリ0件時の案内文（既定カテゴリの説明） */
+  emptyText: string
+  placeholder: string
+  fetchCategories: (divisionId: string) => Promise<{ id: string; name: string }[]>
+  createCategory: (input: { divisionId: string; name: string; sortOrder: number }) => Promise<void>
+  deleteCategory: (id: string) => Promise<void>
+}
+
+function DivisionCategoryPanel({
+  divisionId, divisionName, title, icon, description, migrationHint, emptyText, placeholder,
+  fetchCategories, createCategory, deleteCategory,
+}: DivisionCategoryPanelProps) {
   const selectedDivId = divisionId
-  const [categories, setCategories] = useState<DivisionKnowledgeCategory[]>([])
-  // 018マイグレーション（division_knowledge_categories）が利用可能か
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
+  // 対象マイグレーションが適用済みか（テーブル不在なら取得が失敗する）
   const [dbReady, setDbReady] = useState(false)
-  const [catLoading, setCatLoading] = useState(false)
+  // 事業部はkey付きマウントで固定なので、取得が走るかどうかは初期値で決まる
+  const [catLoading, setCatLoading] = useState(Boolean(divisionId) && isSupabaseConfigured())
   const [catSaving, setCatSaving] = useState(false)
   const [newCatName, setNewCatName] = useState('')
 
   const reload = async (divId: string) => {
-    const data = await fetchDivisionKnowledgeCategories(divId)
+    const data = await fetchCategories(divId)
     setCategories(data)
   }
 
   useEffect(() => {
     if (!selectedDivId || !isSupabaseConfigured()) return
-    setCatLoading(true)
-    reload(selectedDivId)
-      .then(() => setDbReady(true))
-      .catch(() => setDbReady(false))
-      .finally(() => setCatLoading(false))
-  }, [selectedDivId]) // eslint-disable-line
+    let cancelled = false
+    fetchCategories(selectedDivId)
+      .then((data) => { if (!cancelled) { setCategories(data); setDbReady(true) } })
+      .catch(() => { if (!cancelled) setDbReady(false) })
+      .finally(() => { if (!cancelled) setCatLoading(false) })
+    return () => { cancelled = true }
+  }, [selectedDivId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAdd = async () => {
     // Enterキー経由の呼び出しはボタンのdisabledを迂回するため、ここでもガードする
@@ -1627,7 +1652,7 @@ function KnowledgeCategoriesPanel({ divisionId, divisionName }: MasterPanelProps
     if (categories.some((c) => c.name === trimmed)) { toast.error('同じカテゴリ名がすでに存在します'); return }
     setCatSaving(true)
     try {
-      await createDivisionKnowledgeCategory({ divisionId: selectedDivId, name: trimmed, sortOrder: categories.length })
+      await createCategory({ divisionId: selectedDivId, name: trimmed, sortOrder: categories.length })
       await reload(selectedDivId)
       setNewCatName('')
       toast.success(`「${trimmed}」を追加しました`)
@@ -1636,11 +1661,11 @@ function KnowledgeCategoriesPanel({ divisionId, divisionName }: MasterPanelProps
     } finally { setCatSaving(false) }
   }
 
-  const handleDelete = async (c: DivisionKnowledgeCategory) => {
-    if (!window.confirm(`カテゴリ「${c.name}」を削除しますか？\n（登録済みの投稿は削除されず、カテゴリ名だけが残ります）`)) return
+  const handleDelete = async (c: { id: string; name: string }) => {
+    if (!window.confirm(`カテゴリ「${c.name}」を削除しますか？\n（登録済みのデータは削除されず、カテゴリ名だけが残ります）`)) return
     setCatSaving(true)
     try {
-      await deleteDivisionKnowledgeCategory(c.id)
+      await deleteCategory(c.id)
       await reload(selectedDivId)
       toast.success(`「${c.name}」を削除しました`)
     } catch {
@@ -1652,25 +1677,21 @@ function KnowledgeCategoriesPanel({ divisionId, divisionName }: MasterPanelProps
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2 font-bold text-gray-700">
-          <BookOpen size={18} />ナレッジカテゴリ管理（{divisionName}）
+          {icon}{title}（{divisionName}）
         </div>
       </CardHeader>
       <CardBody>
-        <p className="text-xs text-gray-500 mb-4">
-          ナレッジページの投稿で選択できるカテゴリを管理します。
-        </p>
+        <p className="text-xs text-gray-500 mb-4">{description}</p>
 
         {isSupabaseConfigured() && !dbReady && !catLoading && (
           <div className="mb-4 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-800">
-            ナレッジベースのDBテーブル（018_knowledge_base.sql）が未適用のため利用できません。
+            {migrationHint}
           </div>
         )}
 
         <div className="space-y-1.5 mb-3">
           {categories.length === 0 && !catLoading && dbReady && (
-            <p className="text-xs text-gray-400 py-2 text-center">
-              カテゴリ未設定（既定の「ナレッジ・研修資料・ニュース」が使われます）
-            </p>
+            <p className="text-xs text-gray-400 py-2 text-center">{emptyText}</p>
           )}
           {categories.map((c) => (
             <div key={c.id} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
@@ -1685,7 +1706,7 @@ function KnowledgeCategoriesPanel({ divisionId, divisionName }: MasterPanelProps
           {/* IMEの変換確定Enterで誤送信しないようisComposing中は無視する */}
           <input type="text" value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleAdd() }}
-            placeholder="カテゴリ名を入力（例: 業界レポート）"
+            placeholder={placeholder}
             className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
           <button onClick={handleAdd} disabled={catSaving || catLoading || !dbReady}
             className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50">
@@ -1694,6 +1715,42 @@ function KnowledgeCategoriesPanel({ divisionId, divisionName }: MasterPanelProps
         </div>
       </CardBody>
     </Card>
+  )
+}
+
+// ─── ナレッジカテゴリ管理 ─────────────────────────────────────────
+function KnowledgeCategoriesPanel(props: MasterPanelProps) {
+  return (
+    <DivisionCategoryPanel
+      {...props}
+      title="ナレッジカテゴリ管理"
+      icon={<BookOpen size={18} />}
+      description="ナレッジページの投稿で選択できるカテゴリを管理します。"
+      migrationHint="ナレッジベースのDBテーブル（018_knowledge_base.sql）が未適用のため利用できません。"
+      emptyText="カテゴリ未設定（既定の「ナレッジ・研修資料・ニュース」が使われます）"
+      placeholder="カテゴリ名を入力（例: 業界レポート）"
+      fetchCategories={fetchDivisionKnowledgeCategories}
+      createCategory={createDivisionKnowledgeCategory}
+      deleteCategory={deleteDivisionKnowledgeCategory}
+    />
+  )
+}
+
+// ─── 活動メモカテゴリ管理（⑰） ───────────────────────────────────
+function MemoCategoriesPanel(props: MasterPanelProps) {
+  return (
+    <DivisionCategoryPanel
+      {...props}
+      title="活動メモカテゴリ管理"
+      icon={<Activity size={18} />}
+      description="活動の記録（電話・メール・面談・メモ・タスク）に付けられる用途別カテゴリを管理します。活動履歴ページでカテゴリごとに絞り込めます。"
+      migrationHint="活動メモカテゴリのDBテーブル（020_memo_categories.sql）が未適用のため利用できません。"
+      emptyText="カテゴリ未設定（既定の「顧客・案件・面談・契約」が使われます）"
+      placeholder="カテゴリ名を入力（例: クレーム対応）"
+      fetchCategories={fetchDivisionMemoCategories}
+      createCategory={createDivisionMemoCategory}
+      deleteCategory={deleteDivisionMemoCategory}
+    />
   )
 }
 

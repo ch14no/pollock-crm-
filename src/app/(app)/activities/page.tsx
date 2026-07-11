@@ -64,6 +64,10 @@ export default function ActivitiesPage() {
   const [statusFilter, setStatusFilter] = useState<ActivityStatus | 'all'>('all')
   const [assigneeFilter, setAssigneeFilter] = useState<string>(isManager ? 'all' : 'mine')
   const [contactFilter, setContactFilter] = useState<string>(() => searchParams.get('contactId') ?? 'all')
+  // 用途別カテゴリの絞り込み（⑰）。実在カテゴリ名との衝突を避けるためセンチネルは__付き
+  const CATEGORY_ALL = '__all__'
+  const CATEGORY_NONE = '__none__'
+  const [categoryFilter, setCategoryFilter] = useState<string>(CATEGORY_ALL)
 
   // Supabase データ
   const [dbActivities, setDbActivities] = useState<Activity[]>([])
@@ -174,6 +178,20 @@ export default function ActivitiesPage() {
     return contactOptions.some((c) => c.id === contactFilter) ? contactFilter : 'all'
   }, [contactFilter, contactOptions, isContactDataPending])
 
+  // カテゴリ絞り込みの選択肢: 読み込んだ活動に実在するカテゴリ（設定から削除済みのものも絞り込める）
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>()
+    allActivities.forEach((a) => { if (a.memo_category) set.add(a.memo_category) })
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ja'))
+  }, [allActivities])
+
+  // 事業部切替等で選択中カテゴリが選択肢に無くなった場合は「すべて」扱いにする
+  // （フィルタUIごと消えて全件非表示のまま解除できなくなるのを防ぐ）
+  const effectiveCategoryFilter =
+    categoryFilter === CATEGORY_ALL || categoryFilter === CATEGORY_NONE || categoryOptions.includes(categoryFilter)
+      ? categoryFilter
+      : CATEGORY_ALL
+
   const filtered = useMemo(() => {
     return allActivities.filter((a) => {
       const matchType   = typeFilter === 'all' || a.activity_type === typeFilter
@@ -182,13 +200,15 @@ export default function ActivitiesPage() {
       const matchContact = effectiveContactFilter === 'all' ||
         (a.target_type === 'contact' && a.target_id === effectiveContactFilter) ||
         (a.target_type === 'deal' && dealsMap[a.target_id]?.contact_id === effectiveContactFilter)
-      if (!matchType || !matchStatus || !matchContact) return false
+      const matchCategory = effectiveCategoryFilter === CATEGORY_ALL ||
+        (effectiveCategoryFilter === CATEGORY_NONE ? !a.memo_category : a.memo_category === effectiveCategoryFilter)
+      if (!matchType || !matchStatus || !matchContact || !matchCategory) return false
       if (!query) return true
       const target = resolveTarget(a)
       return a.title?.includes(query) || a.memo?.includes(query) || target.name.includes(query)
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allActivities, typeFilter, statusFilter, query, taskStatuses, contactsMap, effectiveContactFilter, dealsMap])
+  }, [allActivities, typeFilter, statusFilter, query, taskStatuses, contactsMap, effectiveContactFilter, dealsMap, effectiveCategoryFilter])
 
   const grouped = useMemo(() => {
     const map = new Map<string, Activity[]>()
@@ -349,6 +369,19 @@ export default function ActivitiesPage() {
             ))}
           </select>
         )}
+        {categoryOptions.length > 0 && (
+          <>
+            <span className="text-xs font-medium text-gray-500 ml-2">カテゴリ:</span>
+            <select
+              value={effectiveCategoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="text-sm border border-gray-200 rounded-xl px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 text-gray-700">
+              <option value={CATEGORY_ALL}>すべて</option>
+              {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+              <option value={CATEGORY_NONE}>カテゴリなし</option>
+            </select>
+          </>
+        )}
         {contactOptions.length > 0 && (
           <>
             <span className="text-xs font-medium text-gray-500 ml-2">クライアント:</span>
@@ -468,6 +501,11 @@ export default function ActivitiesPage() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className={cn('text-xs font-semibold px-1.5 py-0.5 rounded', color)}>{label}</span>
+                                {activity.memo_category && (
+                                  <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-600 border border-orange-100">
+                                    {activity.memo_category}
+                                  </span>
+                                )}
                                 {activity.title && (
                                   <span className={cn('text-sm font-medium text-gray-800', isDone && 'line-through text-gray-400')}>
                                     {activity.title}

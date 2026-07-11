@@ -1,5 +1,16 @@
 import { getSupabase } from './client'
-import type { Activity } from '@/types/database'
+import type { Activity, DivisionMemoCategory } from '@/types/database'
+
+// カテゴリ未設定の事業部向けフォールバック（020適用前・カテゴリ0件でもすぐ使えるように）
+export const DEFAULT_MEMO_CATEGORY_NAMES: string[] = ['顧客', '案件', '面談', '契約']
+
+// 020マイグレーション未適用の環境で memo_category 列が無くても
+// 通常の活動記録まで巻き添えで失敗させないための判定（deals.tsと同じ実装。
+// 列不在を示す文言もあわせて要求し、CHECK制約違反等での誤検知を防ぐ）
+function isMissingColumnError(error: { message?: string } | null, column: string): boolean {
+  const msg = error?.message ?? ''
+  return msg.includes(column) && (msg.includes('column') || msg.includes('schema cache'))
+}
 
 export async function fetchActivitiesByUser(userId: string): Promise<Activity[]> {
   const { data, error } = await getSupabase()
@@ -25,19 +36,28 @@ export async function fetchActivitiesByTarget(targetType: string, targetId: stri
 
 export async function createActivity(input: {
   targetType: string; targetId: string; userId?: string; activityType: string
-  title?: string; memo?: string; dueDate?: string; status?: string; actionDate?: string
+  title?: string; memo?: string; memoCategory?: string; dueDate?: string; status?: string; actionDate?: string
 }): Promise<string> {
-  const { data, error } = await getSupabase()
-    .from('activities')
-    .insert({
-      target_type: input.targetType, target_id: input.targetId,
-      user_id: input.userId ?? null, activity_type: input.activityType,
-      title: input.title ?? null, memo: input.memo ?? null,
-      due_date: input.dueDate ?? null, status: input.status ?? 'done',
-      action_date: input.actionDate ?? new Date().toISOString(),
-    })
-    .select('id').single()
+  const payload: Record<string, unknown> = {
+    target_type: input.targetType, target_id: input.targetId,
+    user_id: input.userId ?? null, activity_type: input.activityType,
+    title: input.title ?? null, memo: input.memo ?? null,
+    due_date: input.dueDate ?? null, status: input.status ?? 'done',
+    action_date: input.actionDate ?? new Date().toISOString(),
+  }
+  // 値が指定されたときだけ任意カラム（020）を含める
+  if (input.memoCategory !== undefined) payload.memo_category = input.memoCategory
+
+  const insert = (p: Record<string, unknown>) =>
+    getSupabase().from('activities').insert(p).select('id').single()
+
+  let { data, error } = await insert(payload)
+  if (error && 'memo_category' in payload && isMissingColumnError(error, 'memo_category')) {
+    delete payload.memo_category
+    ;({ data, error } = await insert(payload))
+  }
   if (error) throw error
+  if (!data) throw new Error('活動の作成結果を取得できませんでした')
   return data.id
 }
 
@@ -134,10 +154,42 @@ function toActivity(r: Record<string, unknown>): Activity {
     activity_type: r.activity_type as Activity['activity_type'],
     title: r.title as string | undefined,
     memo: r.memo as string | undefined,
+    memo_category: (r.memo_category as string | null) ?? undefined,
     due_date: r.due_date as string | undefined,
     status: r.status as Activity['status'],
     action_date: r.action_date as string,
     created_at: r.created_at as string,
     users: r.users as Activity['users'],
   }
+}
+
+// ─── 事業部別メモカテゴリ（division_memo_categories・020） ─────────
+
+export async function fetchDivisionMemoCategories(divisionId: string): Promise<DivisionMemoCategory[]> {
+  const { data, error } = await getSupabase()
+    .from('division_memo_categories')
+    .select('*')
+    .eq('division_id', divisionId)
+    .order('sort_order')
+  if (error) throw error
+  return (data ?? []).map((r) => ({
+    id: r.id as string,
+    division_id: r.division_id as string,
+    name: r.name as string,
+    sort_order: (r.sort_order as number) ?? 0,
+  }))
+}
+
+export async function createDivisionMemoCategory(input: {
+  divisionId: string; name: string; sortOrder: number
+}): Promise<void> {
+  const { error } = await getSupabase()
+    .from('division_memo_categories')
+    .insert({ division_id: input.divisionId, name: input.name, sort_order: input.sortOrder })
+  if (error) throw error
+}
+
+export async function deleteDivisionMemoCategory(id: string): Promise<void> {
+  const { error } = await getSupabase().from('division_memo_categories').delete().eq('id', id)
+  if (error) throw error
 }

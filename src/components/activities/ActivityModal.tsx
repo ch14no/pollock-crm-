@@ -8,7 +8,7 @@ import { ContactPicker } from '@/components/ui/ContactPicker'
 import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { createActivity, upsertTaskMeta } from '@/lib/db/activities'
+import { createActivity, upsertTaskMeta, fetchDivisionMemoCategories, DEFAULT_MEMO_CATEGORY_NAMES } from '@/lib/db/activities'
 import { fetchDivisionUsers } from '@/lib/db/users'
 import { getInitials, cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
@@ -26,6 +26,7 @@ interface ActivityFormState {
   type: ActivityType
   title: string
   memo: string
+  memoCategory: string // ''=カテゴリなし
   contactId: string
   assigneeId: string
   actionDate: string
@@ -44,11 +45,13 @@ export function ActivityModal() {
   const [taskImportance, setTaskImportance] = useState(false)
   const [taskScope, setTaskScope] = useState<'personal' | 'team'>('personal')
   const [divisionMembers, setDivisionMembers] = useState<User[]>([])
+  // 用途別カテゴリの選択肢（事業部設定 or 既定値。M&A事業部要望⑰）
+  const [categoryNames, setCategoryNames] = useState<string[]>(DEFAULT_MEMO_CATEGORY_NAMES)
 
   const isManager = currentUser?.role === 'manager' || currentUser?.role === 'super_admin'
 
   const [form, setForm] = useState<ActivityFormState>({
-    type: 'call', title: '', memo: '', contactId: '',
+    type: 'call', title: '', memo: '', memoCategory: '', contactId: '',
     assigneeId: currentUser?.id ?? '',
     actionDate: todayStr(), dueDate: '', status: 'todo',
   })
@@ -56,7 +59,7 @@ export function ActivityModal() {
   useEffect(() => {
     if (!activityModal.isOpen) return
     setForm({
-      type: 'call', title: '', memo: '',
+      type: 'call', title: '', memo: '', memoCategory: '',
       contactId: activityModal.prefillContactId ?? '',
       assigneeId: currentUser?.id ?? '',
       actionDate: todayStr(), dueDate: '', status: 'todo',
@@ -69,6 +72,20 @@ export function ActivityModal() {
     if (isManager && activeDivisionId && isSupabaseConfigured()) {
       fetchDivisionUsers(activeDivisionId).then(setDivisionMembers)
     }
+    // 用途別カテゴリを取得。未設定の事業部は既定値へフォールバック。
+    // 取得失敗（＝020未適用でmemo_category列も無い環境）では空にしてカテゴリUIごと非表示にし、
+    // 「選んだのに保存されないカテゴリ」を提示しない。前回開いた事業部の値が残らないよう
+    // 毎回結果で置き換え、遅延レスポンスが現在の表示を上書きしないようキャンセルする
+    let cancelled = false
+    if (activeDivisionId && isSupabaseConfigured()) {
+      fetchDivisionMemoCategories(activeDivisionId)
+        .then((cats) => {
+          if (cancelled) return
+          setCategoryNames(cats.length > 0 ? cats.map((c) => c.name) : DEFAULT_MEMO_CATEGORY_NAMES)
+        })
+        .catch(() => { if (!cancelled) setCategoryNames([]) })
+    }
+    return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activityModal.isOpen])
 
@@ -106,6 +123,7 @@ export function ActivityModal() {
           activityType: form.type,
           title:        form.title.trim() || undefined,
           memo:         form.memo.trim() || undefined,
+          memoCategory: form.memoCategory || undefined,
           dueDate:      isTask && form.dueDate ? new Date(form.dueDate).toISOString() : undefined,
           status:       form.status,
           actionDate:   new Date(form.actionDate).toISOString(),
@@ -123,6 +141,7 @@ export function ActivityModal() {
         activity_type: form.type,
         title:         form.title.trim() || undefined,
         memo:          form.memo.trim() || undefined,
+        memo_category: form.memoCategory || undefined,
         due_date:      isTask && form.dueDate ? new Date(form.dueDate).toISOString() : undefined,
         status:        form.status,
         action_date:   new Date(form.actionDate).toISOString(),
@@ -233,6 +252,35 @@ export function ActivityModal() {
             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
           />
         </div>
+
+        {/* 用途別カテゴリ（⑰・省略可）。選択肢が無い（020未適用）ときは非表示 */}
+        {categoryNames.length > 0 && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">カテゴリ（省略可）</label>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button type="button"
+              onClick={() => setForm((f) => ({ ...f, memoCategory: '' }))}
+              aria-pressed={form.memoCategory === ''}
+              className={cn('px-3 py-1 rounded-full text-xs font-medium border transition-all',
+                form.memoCategory === ''
+                  ? 'bg-gray-700 text-white border-gray-700'
+                  : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50')}>
+              なし
+            </button>
+            {categoryNames.map((name) => (
+              <button key={name} type="button"
+                onClick={() => setForm((f) => ({ ...f, memoCategory: f.memoCategory === name ? '' : name }))}
+                aria-pressed={form.memoCategory === name}
+                className={cn('px-3 py-1 rounded-full text-xs font-medium border transition-all',
+                  form.memoCategory === name
+                    ? 'bg-orange-500 text-white border-orange-500'
+                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50')}>
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+        )}
 
         {/* 日時 */}
         <div className="grid grid-cols-2 gap-3">

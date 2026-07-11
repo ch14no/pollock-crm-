@@ -182,12 +182,22 @@ export interface Activity {
   activity_type: ActivityType
   title?: string
   memo?: string
+  // 用途別カテゴリ（顧客/案件/面談/契約等・事業部で設定可能。M&A事業部要望⑰）
+  memo_category?: string
   due_date?: string
   status: ActivityStatus
   action_date: string
   created_at: string
   // joined
   users?: User
+}
+
+// 事業部ごとの活動メモカテゴリ
+export interface DivisionMemoCategory {
+  id: string
+  division_id: string
+  name: string
+  sort_order: number
 }
 
 export interface Tossup {
