@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Noto_Sans_JP } from 'next/font/google'
 import './globals.css'
 import { Toaster } from 'react-hot-toast'
@@ -14,8 +14,18 @@ export const metadata: Metadata = {
   description: '株式会社ポロック グループ統合CRM',
   icons: {
     icon: '/characters/char-painter.png',
-    apple: '/characters/char-painter.png',
+    apple: '/pollock-logo.png',
   },
+  // iOSの「ホーム画面に追加」でスタンドアロン起動させる（PWA化）
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Pollock CRM',
+  },
+}
+
+export const viewport: Viewport = {
+  themeColor: '#f97316',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

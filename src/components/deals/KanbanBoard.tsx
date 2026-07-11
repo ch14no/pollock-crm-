@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   DndContext, DragEndEvent, DragStartEvent,
-  PointerSensor, useSensor, useSensors, DragOverlay, closestCorners,
+  MouseSensor, TouchSensor, useSensor, useSensors, DragOverlay, closestCorners,
   useDroppable,
 } from '@dnd-kit/core'
 import {
@@ -115,6 +115,9 @@ function DealCard({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.4 : 1,
+    // タッチ操作: 長押しドラッグ（TouchSensor）と縦スクロールを両立させる。
+    // 'none'にするとカード上でスクロールできなくなるためmanipulationに留める
+    touchAction: 'manipulation' as const,
   }
 
   const assignee = deal.users ?? null
@@ -482,8 +485,11 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
     else columnRefs.current.delete(stageId)
   }, [])
 
+  // マウスは従来どおり5px移動でドラッグ開始。タッチはスクロールと区別するため
+  // 長押し（250ms）でドラッグ開始（スマホでカードを動かせない問題への対応）
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } })
   )
 
   const findDeal = (id: string): Deal | undefined => {

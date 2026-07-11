@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, Activity, CheckSquare, Rocket, Menu, X, LogOut, ChevronDown } from 'lucide-react'
+import { LayoutDashboard, Users, Activity, CheckSquare, Rocket, Menu, X, LogOut, ChevronDown, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { NAV_ITEMS } from '@/components/layout/Sidebar'
@@ -27,6 +27,14 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
   const router = useRouter()
   const { activeDivision, divisions, setActiveDivision, currentUser } = useAppStore()
   const userOwnDivisionIds = useAppStore((s) => s.userOwnDivisionIds)
+  const [search, setSearch] = useState('')
+
+  // デスクトップのヘッダー検索と同じ動き（顧客ページへ検索クエリ付きで遷移）
+  const handleSearch = () => {
+    if (!search.trim()) return
+    onClose()
+    router.push(`/contacts?q=${encodeURIComponent(search.trim())}`)
+  }
 
   // 事業部セレクタは自分の所属事業部のみ（Sidebarと同ロジック）
   const selectableDivisions = useMemo(() => {
@@ -59,6 +67,31 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
             className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100">
             <X size={18} />
           </button>
+        </div>
+
+        {/* 検索（デスクトップヘッダーのグローバル検索のモバイル版） */}
+        <div className="px-5 py-3 border-b border-gray-100">
+          <div className="relative">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSearch() }}
+              placeholder="顧客・商談を検索..."
+              aria-label="顧客・商談を検索"
+              className="w-full pl-9 pr-16 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-lg
+                focus:outline-none focus:ring-2 focus:ring-orange-500 placeholder:text-gray-400"
+            />
+            {search.trim() && (
+              <button
+                onClick={handleSearch}
+                className="absolute right-2 top-1/2 -translate-y-1/2 px-2.5 py-1 bg-orange-500 text-white text-xs font-medium rounded-md hover:bg-orange-600"
+              >
+                検索
+              </button>
+            )}
+          </div>
         </div>
 
         {/* 事業部切替 */}

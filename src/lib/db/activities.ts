@@ -133,6 +133,36 @@ export async function fetchActivitiesByCompany(companyId: string, contactIds: st
     .sort((a, b) => new Date(b.action_date).getTime() - new Date(a.action_date).getTime())
 }
 
+// 通知欄用: 自事業部の商談の直近ステージ変更（015のトリガーが記録した活動）。
+// excludeUserId には自分のIDを渡し、自分の操作は通知に出さない
+export async function fetchRecentDealStageChanges(
+  divisionId: string, sinceIso: string, excludeUserId?: string
+): Promise<Activity[]> {
+  const { data: deals, error: dealsError } = await getSupabase()
+    .from('deals')
+    .select('id')
+    .eq('division_id', divisionId)
+    .order('updated_at', { ascending: false })
+    .limit(500)
+  if (dealsError) throw dealsError
+  const dealIds = (deals ?? []).map((d: { id: string }) => d.id)
+  if (dealIds.length === 0) return []
+
+  let query = getSupabase()
+    .from('activities')
+    .select('*, users:user_id(id,name,email,role,created_at)')
+    .eq('target_type', 'deal')
+    .in('target_id', dealIds)
+    .like('title', 'ステージ変更:%')
+    .gte('action_date', sinceIso)
+    .order('action_date', { ascending: false })
+    .limit(20)
+  if (excludeUserId) query = query.neq('user_id', excludeUserId)
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []).map(toActivity)
+}
+
 export async function deleteActivity(id: string): Promise<void> {
   const { error } = await getSupabase().from('activities').delete().eq('id', id)
   if (error) throw error

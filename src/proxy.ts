@@ -70,6 +70,8 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // manifest.webmanifest を除外: ブラウザのマニフェスト取得はCookieを送らない仕様のため、
+    // 認証リダイレクトに掛かるとHTMLが返り「Manifest: Syntax error」でPWAが壊れる
+    '/((?!_next/static|_next/image|favicon.ico|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
