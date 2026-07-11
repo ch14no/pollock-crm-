@@ -11,7 +11,7 @@
 **Pollock Core CRM**は、株式会社ポロック（SES・人材派遣・介護医療人材・財務支援・M&A等を営むグループ企業）の**グループ横断・事業部制CRM**。顧客（リード）・商談・活動・タスクを事業部単位で管理し、事業部間で顧客を引き継ぐ「**トスアップ**」機能を中核に持つ。
 
 - **リポジトリ**: `C:\Users\azuma\pollock-crm\`（GitHub: `ch14no/pollock-crm-`）
-- **デプロイ**: Vercel（GitHubのmainへのpushで自動デプロイ）。本番URL: Vercelダッシュボード参照（リポジトリ内に記録なし）
+- **デプロイ**: Vercel（GitHubのmainへのpushで自動デプロイ）。本番URL: https://pollock-crm.vercel.app
 - **状態**: 本番運用中。実Supabaseに接続済みで、社内から実際のバグ報告・要望が届く段階（docs/bug-report-*.md参照）
 
 ### 兄弟システム（グループアプリ）
