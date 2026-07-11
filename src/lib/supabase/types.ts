@@ -19,9 +19,9 @@ export interface Database {
         Update: { is_primary?: boolean }
       }
       companies: {
-        Row: { id: string; name: string; corporate_number: string | null; website: string | null; created_at: string; updated_at: string }
-        Insert: { name: string; corporate_number?: string | null; website?: string | null }
-        Update: { name?: string; website?: string | null }
+        Row: { id: string; name: string; corporate_number: string | null; website: string | null; ir_url: string | null; created_at: string; updated_at: string }
+        Insert: { name: string; corporate_number?: string | null; website?: string | null; ir_url?: string | null }
+        Update: { name?: string; corporate_number?: string | null; website?: string | null; ir_url?: string | null }
       }
       contacts: {
         Row: { id: string; company_id: string | null; division_id: string; assigned_user_id: string | null; name: string; email: string | null; phone: string | null; position: string | null; tags: string[]; custom_attributes: Json; notes: string | null; created_at: string; updated_at: string }

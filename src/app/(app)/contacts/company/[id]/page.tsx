@@ -5,9 +5,11 @@ import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Building2, Phone, Mail, Rocket,
   MessageSquare, CheckSquare, Users, FileText, ChevronDown, ExternalLink, Hash,
+  Landmark, Edit2,
 } from 'lucide-react'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchCompanyById, fetchContactsByCompany } from '@/lib/db/companies'
+import { CompanyEditModal } from '@/components/contacts/CompanyEditModal'
 import { fetchActivitiesByCompany } from '@/lib/db/activities'
 import type { Company, Contact, Activity } from '@/types/database'
 import { Button } from '@/components/ui/Button'
@@ -47,12 +49,17 @@ function DivisionBadge({ divisionId }: { divisionId: string }) {
 export default function CompanyDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
+  const currentUser = useAppStore((s) => s.currentUser)
 
   const [company, setCompany] = useState<Company | null>(null)
   const [contacts, setContacts] = useState<Contact[]>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [editOpen, setEditOpen] = useState(false)
+
+  // 会社は全社共有マスタのため、編集はDBのcompanies_updateポリシーと同じ manager / super_admin のみ
+  const canEditCompany = currentUser?.role === 'super_admin' || currentUser?.role === 'manager'
 
   useEffect(() => {
     let cancelled = false
@@ -118,7 +125,16 @@ export default function CompanyDetailPage() {
       <div className="flex flex-col lg:flex-row gap-4">
         {/* ─── Left pane: 会社情報 ─── */}
         <div className="lg:w-1/3 space-y-3">
-          <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-5">
+          <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-5 relative">
+            {canEditCompany && (
+              <button
+                onClick={() => setEditOpen(true)}
+                aria-label="会社情報を編集"
+                className="absolute top-3 right-3 p-1.5 rounded-lg text-gray-300 hover:text-orange-500 hover:bg-orange-50 transition-colors"
+              >
+                <Edit2 size={15} />
+              </button>
+            )}
             <div className="flex flex-col items-center mb-4">
               <div className="w-16 h-16 rounded-xl bg-blue-50 flex items-center justify-center mb-3">
                 <Building2 size={28} className="text-blue-500" />
@@ -144,6 +160,20 @@ export default function CompanyDetailPage() {
                     className="hover:text-orange-600 truncate text-sm"
                   >
                     {company.website}
+                  </a>
+                </div>
+              )}
+              {/* IRページ（M&A事業部要望⑳。ニュース・決算資料共有の起点） */}
+              {company.ir_url && (
+                <div className="flex items-center gap-2 text-gray-600 min-w-0">
+                  <Landmark size={14} className="flex-shrink-0 text-gray-400" />
+                  <a
+                    href={company.ir_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-orange-600 truncate text-sm"
+                  >
+                    IRページ
                   </a>
                 </div>
               )}
@@ -259,6 +289,14 @@ export default function CompanyDetailPage() {
           </div>
         </div>
       </div>
+
+      {canEditCompany && editOpen && (
+        <CompanyEditModal
+          onClose={() => setEditOpen(false)}
+          company={company}
+          onSaved={setCompany}
+        />
+      )}
     </div>
   )
 }

@@ -4,20 +4,11 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { Search, ExternalLink, X, AlertTriangle, FileText } from 'lucide-react'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Badge } from '@/components/ui/Badge'
-import { formatRelativeTime, cn } from '@/lib/utils'
+import { formatRelativeTime, cn, matchSearch } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchDocumentsByDivision } from '@/lib/db/documents'
 import type { DealDocument } from '@/types/database'
-
-function normalize(str: string): string {
-  return str.toLowerCase().normalize('NFKC')
-}
-
-function matchSearch(value: string | undefined, query: string): boolean {
-  if (!value) return false
-  return normalize(value).includes(normalize(query))
-}
 
 export default function DocumentsPage() {
   const activeDivisionId = useAppStore((s) => s.activeDivisionId)

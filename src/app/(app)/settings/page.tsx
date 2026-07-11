@@ -8,7 +8,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import {
   Save, User, Building2, Bell, Shield, Users,
   Settings2, Tag, Trash2, Plus,
-  Check, X, ArrowUp, ArrowDown, Edit2, Eye, EyeOff, KeyRound, Info, FileText,
+  Check, X, ArrowUp, ArrowDown, Edit2, Eye, EyeOff, KeyRound, Info, FileText, BookOpen,
 } from 'lucide-react'
 import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS, DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
 import type { Role } from '@/types/database'
@@ -29,7 +29,10 @@ import {
 import {
   fetchDivisionDocTypes, createDivisionDocType, updateDivisionDocType, deleteDivisionDocType,
 } from '@/lib/db/documents'
-import type { DivisionDocType } from '@/types/database'
+import {
+  fetchDivisionKnowledgeCategories, createDivisionKnowledgeCategory, deleteDivisionKnowledgeCategory,
+} from '@/lib/db/knowledge'
+import type { DivisionDocType, DivisionKnowledgeCategory } from '@/types/database'
 import type { User as UserType, Division } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -210,6 +213,7 @@ export default function SettingsPage() {
           <DivisionFieldsPanel />
           <ProductsPanel />
           <DocTypesPanel />
+          <KnowledgeCategoriesPanel />
           <TaskStagesPanel />
         </>
       )}
@@ -1571,6 +1575,122 @@ function DocTypesPanel() {
             placeholder="カテゴリ名を入力（例: 契約書）"
             className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
           <button onClick={handleAddType} disabled={docSaving || docsLoading || !dbReady}
+            className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50">
+            <Plus size={13} />追加
+          </button>
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+// ─── ナレッジカテゴリ管理 ─────────────────────────────────────────
+function KnowledgeCategoriesPanel() {
+  const { divisions } = useAppStore()
+  const [selectedDivId, setSelectedDivId] = useState(divisions[0]?.id ?? '')
+  const [categories, setCategories] = useState<DivisionKnowledgeCategory[]>([])
+  // 018マイグレーション（division_knowledge_categories）が利用可能か
+  const [dbReady, setDbReady] = useState(false)
+  const [catLoading, setCatLoading] = useState(false)
+  const [catSaving, setCatSaving] = useState(false)
+  const [newCatName, setNewCatName] = useState('')
+
+  // マウント時に事業部一覧が未取得だった場合、取得後に先頭を選択し直す
+  if (!selectedDivId && divisions.length > 0) {
+    setSelectedDivId(divisions[0].id)
+  }
+
+  const reload = async (divId: string) => {
+    const data = await fetchDivisionKnowledgeCategories(divId)
+    setCategories(data)
+  }
+
+  useEffect(() => {
+    if (!selectedDivId || !isSupabaseConfigured()) return
+    setCatLoading(true)
+    reload(selectedDivId)
+      .then(() => setDbReady(true))
+      .catch(() => setDbReady(false))
+      .finally(() => setCatLoading(false))
+  }, [selectedDivId]) // eslint-disable-line
+
+  const handleAdd = async () => {
+    // Enterキー経由の呼び出しはボタンのdisabledを迂回するため、ここでもガードする
+    if (!dbReady || catSaving || catLoading) return
+    const trimmed = newCatName.trim()
+    if (!trimmed) return
+    if (categories.some((c) => c.name === trimmed)) { toast.error('同じカテゴリ名がすでに存在します'); return }
+    setCatSaving(true)
+    try {
+      await createDivisionKnowledgeCategory({ divisionId: selectedDivId, name: trimmed, sortOrder: categories.length })
+      await reload(selectedDivId)
+      setNewCatName('')
+      toast.success(`「${trimmed}」を追加しました`)
+    } catch {
+      toast.error('カテゴリの追加に失敗しました')
+    } finally { setCatSaving(false) }
+  }
+
+  const handleDelete = async (c: DivisionKnowledgeCategory) => {
+    if (!window.confirm(`カテゴリ「${c.name}」を削除しますか？\n（登録済みの投稿は削除されず、カテゴリ名だけが残ります）`)) return
+    setCatSaving(true)
+    try {
+      await deleteDivisionKnowledgeCategory(c.id)
+      await reload(selectedDivId)
+      toast.success(`「${c.name}」を削除しました`)
+    } catch {
+      toast.error('削除に失敗しました')
+    } finally { setCatSaving(false) }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2 font-bold text-gray-700">
+          <BookOpen size={18} />ナレッジカテゴリ管理
+        </div>
+      </CardHeader>
+      <CardBody>
+        <p className="text-xs text-gray-500 mb-4">
+          ナレッジページの投稿で選択できるカテゴリを事業部ごとに管理します。
+        </p>
+
+        {isSupabaseConfigured() && !dbReady && !catLoading && (
+          <div className="mb-4 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-800">
+            ナレッジベースのDBテーブル（018_knowledge_base.sql）が未適用のため利用できません。
+          </div>
+        )}
+
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-gray-500 mb-1">対象事業部</label>
+          <select value={selectedDivId} onChange={(e) => { setSelectedDivId(e.target.value); setNewCatName('') }}
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
+            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </div>
+
+        <div className="space-y-1.5 mb-3">
+          {categories.length === 0 && !catLoading && dbReady && (
+            <p className="text-xs text-gray-400 py-2 text-center">
+              カテゴリ未設定（既定の「ナレッジ・研修資料・ニュース」が使われます）
+            </p>
+          )}
+          {categories.map((c) => (
+            <div key={c.id} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
+              <span className="flex-1 text-sm text-gray-700">{c.name}</span>
+              <button onClick={() => handleDelete(c)} disabled={catSaving || catLoading}
+                aria-label={`${c.name}を削除`}
+                className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50"><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          {/* IMEの変換確定Enterで誤送信しないようisComposing中は無視する */}
+          <input type="text" value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleAdd() }}
+            placeholder="カテゴリ名を入力（例: 業界レポート）"
+            className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
+          <button onClick={handleAdd} disabled={catSaving || catLoading || !dbReady}
             className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50">
             <Plus size={13} />追加
           </button>

@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, Users, Briefcase, Activity,
   ArrowLeftRight, Upload, Settings, Rocket, ChevronDown,
-  LogOut, BarChart2, CheckSquare, ExternalLink, LayoutGrid, X, FileText,
+  LogOut, BarChart2, CheckSquare, ExternalLink, LayoutGrid, X, FileText, BookOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
@@ -23,6 +23,7 @@ const NAV_ITEMS = [
   { href: '/tasks',       label: 'タスク管理',   icon: CheckSquare },
   { href: '/tossups',     label: 'トスアップ',   icon: ArrowLeftRight },
   { href: '/documents',   label: '資料',         icon: FileText },
+  { href: '/knowledge',   label: 'ナレッジ',     icon: BookOpen },
   { href: '/analysis',    label: '分析',         icon: BarChart2 },
   { href: '/import',      label: 'インポート・エクスポート', icon: Upload },
   { href: '/settings',    label: '設定',         icon: Settings },

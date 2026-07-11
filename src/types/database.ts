@@ -31,6 +31,7 @@ export interface Company {
   name: string
   corporate_number?: string
   website?: string
+  ir_url?: string
   created_at: string
   updated_at: string
 }
@@ -92,6 +93,38 @@ export interface DivisionDocType {
   name: string
   sort_order: number
   is_pinned: boolean
+}
+
+// ナレッジベース（事業部内の知見・研修資料・ニュース共有。M&A事業部要望⑱⑲⑳）
+export type KnowledgeVisibility = 'division' | 'company'
+
+export interface KnowledgeLink {
+  name: string
+  url: string
+}
+
+export interface KnowledgePost {
+  id: string
+  division_id: string
+  category: string
+  title: string
+  body: string // Markdown
+  visibility: KnowledgeVisibility
+  links: KnowledgeLink[]
+  created_by?: string
+  created_at: string
+  updated_at: string
+  // joined
+  users?: { id: string; name: string }
+  divisions?: { id: string; name: string; color_code?: string }
+}
+
+// 事業部ごとのナレッジカテゴリ
+export interface DivisionKnowledgeCategory {
+  id: string
+  division_id: string
+  name: string
+  sort_order: number
 }
 
 // 案件の金銭管理（手数料・報酬の請求/入金状況）

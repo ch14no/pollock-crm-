@@ -5,6 +5,21 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// モバイルの自動大文字化（HTTPS://...）も有効なURLとして受け付ける
+export function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value.trim())
+}
+
+// 検索用の正規化（全角/半角・大文字小文字を吸収）
+export function normalizeForSearch(str: string): string {
+  return str.toLowerCase().normalize('NFKC')
+}
+
+export function matchSearch(value: string | undefined, query: string): boolean {
+  if (!value) return false
+  return normalizeForSearch(value).includes(normalizeForSearch(query))
+}
+
 export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('ja-JP', {
     style: 'currency',

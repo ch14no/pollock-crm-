@@ -1,6 +1,15 @@
 import { getSupabase } from './client'
 import type { Company, Contact } from '@/types/database'
 
+function toCompany(data: Record<string, unknown>): Company {
+  return {
+    ...data,
+    corporate_number: data.corporate_number ?? undefined,
+    website: data.website ?? undefined,
+    ir_url: data.ir_url ?? undefined,
+  } as Company
+}
+
 export async function fetchCompanyById(id: string): Promise<Company | null> {
   const { data, error } = await getSupabase()
     .from('companies')
@@ -8,11 +17,27 @@ export async function fetchCompanyById(id: string): Promise<Company | null> {
     .eq('id', id)
     .single()
   if (error) return null
-  return {
-    ...data,
-    corporate_number: data.corporate_number ?? undefined,
-    website: data.website ?? undefined,
-  } as Company
+  return toCompany(data)
+}
+
+// 会社情報の更新。RLS上、更新できるのは manager / super_admin のみ
+// （companies_updateポリシー。IRリンク＝M&A事業部要望⑳もこの権限に従う）
+export async function updateCompany(id: string, updates: {
+  name?: string; corporateNumber?: string | null; website?: string | null; irUrl?: string | null
+}): Promise<Company> {
+  const patch: Record<string, unknown> = {}
+  if (updates.name !== undefined) patch.name = updates.name
+  if (updates.corporateNumber !== undefined) patch.corporate_number = updates.corporateNumber
+  if (updates.website !== undefined) patch.website = updates.website
+  if (updates.irUrl !== undefined) patch.ir_url = updates.irUrl
+  const { data, error } = await getSupabase()
+    .from('companies')
+    .update(patch)
+    .eq('id', id)
+    .select('*')
+    .single()
+  if (error) throw error
+  return toCompany(data)
 }
 
 export async function fetchContactsByCompany(companyId: string, opts?: { divisionId?: string }): Promise<Contact[]> {

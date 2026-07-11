@@ -11,7 +11,7 @@ import {
 } from '@/lib/db/documents'
 import type { DealDocument, DivisionDocType } from '@/types/database'
 import { useAppStore } from '@/store/appStore'
-import { cn } from '@/lib/utils'
+import { cn, isHttpUrl } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 interface DealDocumentsSectionProps {
@@ -26,11 +26,6 @@ interface DocumentFormState {
   docType: string
   name: string
   url: string
-}
-
-function isHttpUrl(value: string): boolean {
-  // モバイルの自動大文字化（HTTPS://...）も有効なURLとして受け付ける
-  return /^https?:\/\//i.test(value.trim())
 }
 
 export function DealDocumentsSection({ dealId, divisionId }: DealDocumentsSectionProps) {
