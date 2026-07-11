@@ -15,7 +15,8 @@ import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchUnreadTossupCount } from '@/lib/db/tossups'
 import toast from 'react-hot-toast'
 
-const NAV_ITEMS = [
+// モバイルのメニュードロワー（BottomNav）とも共有する
+export const NAV_ITEMS = [
   { href: '/dashboard',   label: 'ホーム',       icon: LayoutDashboard },
   { href: '/contacts',    label: '顧客',         icon: Users },
   { href: '/deals',       label: '商談',         icon: Briefcase },

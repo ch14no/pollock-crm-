@@ -15,6 +15,7 @@ import {
   fetchDivisionStagesMapped, fetchDivisionTabsMapped, fetchDivisionCustomFields,
 } from '@/lib/db/divisions'
 import { fetchDivisionProductsData } from '@/lib/db/products'
+import { MOCK_DIVISIONS, MOCK_USER, MOCK_USER_DIVISIONS } from '@/lib/mock-data'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { setDivisions, setCurrentUser, setUserOwnDivisions, setActiveDivision, initialized } = useAppStore()
@@ -62,6 +63,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       // rehydrate() は同期storage実装では同期完結するが、型上はPromiseを
       // 返し得るため、以降のactiveDivisionId読み取りより確実に先に完了させる
       await Promise.resolve(useAppStore.persist.rehydrate())
+
+      // デモモード: Supabase未接続時はモックデータで初期化する
+      // （setDivisionsがinitializedを立てないと全ページがスピナーのままになる）
+      if (!isSupabaseConfigured()) {
+        const state = useAppStore.getState()
+        if (!state.currentUser) setCurrentUser(MOCK_USER)
+        setUserOwnDivisions(MOCK_USER_DIVISIONS.map((d) => d.division_id))
+        setDivisions(MOCK_DIVISIONS)
+        return
+      }
 
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
