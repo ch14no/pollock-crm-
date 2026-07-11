@@ -11,7 +11,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Plus, AlertCircle, Lock, ChevronDown } from 'lucide-react'
+import { Plus, AlertCircle, AlertTriangle, Lock, ChevronDown } from 'lucide-react'
 import { formatCurrency, getStaleDays, getInitials, cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
@@ -30,6 +30,14 @@ const FALLBACK_stages = [
   { id: '受注',         name: '受注 🎉',      won: true,  lost: false },
   { id: '失注',         name: '失注',         won: false, lost: true  },
 ]
+
+// 現行のステージ定義に一致しない商談の受け皿カラム。
+// ステージ再編・タブ削除などでstage_idが迷子になった商談を黙って隠さず、
+// ここに表示して正しい列へドラッグで戻せるようにする（M&A事業部で実際に
+// 「過去の案件がカンバンから消えた」事象が起きた対策）。
+// 該当商談が0件のときは表示されない。
+const UNASSIGNED_STAGE_ID = '__unassigned__'
+const UNASSIGNED_STAGE = { id: UNASSIGNED_STAGE_ID, name: '未分類', won: false, lost: false }
 
 // この件数を超えるカラムのみ仮想化する。少数カラムでは仮想化のオーバーヘッド
 // （measure/absolute配置）がメリットを上回るため、閾値以下は従来の.map()を維持する。
@@ -215,20 +223,30 @@ function StageColumn({
     enabled: shouldVirtualize,
   })
 
+  const isUnassigned = stage.id === UNASSIGNED_STAGE_ID
+
   return (
     <div ref={columnRef} data-stage-id={stage.id} className="flex-shrink-0 w-64">
       <div className={cn(
         'rounded-xl p-3 mb-3 sticky top-0 z-10 backdrop-blur-sm',
+        isUnassigned ? 'bg-yellow-50/95 border border-yellow-300' :
         stage.won ? 'bg-green-50/95 border border-green-200' :
         stage.lost ? 'bg-gray-50/95 border border-gray-200' :
         'bg-gray-100/95'
       )}>
         <div className="flex items-center justify-between mb-1">
-          <h3 className={cn('text-sm font-bold', stage.lost ? 'text-gray-400' : 'text-gray-700')}>
+          <h3 className={cn('text-sm font-bold',
+            isUnassigned ? 'text-yellow-800' : stage.lost ? 'text-gray-400' : 'text-gray-700')}>
+            {isUnassigned && <AlertTriangle size={13} className="inline mr-1 -mt-0.5" />}
             {stage.name}
           </h3>
           <span className="text-xs text-gray-500 bg-white rounded-full px-2 py-0.5">{deals.length}</span>
         </div>
+        {isUnassigned && (
+          <p className="text-[11px] text-yellow-700 leading-snug">
+            現在の列に対応しない商談です。カードを正しい列へドラッグしてください
+          </p>
+        )}
         {total > 0 && (
           <p className={cn('text-xs', stage.lost ? 'text-gray-400 line-through' : 'text-gray-500')}>
             {formatCurrency(total)}
@@ -287,7 +305,7 @@ function StageColumn({
         </div>
       </SortableContext>
 
-      {!readOnly && !stage.lost && (
+      {!readOnly && !stage.lost && !isUnassigned && (
         <button
           onClick={() => onAdd(stage.id)}
           className="mt-2 w-full flex items-center justify-center gap-1 py-2 text-xs text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-colors"
@@ -416,17 +434,28 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
   const buildMap = (deals: Deal[]) => {
     const map: Record<string, Deal[]> = {}
     stages.forEach((s) => { map[s.id] = [] })
+    map[UNASSIGNED_STAGE_ID] = []
     deals.forEach((d) => {
-      // 他事業部の商談は表示しない。事業部切替直後に前事業部のデータが渡ってきた場合、
-      // ステージ不一致のフォールバックで先頭カラムに紛れ込んでいたのを防ぐ
+      // 他事業部の商談は表示しない。事業部切替直後に前事業部のデータが渡ってきた場合に
+      // 「未分類」へ紛れ込むのを防ぐ
       if (activeDivisionId && d.division_id !== activeDivisionId) return
-      // タブがある事業部では、選択中のタブに属するステージの商談のみを対象にする
       if (tabs.length > 0) {
         const rawStages = divisionStages[activeDivisionId ?? ''] ?? []
-        if (tabIdForStage(rawStages, d.stage_id) !== currentTabId) return
+        const dealTabId = tabIdForStage(rawStages, d.stage_id)
+        if (dealTabId === currentTabId) {
+          if (map[d.stage_id]) { map[d.stage_id].push(d); return }
+          map[UNASSIGNED_STAGE_ID].push(d) // 通常は到達しないが安全側
+          return
+        }
+        // 別の（実在する）タブのステージに載っている商談は、そのタブ側で表示する
+        if (dealTabId !== null && tabs.some((t) => t.id === dealTabId)) return
+        // ステージ定義に一致しない／どのタブにも属さないステージの商談 → 未分類。
+        // どのタブを開いていても見えるようにする（隠れて気づけないのが一番の問題のため）
+        map[UNASSIGNED_STAGE_ID].push(d)
+        return
       }
       if (map[d.stage_id]) map[d.stage_id].push(d)
-      else if (map[stages[0]?.id ?? 'リード']) map[stages[0]?.id ?? 'リード'].push(d)
+      else map[UNASSIGNED_STAGE_ID].push(d)
     })
     // 各カラム内を優先度順（高→中→低）に整列。同順位は元の並び（最終更新の新しい順）を維持
     Object.keys(map).forEach((k) => { map[k] = sortByPriority(map[k]) })
@@ -483,6 +512,8 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
     // useDroppable の id（stage.id）にドロップした場合も対応
     const toStage = stages.find((s) => s.id === over.id)?.id ?? findStageForDeal(over.id as string)
     if (!fromStage || !toStage || fromStage === toStage) return
+    // 「未分類」へのドロップは不可（実在しないステージIDを保存しないため）
+    if (toStage === UNASSIGNED_STAGE_ID) return
 
     const deal = findDeal(active.id as string)
     if (!deal) return
@@ -518,11 +549,13 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
   const activeDeal = activeId ? findDeal(activeId) : null
   const lostStageId = stages.find((s) => s.lost)?.id ?? '失注'
   const lostCount = dealsByStage[lostStageId]?.length ?? 0
+  const unassignedCount = dealsByStage[UNASSIGNED_STAGE_ID]?.length ?? 0
   // showLost 切替時以外は同一参照を保ち、IntersectionObserver の無駄な再セットアップを防ぐ
-  const visibleStages = useMemo(
-    () => (showLost ? stages : stages.filter((s) => !s.lost)),
-    [stages, showLost]
-  )
+  const visibleStages = useMemo(() => {
+    const base = showLost ? stages : stages.filter((s) => !s.lost)
+    // 迷子の商談があるときだけ「未分類」カラムを先頭に表示する
+    return unassignedCount > 0 ? [UNASSIGNED_STAGE, ...base] : base
+  }, [stages, showLost, unassignedCount])
   const isDragActive = activeId !== null
 
   return (
