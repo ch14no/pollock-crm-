@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { LOCATIONS } from '@/lib/config'
-import { getInitials, cn } from '@/lib/utils'
+import { getInitials, cn, isValidEmail } from '@/lib/utils'
 import toast from 'react-hot-toast'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
@@ -254,7 +254,7 @@ export default function NewContactPage() {
     const errors: Partial<Record<keyof ContactFields, string>> = {}
     if (!fields.name.trim())    errors.name    = '氏名は必須です'
     if (!fields.company.trim()) errors.company = '会社名は必須です'
-    if (fields.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email)) {
+    if (fields.email && !isValidEmail(fields.email)) {
       errors.email = 'メールアドレスの形式が正しくありません'
     }
     setFieldErrors(errors)
@@ -291,6 +291,12 @@ export default function NewContactPage() {
       if (fields.website)       customAttributes.website = fields.website
       if (meetingContext)       customAttributes.meeting_context = meetingContext
 
+      // 事業部が未確定のまま進むと、保存せずに成功トーストだけ出す「偽の成功」になる。
+      // 本番モードでは必ず保存できる状態かを先に確認する
+      if (isSupabaseConfigured() && !activeDivision) {
+        toast.error('事業部が選択されていません。サイドバーで事業部を選んでからもう一度お試しください')
+        return
+      }
       if (isSupabaseConfigured() && activeDivision) {
         const companyId = fields.company
           ? (await findOrCreateCompany(fields.company)) ?? undefined

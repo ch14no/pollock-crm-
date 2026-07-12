@@ -12,8 +12,9 @@ import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchDealsByDivision } from '@/lib/db/deals'
 import { fetchActivitiesByDivision } from '@/lib/db/activities'
 import { fetchDivisionUsers } from '@/lib/db/users'
-import { MOCK_DEALS, MOCK_ACTIVITIES, MOCK_TEAM_MEMBERS } from '@/lib/mock-data'
+import { MOCK_DEALS, MOCK_ACTIVITIES, MOCK_TEAM_MEMBERS, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import { formatCurrency, getInitials, cn } from '@/lib/utils'
+import { buildWonLostStageIds } from '@/lib/stage-status'
 import type { User, Deal, Activity as ActivityType } from '@/types/database'
 
 function isSameMonth(dateStr: string) {
@@ -105,12 +106,14 @@ function GoalEditor({ member, current, onSave, onCancel }: {
 }
 
 function MemberCard({
-  member, divisionId, allDeals, allActivities,
+  member, divisionId, allDeals, allActivities, wonIds, lostIds,
 }: {
   member: User
   divisionId: string | null
   allDeals: Deal[]
   allActivities: ActivityType[]
+  wonIds: Set<string>
+  lostIds: Set<string>
 }) {
   const router = useRouter()
   const { teamGoals, setTeamGoal, taskStatuses } = useAppStore()
@@ -120,8 +123,8 @@ function MemberCard({
   const myDeals = allDeals.filter(
     (d) => d.assigned_user_id === member.id && (!divisionId || d.division_id === divisionId)
   )
-  const myActiveDeals    = myDeals.filter((d) => d.stage_id !== '受注' && d.stage_id !== '失注')
-  const myWonDeals       = myDeals.filter((d) => d.stage_id === '受注')
+  const myActiveDeals    = myDeals.filter((d) => !wonIds.has(d.stage_id) && !lostIds.has(d.stage_id))
+  const myWonDeals       = myDeals.filter((d) => wonIds.has(d.stage_id))
   const myWonAmountMonth = myWonDeals.filter((d) => isSameMonth(d.updated_at)).reduce((s, d) => s + d.amount, 0)
 
   const myActivities      = allActivities.filter((a) => a.user_id === member.id)
@@ -136,7 +139,7 @@ function MemberCard({
   const goal = teamGoals[member.id]
   const activeGoal = goal?.month === currentMonthKey() ? goal : undefined
 
-  const closedDeals = myDeals.filter((d) => d.stage_id === '受注' || d.stage_id === '失注')
+  const closedDeals = myDeals.filter((d) => wonIds.has(d.stage_id) || lostIds.has(d.stage_id))
   const winRate = closedDeals.length > 0 ? Math.round((myWonDeals.length / closedDeals.length) * 100) : null
 
   return (
@@ -243,7 +246,13 @@ function MemberCard({
 }
 
 export function ManagerView({ divisionId }: { divisionId: string | null }) {
-  const { localDeals, localActivities, taskStatuses } = useAppStore()
+  const { localDeals, localActivities, taskStatuses, divisionStages } = useAppStore()
+
+  // 受注/失注判定は事業部別ステージ定義のIDで行う（名前ハードコードでは本番UUIDに一致しない）
+  const { wonIds, lostIds } = useMemo(() => {
+    const divId = divisionId ?? ''
+    return buildWonLostStageIds(divisionStages[divId] ?? DEFAULT_DIVISION_STAGES[divId])
+  }, [divisionStages, divisionId])
 
   const [dbDeals,      setDbDeals]      = useState<Deal[]>([])
   const [dbActivities, setDbActivities] = useState<ActivityType[]>([])
@@ -271,9 +280,9 @@ export function ManagerView({ divisionId }: { divisionId: string | null }) {
   const members = isSupabaseConfigured() ? teamMembers : (MOCK_TEAM_MEMBERS as unknown as User[])
 
   const divDeals       = allDeals.filter((d) => !divisionId || d.division_id === divisionId)
-  const divActiveDeals = divDeals.filter((d) => d.stage_id !== '受注' && d.stage_id !== '失注')
+  const divActiveDeals = divDeals.filter((d) => !wonIds.has(d.stage_id) && !lostIds.has(d.stage_id))
   const divWonAmountMonth = divDeals
-    .filter((d) => d.stage_id === '受注' && isSameMonth(d.updated_at))
+    .filter((d) => wonIds.has(d.stage_id) && isSameMonth(d.updated_at))
     .reduce((s, d) => s + d.amount, 0)
 
   const divActivitiesMonth = allActivities.filter(
@@ -336,6 +345,8 @@ export function ManagerView({ divisionId }: { divisionId: string | null }) {
                 divisionId={divisionId}
                 allDeals={allDeals}
                 allActivities={allActivities}
+                wonIds={wonIds}
+                lostIds={lostIds}
               />
             ))}
           </div>

@@ -20,6 +20,7 @@ import { fetchContactsByDivision } from '@/lib/db/contacts'
 import { fetchActivitiesByDivision } from '@/lib/db/activities'
 import type { Tossup, Deal, Contact, Activity as DbActivity } from '@/types/database'
 import { formatCurrency, formatDate, formatRelativeTime, getStaleDays, cn } from '@/lib/utils'
+import { buildWonLostStageIds } from '@/lib/stage-status'
 
 type DashView = 'personal' | 'team' | 'manager'
 
@@ -85,22 +86,53 @@ function TaskCard({ task, onClick }: {
 }
 
 // ─── パイプライン棒グラフ（両ビューで共有） ─────────────────────
-function PipelineChart({ activeDeals, stageOrder }: { activeDeals: { stage_id: string; amount: number }[]; stageOrder: string[] }) {
-  const pipeline = stageOrder.map((stage) => {
-    const deals = activeDeals.filter((d) => d.stage_id === stage)
-    return { stage, count: deals.length, amount: deals.reduce((s, d) => s + d.amount, 0) }
-  })
-  const maxCount = Math.max(...pipeline.map((p) => p.count), 1)
+// ステージの照合は id で行う（本番の deals.stage_id は pipeline_stages.id のUUID）。
+// 旧データで stage_id にステージ名が残っている場合のために名前でもフォールバック照合する。
+export interface PipelineStageRow {
+  id: string
+  name: string
+  tabName: string | null
+}
 
+function PipelineChart({ activeDeals, stages }: { activeDeals: { stage_id: string; amount: number }[]; stages: PipelineStageRow[] }) {
   if (activeDeals.length === 0) return <p className="text-sm text-gray-400 text-center py-6">進行中の商談はありません</p>
+
+  // 1商談=1行に必ず割り当てる（idを優先し、旧データ用に名前でもフォールバック。
+  // 同名ステージが複数タブにあっても最初の1行にのみ紐づけ、二重カウントを防ぐ）
+  const buckets = stages.map((stage) => ({ ...stage, count: 0, amount: 0 }))
+  const byId = new Map<string, (typeof buckets)[number]>()
+  const byName = new Map<string, (typeof buckets)[number]>()
+  for (const b of buckets) {
+    if (!byId.has(b.id)) byId.set(b.id, b)
+    if (!byName.has(b.name)) byName.set(b.name, b)
+  }
+  const unmatchedBucket = { count: 0, amount: 0 }
+  for (const d of activeDeals) {
+    const b = byId.get(d.stage_id) ?? byName.get(d.stage_id)
+    if (b) { b.count += 1; b.amount += d.amount }
+    else { unmatchedBucket.count += 1; unmatchedBucket.amount += d.amount }
+  }
+  const unmatched = unmatchedBucket.count
+  const unmatchedAmount = unmatchedBucket.amount
+  // バー幅の基準には未分類行も含める（含めないと未分類が多いとき100%を超えてはみ出す）
+  const maxCount = Math.max(...buckets.map((p) => p.count), unmatched, 1)
+
+  // ステージ数が多い事業部（例: M&Aの売主19＋買主16）では0件の行がノイズになるため、
+  // 件数のある行だけ表示して残りは省略表記にまとめる
+  const isLong = buckets.length > 10
+  const visible = isLong ? buckets.filter((p) => p.count > 0) : buckets
+  const hiddenCount = buckets.length - visible.length
 
   return (
     <div className="space-y-3">
-      {pipeline.map(({ stage, count, amount }, i) => (
-        <div key={stage} className="flex items-center gap-3">
-          <span className="text-sm text-gray-600 w-28 flex-shrink-0">{stage}</span>
+      {visible.map(({ id, name, tabName, count, amount }, i) => (
+        <div key={id} className="flex items-center gap-3">
+          <span className="text-sm text-gray-600 w-36 flex-shrink-0 truncate" title={tabName ? `${tabName}・${name}` : name}>
+            {tabName && <span className="text-xs text-gray-400 mr-1">{tabName}</span>}
+            {name}
+          </span>
           <div className="flex-1 bg-gray-100 rounded-full h-2.5">
-            <div className={`h-2.5 rounded-full transition-all ${STAGE_COLORS[i]}`}
+            <div className={`h-2.5 rounded-full transition-all ${STAGE_COLORS[i % STAGE_COLORS.length]}`}
               style={{ width: count === 0 ? '0%' : `${(count / maxCount) * 100}%` }} />
           </div>
           <span className="text-xs text-gray-500 w-8 text-right flex-shrink-0">{count}件</span>
@@ -109,6 +141,22 @@ function PipelineChart({ activeDeals, stageOrder }: { activeDeals: { stage_id: s
           </span>
         </div>
       ))}
+      {unmatched > 0 && (
+        <div key="__unmatched__" className="flex items-center gap-3">
+          <span className="text-sm text-amber-600 w-36 flex-shrink-0">未分類</span>
+          <div className="flex-1 bg-gray-100 rounded-full h-2.5">
+            <div className="h-2.5 rounded-full bg-amber-300"
+              style={{ width: `${(unmatched / maxCount) * 100}%` }} />
+          </div>
+          <span className="text-xs text-gray-500 w-8 text-right flex-shrink-0">{unmatched}件</span>
+          <span className="text-xs font-medium text-gray-700 w-28 text-right flex-shrink-0">
+            {unmatchedAmount > 0 ? formatCurrency(unmatchedAmount) : '—'}
+          </span>
+        </div>
+      )}
+      {isLong && hiddenCount > 0 && (
+        <p className="text-xs text-gray-400 pt-1">0件のステージ {hiddenCount}件を省略</p>
+      )}
     </div>
   )
 }
@@ -125,6 +173,7 @@ export default function DashboardPage() {
   const teamGoals        = useAppStore((s) => s.teamGoals)
   const taskStatuses     = useAppStore((s) => s.taskStatuses)
   const divisionStages   = useAppStore((s) => s.divisionStages)
+  const divisionTabs     = useAppStore((s) => s.divisionTabs)
 
   const [dbDivTossups, setDbDivTossups] = useState<Tossup[]>([])
   const [dbDeals,      setDbDeals]      = useState<Deal[]>([])
@@ -145,16 +194,22 @@ export default function DashboardPage() {
     return divisionStages[divId] ?? DEFAULT_DIVISION_STAGES[divId] ?? null
   }, [divisionStages, activeDivisionId])
 
-  const wonStageIds  = useMemo(() => new Set(divStages ? divStages.filter((s) => s.isWon).map((s) => s.id)  : ['受注']), [divStages])
-  const lostStageIds = useMemo(() => new Set(divStages ? divStages.filter((s) => s.isLost).map((s) => s.id) : ['失注']), [divStages])
+  // 受注/失注は共有ヘルパーで判定（旧データの'受注'/'失注'文字列も常に含む。他画面と判定を揃える）
+  const { wonIds: wonStageIds, lostIds: lostStageIds } = useMemo(() => buildWonLostStageIds(divStages), [divStages])
   const activeStageIds = useMemo(
     () => divStages ? new Set(divStages.filter((s) => !s.isWon && !s.isLost).map((s) => s.id)) : null,
     [divStages]
   )
-  const pipelineStageOrder = useMemo(
-    () => divStages ? divStages.filter((s) => !s.isWon && !s.isLost).map((s) => s.name) : STAGES_ORDER.filter((s) => s !== '受注'),
-    [divStages]
-  )
+  const pipelineStages = useMemo((): PipelineStageRow[] => {
+    if (!divStages) {
+      return STAGES_ORDER.filter((s) => s !== '受注').map((name) => ({ id: name, name, tabName: null }))
+    }
+    const tabs = divisionTabs[activeDivisionId ?? ''] ?? []
+    const tabName = (tabId: string | null) => tabs.find((t) => t.id === tabId)?.name ?? null
+    return divStages
+      .filter((s) => !s.isWon && !s.isLost)
+      .map((s) => ({ id: s.id, name: s.name, tabName: tabs.length > 0 ? tabName(s.tabId) : null }))
+  }, [divStages, divisionTabs, activeDivisionId])
 
   const isWon    = (stageId: string) => wonStageIds.has(stageId)
   const isLost   = (stageId: string) => lostStageIds.has(stageId)
@@ -435,7 +490,7 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
-              <PipelineChart activeDeals={myActiveDeals} stageOrder={pipelineStageOrder} />
+              <PipelineChart activeDeals={myActiveDeals} stages={pipelineStages} />
             </div>
 
             <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-5">
@@ -578,7 +633,7 @@ export default function DashboardPage() {
                   見込み額合計 {formatCurrency(teamActiveDeals.reduce((s, d) => s + d.amount, 0))}
                 </span>
               </div>
-              <PipelineChart activeDeals={teamActiveDeals} stageOrder={pipelineStageOrder} />
+              <PipelineChart activeDeals={teamActiveDeals} stages={pipelineStages} />
             </div>
 
             <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-5">

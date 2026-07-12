@@ -11,6 +11,7 @@ import { findOrCreateCompany } from '@/lib/db/companies'
 import { fetchDivisionCustomFields } from '@/lib/db/divisions'
 import { useAppStore } from '@/store/appStore'
 import type { DivisionCustomField } from '@/store/appStore'
+import { escapeCsvCell, isValidEmail } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 const SYSTEM_FIELDS = [
@@ -55,9 +56,7 @@ interface CompanyOnlyEntry {
   company: string
 }
 
-function validateEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-}
+
 
 function downloadCSV(content: string, filename: string) {
   const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' })
@@ -254,7 +253,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         }
         continue
       }
-      if (email && !validateEmail(email)) {
+      if (email && !isValidEmail(email)) {
         errors.push({ row: rowNum, name, message: `メールアドレスの形式が正しくありません: ${email}` }); continue
       }
 
@@ -332,7 +331,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
   const handleDownloadErrorReport = () => {
     if (!importResult?.errors.length) return
     const lines = ['行番号,担当者名,エラー内容', ...importResult.errors.map(
-      (e) => `${e.row},"${e.name}","${e.message}"`
+      (e) => `${e.row},${escapeCsvCell(e.name)},${escapeCsvCell(e.message)}`
     )]
     downloadCSV(lines.join('\n'), `import_errors_${new Date().toISOString().slice(0, 10)}.csv`)
   }

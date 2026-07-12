@@ -226,7 +226,13 @@ export default function ActivitiesPage() {
     const newStatus = current === 'done' ? 'todo' : 'done'
     setTaskStatus(id, newStatus)
     if (isSupabaseConfigured() && !id.startsWith('act-local-')) {
-      updateActivityStatus(id, newStatus).catch(() => {})
+      // 失敗を握りつぶすと「完了したはずのタスクがリロードで戻る」無音故障になるため、ロールバックして通知する
+      updateActivityStatus(id, newStatus).catch(() => {
+        setTaskStatus(id, current)
+        // 完了演出も取り消す（未完了に戻ったタスクに完了ハイライトが残らないように）
+        setJustCompletedTaskId((prev) => (prev === id ? null : prev))
+        toast.error('タスク状態の保存に失敗しました。もう一度お試しください')
+      })
     }
     if (newStatus === 'done') {
       setJustCompletedTaskId(id)

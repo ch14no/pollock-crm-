@@ -12,7 +12,7 @@ import { LOCATIONS, getLocationConfig, getLocationsByRegion, sortTags } from '@/
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { formatRelativeTime, getInitials, cn } from '@/lib/utils'
+import { formatRelativeTime, getInitials, cn, escapeCsvCell } from '@/lib/utils'
 import { useAppStore, selectIsOwnDivision } from '@/store/appStore'
 import type { ContactStatus } from '@/store/appStore'
 import { STATUS_CONFIG } from '@/lib/contactStatus'
@@ -75,7 +75,7 @@ function exportContactsCSV(contacts: Contact[], filename: string) {
     c.updated_at,
   ])
   const csv = [headers, ...rows]
-    .map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    .map((row) => row.map(escapeCsvCell).join(','))
     .join('\n')
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -229,7 +229,12 @@ export default function ContactsPage() {
 
       const matchCustom = Object.entries(customFieldFilters).every(([fieldId, val]) => {
         if (!val) return true
-        return (listCustomValues[c.id]?.[fieldId] ?? '') === val
+        // バッジ表示（customBadges）と同じフォールバック順で照合する。
+        // 旧データ（custom_attributes側にのみ値がある顧客）がバッジは出るのに絞り込みで消える不整合を防ぐ
+        const field = selectCustomFields.find((f) => f.id === fieldId)
+        const legacy = field ? c.custom_attributes?.[field.name] : undefined
+        const value = listCustomValues[c.id]?.[fieldId] ?? (typeof legacy === 'string' ? legacy : '')
+        return value === val
       })
 
       const matchTag = tagFilter === null ? true : c.tags.includes(tagFilter)
@@ -258,7 +263,7 @@ export default function ContactsPage() {
     })
     return result
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [divisionContacts, query, sortKey, locationFilter, tagFilter, statusFilter, customFieldFilters, listStatuses, contactStatuses])
+  }, [divisionContacts, query, sortKey, locationFilter, tagFilter, statusFilter, customFieldFilters, listStatuses, contactStatuses, listCustomValues, selectCustomFields])
 
   const allFilteredSelected = filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id))
 
@@ -387,6 +392,24 @@ export default function ContactsPage() {
   const otherTags = [...new Set(
     divisionContacts.flatMap((c) => c.tags.filter((t) => !prefectureSet.has(t)))
   )].sort()
+
+  // 一覧の行に出す事業部カスタム区分（select型）の値。M&Aの「売主/買主」のように、
+  // 開かないと分からない重要区分を一覧で見えるようにする。
+  // 旧データ（custom_attributes）にも項目名でフォールバックする。
+  const customBadges = useMemo(() => {
+    const map: Record<string, string[]> = {}
+    if (selectCustomFields.length === 0) return map
+    for (const c of divisionContacts) {
+      const vals = selectCustomFields
+        .map((f) => {
+          const v = listCustomValues[c.id]?.[f.id] ?? c.custom_attributes?.[f.name]
+          return typeof v === 'string' ? v : ''
+        })
+        .filter((v) => v !== '')
+      if (vals.length > 0) map[c.id] = vals
+    }
+    return map
+  }, [selectCustomFields, divisionContacts, listCustomValues])
 
   return (
     <div className="w-full">
@@ -548,6 +571,8 @@ export default function ContactsPage() {
         {/* フィルターボタン */}
         <button
           onClick={() => setShowFilters((v) => !v)}
+          aria-label="絞り込み"
+          aria-expanded={showFilters}
           className={cn(
             'flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border transition-all flex-shrink-0',
             activeFilterCount > 0
@@ -571,6 +596,8 @@ export default function ContactsPage() {
         <div className="relative flex-shrink-0" ref={sortMenuRef}>
           <button
             onClick={() => setShowSortMenu((v) => !v)}
+            aria-label={`並び替え: ${currentSortLabel}`}
+            aria-expanded={showSortMenu}
             className="flex items-center gap-1.5 px-3 py-2 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-gray-600"
           >
             <SlidersHorizontal size={14} />
@@ -614,6 +641,27 @@ export default function ContactsPage() {
       {/* ─── フィルターパネル ─────────────────────────────────────── */}
       {showFilters && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-4 shadow-sm space-y-3">
+          {/* カスタムフィールド（select型のみ）。事業部固有の区分（M&Aの売主/買主等）は
+              最もよく使う絞り込みなので、都道府県より上に置く */}
+          {selectCustomFields.map((field) => (
+            <div key={field.id} className="flex items-start gap-4">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0 truncate">{field.label}</span>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => setCustomFieldFilters((p) => ({ ...p, [field.id]: '' }))}
+                  className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors', !customFieldFilters[field.id] ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+                >全て</button>
+                {field.options?.map((opt) => (
+                  <button
+                    key={opt}
+                    onClick={() => setCustomFieldFilters((p) => ({ ...p, [field.id]: p[field.id] === opt ? '' : opt }))}
+                    className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors', customFieldFilters[field.id] === opt ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+                  >{opt}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+
           {/* 都道府県（地方別グループ） */}
           <div className="flex items-start gap-4">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0">都道府県</span>
@@ -689,26 +737,6 @@ export default function ContactsPage() {
               })}
             </div>
           </div>
-
-          {/* カスタムフィールド（select型のみ） */}
-          {selectCustomFields.map((field) => (
-            <div key={field.id} className="flex items-start gap-4">
-              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0 truncate">{field.label}</span>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  onClick={() => setCustomFieldFilters((p) => ({ ...p, [field.id]: '' }))}
-                  className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors', !customFieldFilters[field.id] ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
-                >全て</button>
-                {field.options?.map((opt) => (
-                  <button
-                    key={opt}
-                    onClick={() => setCustomFieldFilters((p) => ({ ...p, [field.id]: p[field.id] === opt ? '' : opt }))}
-                    className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors', customFieldFilters[field.id] === opt ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
-                  >{opt}</button>
-                ))}
-              </div>
-            </div>
-          ))}
 
           {/* フッター */}
           {activeFilterCount > 0 && (
@@ -795,6 +823,7 @@ export default function ContactsPage() {
           contactStatuses={contactStatuses}
           listStatuses={listStatuses}
           dealCounts={dealCounts}
+          customBadges={customBadges}
         />
       ) : viewMode === 'company' ? (
         <CompanyView
@@ -817,6 +846,7 @@ export default function ContactsPage() {
           contactStatuses={contactStatuses}
           listStatuses={listStatuses}
           dealCounts={dealCounts}
+          customBadges={customBadges}
         />
       )}
 
@@ -885,6 +915,21 @@ function DealBadge({ count }: { count: number }) {
   )
 }
 
+// 事業部カスタム区分（M&Aの「売主/買主」等）を一覧の行に出すバッジ
+function CustomValueBadges({ values }: { values?: string[] }) {
+  if (!values || values.length === 0) return null
+  return (
+    <>
+      {values.map((v, i) => (
+        // 複数のカスタム項目で同じ選択肢名が選ばれてもkeyが衝突しないようindexを含める
+        <Badge key={`${i}-${v}`} className="flex-shrink-0 bg-sky-50 text-sky-700 border border-sky-200">
+          {v}
+        </Badge>
+      ))}
+    </>
+  )
+}
+
 function AssigneeChip({ userId }: { userId?: string }) {
   if (!userId) return null
   const member = MOCK_TEAM_MEMBERS.find((m) => m.id === userId)
@@ -901,7 +946,7 @@ function AssigneeChip({ userId }: { userId?: string }) {
 
 // ─── List View ────────────────────────────────────────────────────────────────
 function ListView({
-  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses, dealCounts,
+  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses, dealCounts, customBadges,
 }: {
   contacts: Contact[]
   selectedIds: Set<string>
@@ -911,6 +956,7 @@ function ListView({
   contactStatuses: ContactStatusMap
   listStatuses: Record<string, string[]>
   dealCounts: Record<string, number>
+  customBadges: Record<string, string[]>
 }) {
   return (
     <div className="space-y-2">
@@ -949,6 +995,7 @@ function ListView({
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-gray-800">{contact.name}</span>
                   <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} listStatuses={listStatuses} />
+                  <CustomValueBadges values={customBadges[contact.id]} />
                   <DealBadge count={dealCounts[contact.id] ?? 0} />
                   {isReadOnly && (
                     <span className="inline-flex items-center gap-1 text-xs text-gray-400">
@@ -1146,7 +1193,7 @@ function CompanyView({
 
 // ─── Card View ────────────────────────────────────────────────────────────────
 function CardView({
-  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses, dealCounts,
+  contacts, selectedIds, onToggleSelect, onSelect, isReadOnly, contactStatuses, listStatuses, dealCounts, customBadges,
 }: {
   contacts: Contact[]
   selectedIds: Set<string>
@@ -1156,6 +1203,7 @@ function CardView({
   contactStatuses: ContactStatusMap
   listStatuses: Record<string, string[]>
   dealCounts: Record<string, number>
+  customBadges: Record<string, string[]>
 }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1188,8 +1236,9 @@ function CardView({
                 {getInitials(contact.name)}
               </div>
               <div className="flex flex-col items-end gap-1.5">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap justify-end">
                   <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} listStatuses={listStatuses} />
+                  <CustomValueBadges values={customBadges[contact.id]} />
                   <DealBadge count={dealCounts[contact.id] ?? 0} />
                 </div>
                 {isReadOnly && (

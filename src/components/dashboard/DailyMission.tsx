@@ -10,6 +10,7 @@ import { fetchDealsByDivision } from '@/lib/db/deals'
 import type { Activity, Deal } from '@/types/database'
 import { MOCK_ACTIVITIES, MOCK_DEALS, MOCK_CONTACTS, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import { cn } from '@/lib/utils'
+import { buildWonLostStageIds } from '@/lib/stage-status'
 
 function daysUntil(dateStr: string) {
   return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86400000)
@@ -54,11 +55,10 @@ export function DailyMission({ personalMode = false }: DailyMissionProps) {
     [dbDeals, localDeals]
   )
 
-  // 受注・失注ステージIDを store から解決（フォールバック: 文字列マッチ）
+  // 受注・失注ステージIDは共有ヘルパーで解決（旧データの'受注'/'失注'文字列も常に含む。他画面と判定を揃える）
   const divId = activeDivisionId ?? ''
   const stagesForDiv = divisionStages[divId] ?? DEFAULT_DIVISION_STAGES[divId] ?? null
-  const wonIds  = useMemo(() => new Set(stagesForDiv ? stagesForDiv.filter((s) => s.isWon).map((s) => s.id)  : ['受注']), [stagesForDiv])
-  const lostIds = useMemo(() => new Set(stagesForDiv ? stagesForDiv.filter((s) => s.isLost).map((s) => s.id) : ['失注']), [stagesForDiv])
+  const { wonIds, lostIds } = useMemo(() => buildWonLostStageIds(stagesForDiv), [stagesForDiv])
   const isActiveStage = (stageId: string) => !wonIds.has(stageId) && !lostIds.has(stageId)
 
   const divDealIds = useMemo(

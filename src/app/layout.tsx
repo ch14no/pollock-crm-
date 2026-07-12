@@ -35,6 +35,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {children}
         <Toaster
           position="bottom-right"
+          // モバイルの下部ナビ（h-16）とセーフエリアにトーストが重ならないよう底上げする
+          containerStyle={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 76px)' }}
           toastOptions={{
             style: {
               borderRadius: '12px',

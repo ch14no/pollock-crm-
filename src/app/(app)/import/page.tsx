@@ -12,7 +12,7 @@ import type { DivisionCustomField } from '@/store/appStore'
 import { DEFAULT_DIVISION_CUSTOM_FIELDS } from '@/lib/mock-data'
 import { LOCATIONS } from '@/lib/config'
 import toast from 'react-hot-toast'
-import { cn } from '@/lib/utils'
+import { cn, escapeCsvCell } from '@/lib/utils'
 
 // ─── エクスポート列定義 ─────────────────────────────────────────
 interface ExportColumn {
@@ -53,7 +53,7 @@ function generateCSV(
     selectedColumns.map((col) => col.getValue(contact, customValuesMap[contact.id] ?? {}))
   )
   return [headers, ...rows]
-    .map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    .map((row) => row.map(escapeCsvCell).join(','))
     .join('\n')
 }
 

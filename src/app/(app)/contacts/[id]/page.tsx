@@ -18,7 +18,7 @@ import { getLocationConfig, sortTags } from '@/lib/config'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
-import { cn, formatDate, formatRelativeTime, getInitials, formatCurrency } from '@/lib/utils'
+import { cn, formatDate, formatRelativeTime, getInitials, formatCurrency, isValidEmail } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { STATUS_CONFIG } from '@/lib/contactStatus'
 import type { ActivityType } from '@/types/database'
@@ -97,6 +97,8 @@ export default function ContactDetailPage() {
   // Supabase から顧客・活動・商談を読み込む
   const [dbContact,    setDbContact]    = useState<Contact | null>(null)
   const [contactLoading, setContactLoading] = useState(true)
+  const [loadError,    setLoadError]    = useState(false)
+  const loadSeq = useRef(0)
   const [dbActivities, setDbActivities] = useState<Activity[]>([])
   const [dbDeals,      setDbDeals]      = useState<Deal[]>([])
   const prevActivityModalOpen = useRef(false)
@@ -104,19 +106,31 @@ export default function ContactDetailPage() {
 
   const loadContactData = async () => {
     if (!isSupabaseConfigured()) { setContactLoading(false); return }
-    const [c, acts, customVals, dealsData] = await Promise.all([
-      fetchContactById(id),
-      fetchActivitiesByTarget('contact', id),
-      fetchContactCustomValues(id),
-      fetchDealsByContact(id),
-    ])
-    setDbContact(c)
-    setDbActivities(acts)
-    setDbDeals(dealsData)
-    Object.entries(customVals).forEach(([fieldId, value]) => {
-      setContactCustomValue(id, fieldId, value)
-    })
-    setContactLoading(false)
+    // 取得失敗時にスピナーが永久に回り続けないよう、エラーを状態として持ち再試行導線を出す。
+    // 高速に顧客間を移動したとき、前の顧客の失敗レスポンスが後から届いて
+    // 表示中のページをエラー画面で上書きしないよう、リクエストの通し番号で古い結果を破棄する
+    const seq = ++loadSeq.current
+    setLoadError(false)
+    setContactLoading(true)
+    try {
+      const [c, acts, customVals, dealsData] = await Promise.all([
+        fetchContactById(id),
+        fetchActivitiesByTarget('contact', id),
+        fetchContactCustomValues(id),
+        fetchDealsByContact(id),
+      ])
+      if (seq !== loadSeq.current) return
+      setDbContact(c)
+      setDbActivities(acts)
+      setDbDeals(dealsData)
+      Object.entries(customVals).forEach(([fieldId, value]) => {
+        setContactCustomValue(id, fieldId, value)
+      })
+    } catch {
+      if (seq === loadSeq.current) setLoadError(true)
+    } finally {
+      if (seq === loadSeq.current) setContactLoading(false)
+    }
   }
 
   useEffect(() => { loadContactData() }, [id]) // eslint-disable-line
@@ -172,11 +186,23 @@ export default function ContactDetailPage() {
       </div>
     )
   }
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <p className="text-gray-500">顧客情報の読み込みに失敗しました</p>
+        <p className="text-xs text-gray-400 mt-1">通信環境を確認して、もう一度お試しください</p>
+        <div className="flex items-center gap-2 mt-4">
+          <Button variant="secondary" onClick={() => loadContactData()}>再読み込み</Button>
+          <Button variant="ghost" onClick={() => router.push('/contacts')}>顧客一覧へ</Button>
+        </div>
+      </div>
+    )
+  }
   if (!contact) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <p className="text-gray-500">顧客が見つかりません</p>
-        <Button variant="ghost" onClick={() => router.back()} className="mt-4">戻る</Button>
+        <Button variant="ghost" onClick={() => router.push('/contacts')} className="mt-4">顧客一覧へ戻る</Button>
       </div>
     )
   }
@@ -208,8 +234,20 @@ export default function ContactDetailPage() {
   }
 
   const saveInfoEdit = async () => {
+    // 必須・形式チェック（新規登録画面と同水準）。黙って旧値に巻き戻すと「消したのに戻った」ように見えるため明示的に弾く
+    if (!infoForm.name.trim()) {
+      toast.error('氏名を入力してください')
+      return
+    }
+    // 形式チェックはメールを「変更したとき」のみ。既存の不正値が残っている顧客で、
+    // 電話番号など他の項目だけ直したいのに保存できなくなるのを防ぐ
+    const emailTrimmed = infoForm.email.trim()
+    if (emailTrimmed && emailTrimmed !== (contact.email ?? '') && !isValidEmail(emailTrimmed)) {
+      toast.error('メールアドレスの形式が正しくありません')
+      return
+    }
     const updates = {
-      name: infoForm.name.trim() || contact.name,
+      name: infoForm.name.trim(),
       position: infoForm.position.trim() || null,
       phone: infoForm.phone.trim() || null,
       email: infoForm.email.trim() || null,
@@ -296,7 +334,11 @@ export default function ContactDetailPage() {
     const newStatus = current === 'done' ? 'todo' : 'done'
     setTaskStatus(actId, newStatus)
     if (isSupabaseConfigured() && !actId.startsWith('act-local-')) {
-      updateActivityStatus(actId, newStatus).catch(() => {})
+      // 失敗を握りつぶすと「完了したはずのタスクがリロードで戻る」無音故障になるため、ロールバックして通知する
+      updateActivityStatus(actId, newStatus).catch(() => {
+        setTaskStatus(actId, current)
+        toast.error('タスク状態の保存に失敗しました。もう一度お試しください')
+      })
     }
   }
 
@@ -726,7 +768,9 @@ export default function ContactDetailPage() {
                                         // store の localActivities も更新
                                         updateLocalActivity(act.id, { title: titleVal, memo: memoVal })
                                         if (isSupabaseConfigured() && !act.id.startsWith('act-local-')) {
-                                          await updateActivityFields(act.id, { title: actEditForm.title || null, memo: actEditForm.memo || null }).catch(() => {})
+                                          await updateActivityFields(act.id, { title: actEditForm.title || null, memo: actEditForm.memo || null }).catch(() => {
+                                            toast.error('活動の保存に失敗しました。再読み込みして内容を確認してください')
+                                          })
                                         }
                                         setEditingActId(null)
                                       }}

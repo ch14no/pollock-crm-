@@ -50,18 +50,26 @@ function ContactSearchPopup({
   }, [onClose])
 
   useEffect(() => {
-    if (isSupabaseConfigured()) {
-      setLoading(true)
-      const fetch = filterDivisionId
-        ? fetchContactsByDivision(filterDivisionId)
-        : fetchAllContacts()
-      fetch.then(setContacts).catch(() => {}).finally(() => setLoading(false))
-    } else {
-      const base = filterDivisionId
-        ? MOCK_CONTACTS.filter((c) => c.division_id === filterDivisionId)
-        : MOCK_CONTACTS
-      setContacts(base as unknown as Contact[])
+    const load = (withSpinner: boolean) => {
+      if (isSupabaseConfigured()) {
+        if (withSpinner) setLoading(true)
+        const fetch = filterDivisionId
+          ? fetchContactsByDivision(filterDivisionId)
+          : fetchAllContacts()
+        fetch.then(setContacts).catch(() => {}).finally(() => { if (withSpinner) setLoading(false) })
+      } else {
+        const base = filterDivisionId
+          ? MOCK_CONTACTS.filter((c) => c.division_id === filterDivisionId)
+          : MOCK_CONTACTS
+        setContacts(base as unknown as Contact[])
+      }
     }
+    load(true)
+    // 「新規顧客を登録する（新しいタブで開く）」から戻ってきたとき、登録したばかりの顧客が
+    // 検索に出るよう、ウィンドウがフォーカスを取り戻したら一覧を静かに再取得する
+    const onFocus = () => load(false)
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [filterDivisionId])
 
   const candidates = useMemo(() => {
@@ -118,6 +126,15 @@ function ContactSearchPopup({
             <div className="flex flex-col items-center justify-center py-10 text-gray-400">
               <Users size={28} className="mb-2 text-gray-300" />
               <p className="text-sm">一致する顧客がいません</p>
+              {/* 商談登録の途中で顧客未登録に気づいたとき、入力中の内容を捨てずに登録へ進めるよう新規タブで開く */}
+              <a
+                href="/contacts/new"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 text-xs font-medium text-orange-500 hover:text-orange-700 underline"
+              >
+                新規顧客を登録する（新しいタブで開く）
+              </a>
             </div>
           ) : (
             <div className="divide-y divide-gray-50">

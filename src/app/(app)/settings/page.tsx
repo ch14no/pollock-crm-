@@ -37,6 +37,8 @@ import {
 } from '@/lib/db/activities'
 import type { DivisionDocType } from '@/types/database'
 import type { User as UserType, Division } from '@/types/database'
+// 通知設定（保存はlib/notif-settings、ヘッダーの通知ベルが参照する）
+import { loadNotifSettings, saveNotifSettings, DEFAULT_NOTIF_SETTINGS as DEFAULT_NOTIF } from '@/lib/notif-settings'
 import toast from 'react-hot-toast'
 
 const ROLE_LABELS: Record<Role, string> = {
@@ -60,13 +62,6 @@ function moveItem<T>(arr: T[], idx: number, dir: -1 | 1): T[] {
   return next
 }
 
-// ─── ローカルストレージへの通知設定保存 ──────────────────────────
-const NOTIF_KEY = 'pollock-notif-settings'
-const DEFAULT_NOTIF = { tossup: true, dealStage: true, taskDue: true, teamActivity: false }
-function loadNotifSettings() {
-  try { return { ...DEFAULT_NOTIF, ...JSON.parse(localStorage.getItem(NOTIF_KEY) ?? '{}') } } catch { return DEFAULT_NOTIF }
-}
-
 // ─── メインページ ─────────────────────────────────────────────────
 export default function SettingsPage() {
   const { currentUser, setCurrentUser, activeDivision, divisions } = useAppStore()
@@ -76,9 +71,16 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
 
   // マスタ管理（パイプライン・カスタム項目・商品・資料カテゴリ・ナレッジカテゴリ・
-  // タスクカンバン）の対象事業部。各パネルで個別に選ぶのではなく、ここで一括して切り替える
-  const [masterDivId, setMasterDivId] = useState(divisions[0]?.id ?? '')
-  // マウント時に事業部一覧が未取得だった場合、取得後に先頭を選択し直す
+  // タスクカンバン）の対象事業部。各パネルで個別に選ぶのではなく、ここで一括して切り替える。
+  // 先頭固定にすると「M&A事業部で作業中なのにITのステージを編集してしまう」事故が起きるため、
+  // ユーザーが手動で選ぶまでは閲覧中の事業部に追従させる
+  // （activeDivision はストア復元・DB取得の順序次第でマウント後に確定するため、初期値だけでは不十分）
+  const [masterDivId, setMasterDivId] = useState(activeDivision?.id ?? divisions[0]?.id ?? '')
+  const [masterDivTouched, setMasterDivTouched] = useState(false)
+  useEffect(() => {
+    if (!masterDivTouched && activeDivision?.id) setMasterDivId(activeDivision.id)
+  }, [activeDivision?.id, masterDivTouched])
+  // 事業部一覧が未取得だった場合、取得後に先頭を仮選択する（activeDivision確定時に上のeffectが上書きする）
   if (!masterDivId && divisions.length > 0) {
     setMasterDivId(divisions[0].id)
   }
@@ -89,7 +91,7 @@ export default function SettingsPage() {
   const toggleNotif = (key: keyof typeof DEFAULT_NOTIF) => {
     const next = { ...notif, [key]: !notif[key] }
     setNotif(next)
-    localStorage.setItem(NOTIF_KEY, JSON.stringify(next))
+    saveNotifSettings(next)
     toast.success('通知設定を保存しました')
   }
 
@@ -186,19 +188,30 @@ export default function SettingsPage() {
         </CardHeader>
         <CardBody>
           <div className="space-y-3">
+            <p className="text-xs text-gray-400">ヘッダーの通知ベルに表示する種類を選べます（このブラウザにのみ適用）</p>
             {([
               { key: 'tossup',       label: 'トスアップを受信したとき' },
               { key: 'dealStage',    label: '商談フェーズが変更されたとき' },
-              { key: 'taskDue',      label: 'タスクの期限が近づいたとき' },
-              { key: 'teamActivity', label: 'チームメンバーの活動更新' },
-            ] as { key: keyof typeof DEFAULT_NOTIF; label: string }[]).map(({ key, label }) => (
+              // 以下2種は通知の発生元が未実装。ONにしても何も起きない「飾りのトグル」に
+              // ならないよう、準備中として無効化しておく
+              { key: 'taskDue',      label: 'タスクの期限が近づいたとき', disabled: true },
+              { key: 'teamActivity', label: 'チームメンバーの活動更新',   disabled: true },
+            ] as { key: keyof typeof DEFAULT_NOTIF; label: string; disabled?: boolean }[]).map(({ key, label, disabled }) => (
               <div key={key} className="flex items-center justify-between">
-                <span className="text-sm text-gray-700">{label}</span>
+                <span className={cn('text-sm', disabled ? 'text-gray-400' : 'text-gray-700')}>
+                  {label}
+                  {disabled && <span className="ml-2 text-[10px] font-medium text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">準備中</span>}
+                </span>
                 <button
                   onClick={() => toggleNotif(key)}
+                  disabled={disabled}
+                  aria-pressed={notif[key]}
+                  aria-label={label}
                   className={cn('relative inline-flex h-5 w-9 items-center rounded-full transition-colors',
+                    disabled ? 'cursor-not-allowed opacity-40' : '',
                     notif[key] ? 'bg-orange-500' : 'bg-gray-200')}
                 >
+                  {/* 表示は保存値と一致させる（準備中でも保存値がONならON位置。見た目と実際の設定のズレを作らない） */}
                   <span className={cn('inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform',
                     notif[key] ? 'translate-x-5' : 'translate-x-0.5')} />
                 </button>
@@ -237,7 +250,7 @@ export default function SettingsPage() {
               </p>
               <select
                 value={masterDivId}
-                onChange={(e) => setMasterDivId(e.target.value)}
+                onChange={(e) => { setMasterDivId(e.target.value); setMasterDivTouched(true) }}
                 aria-label="マスタ管理の対象事業部"
                 className="w-full px-3 py-2.5 text-sm font-bold text-gray-700 border-2 border-orange-200 rounded-lg
                   focus:outline-none focus:ring-2 focus:ring-orange-500 bg-orange-50/50 cursor-pointer"

@@ -50,6 +50,9 @@ export function Modal({
         onClick={onClose}
       />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className={cn(
           // コンテンツが増えてもビューポートを超えないよう上限を設け、本文側をスクロールさせる
           'relative w-full rounded-2xl bg-white shadow-xl flex flex-col max-h-[85vh]',
@@ -67,6 +70,7 @@ export function Modal({
           <h2 className="font-bold text-base">{title}</h2>
           <button
             onClick={onClose}
+            aria-label="閉じる"
             className={cn(
               'p-1 rounded-lg transition-colors',
               headerColor === 'orange'

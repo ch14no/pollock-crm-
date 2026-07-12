@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { LayoutDashboard, Briefcase, Activity, CheckSquare, CreditCard, Menu, X, LogOut, ChevronDown, Search } from 'lucide-react'
@@ -42,11 +42,16 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
     return divisions.filter((d) => userOwnDivisionIds.includes(d.id))
   }, [divisions, userOwnDivisionIds])
 
-  // ドロワー表示中は背景スクロールを止める
+  // ドロワー表示中は背景スクロールを止める。Escキーでも閉じられるようにする（モーダルと挙動を揃える）
   useEffect(() => {
     document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = '' }
-  }, [])
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = ''
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [onClose])
 
   const handleLogout = async () => {
     const supabase = createClient()
@@ -78,8 +83,8 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSearch() }}
-              placeholder="顧客・商談を検索..."
-              aria-label="顧客・商談を検索"
+              placeholder="顧客を検索...（現在の事業部）"
+              aria-label="顧客を検索"
               className="w-full pl-9 pr-16 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-lg
                 focus:outline-none focus:ring-2 focus:ring-orange-500 placeholder:text-gray-400"
             />
@@ -100,6 +105,7 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
           <div className="relative">
             <select
               value={activeDivision?.id ?? ''}
+              aria-label="表示する事業部を切り替え"
               onChange={(e) => {
                 const div = selectableDivisions.find((d) => d.id === e.target.value)
                 if (div) setActiveDivision(div)
@@ -125,6 +131,7 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
                   key={href}
                   href={href}
                   onClick={onClose}
+                  aria-current={active ? 'page' : undefined}
                   className={cn(
                     'flex items-center gap-2.5 px-3 py-3 rounded-xl text-sm font-medium transition-colors',
                     active ? 'bg-orange-50 text-orange-600' : 'text-gray-600 hover:bg-gray-50'
@@ -164,6 +171,8 @@ export function BottomNav() {
   const pathname = usePathname()
   const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
+  // ドロワーのkeydown effectがonCloseに依存するため、参照を安定させて再登録の無駄を防ぐ
+  const closeMenu = useCallback(() => setMenuOpen(false), [])
 
   // BottomNavに無いページを開いているときは「メニュー」をアクティブ表示にする
   const barHrefs = [...NAV_LEFT, ...NAV_RIGHT].map((n) => n.href)
@@ -175,6 +184,7 @@ export function BottomNav() {
         <div className="flex items-end h-16">
           {NAV_LEFT.map(({ href, label, icon: Icon }) => (
             <Link key={href} href={href}
+              aria-current={pathname.startsWith(href) ? 'page' : undefined}
               className={cn('flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium transition-colors',
                 pathname.startsWith(href) ? 'text-orange-600' : 'text-gray-500')}>
               <Icon size={22} />
@@ -197,6 +207,7 @@ export function BottomNav() {
 
           {NAV_RIGHT.map(({ href, label, icon: Icon }) => (
             <Link key={href} href={href}
+              aria-current={pathname.startsWith(href) ? 'page' : undefined}
               className={cn('flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium transition-colors',
                 pathname.startsWith(href) ? 'text-orange-600' : 'text-gray-500')}>
               <Icon size={22} />
@@ -216,7 +227,7 @@ export function BottomNav() {
         </div>
       </nav>
 
-      {menuOpen && <MobileMenuDrawer onClose={() => setMenuOpen(false)} />}
+      {menuOpen && <MobileMenuDrawer onClose={closeMenu} />}
     </>
   )
 }

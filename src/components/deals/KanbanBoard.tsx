@@ -12,7 +12,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Plus, AlertCircle, AlertTriangle, Lock, ChevronDown } from 'lucide-react'
-import { formatCurrency, getStaleDays, getInitials, cn } from '@/lib/utils'
+import { formatCurrency, getStaleDays, getInitials, cn, truncateMiddle } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import { hasTabs, stagesForTab, tabIdForStage } from '@/lib/pipeline-tabs'
@@ -381,12 +381,12 @@ function StagePositionIndicator({
             key={stage.id}
             onClick={() => handleChipClick(stage.id)}
             className={cn(
-              'flex-shrink-0 px-2 py-1 rounded-full text-xs font-medium transition-colors max-w-24 truncate',
+              'flex-shrink-0 px-2 py-1 rounded-full text-xs font-medium transition-colors whitespace-nowrap',
               isActive ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
             )}
             title={stage.name}
           >
-            {stage.name}
+            {truncateMiddle(stage.name)}
           </button>
         )
       })}
@@ -573,6 +573,7 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
           {tabs.map((tab) => (
             <button
               key={tab.id}
+              aria-pressed={tab.id === currentTabId}
               onClick={() => activeDivisionId && setActiveTabId(activeDivisionId, tab.id)}
               className={cn(
                 'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',

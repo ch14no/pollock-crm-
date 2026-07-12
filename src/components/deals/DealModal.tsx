@@ -13,7 +13,7 @@ import { DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS } from '@/lib/mock-d
 import { hasTabs, stagesForTab, tabIdForStage } from '@/lib/pipeline-tabs'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { createDeal, updateDeal, updateDealStage, deleteDeal } from '@/lib/db/deals'
-import { cn } from '@/lib/utils'
+import { cn, formatCurrencyJa } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 interface DealFormState {
@@ -221,10 +221,19 @@ export function DealModal() {
   const handleLoseDeal = async () => {
     if (!dealModal.deal) return
     if (!window.confirm(`「${form.title}」を失注として記録しますか？`)) return
+    // 事業部の失注ステージの実IDへ移す。リテラル'失注'を書くと、ステージ定義がID管理の事業部では
+    // どの定義にも一致しない「迷子商談」を新たに生み続けてしまう。
+    // タブを持つ事業部（M&Aの売主/買主等）では商談自身のタブの失注ステージを優先する
+    const dealDivId = dealModal.deal.division_id ?? activeDivisionId ?? ''
+    const divStagesAll = divisionStages[dealDivId] ?? []
+    const dealTabId = tabIdForStage(divStagesAll, dealModal.deal.stage_id)
+    const lostStage = divStagesAll.find((s) => s.isLost && s.tabId === dealTabId)
+      ?? divStagesAll.find((s) => s.isLost)
+    const lostStageId = lostStage?.id ?? '失注'
     setLoading(true)
     try {
-      if (isSupabaseConfigured()) await updateDealStage(dealModal.deal.id, '失注')
-      updateLocalDeal(dealModal.deal.id, { stage_id: '失注', updated_at: new Date().toISOString() })
+      if (isSupabaseConfigured()) await updateDealStage(dealModal.deal.id, lostStageId)
+      updateLocalDeal(dealModal.deal.id, { stage_id: lostStageId, updated_at: new Date().toISOString() })
       closeDealModal()
       toast.success(`「${form.title}」を失注として記録しました`)
     } catch {
@@ -324,7 +333,7 @@ export function DealModal() {
               />
             </div>
             {amountDisplay && amountInMan > 0 && (
-              <p className="text-xs text-gray-400 mt-0.5">{amountInMan.toLocaleString()}万円</p>
+              <p className="text-xs text-gray-400 mt-0.5">{formatCurrencyJa(parseInt(form.amount, 10))}</p>
             )}
           </div>
           <div>
@@ -374,10 +383,30 @@ export function DealModal() {
                 <button
                   key={tab.id}
                   type="button"
+                  aria-pressed={selectedTabId === tab.id}
                   onClick={() => {
+                    if (tab.id === selectedTabId) return
+                    const divId = activeDivisionId ?? dealModal.deal?.division_id ?? ''
+                    const newStages = computeActiveStages(divId, tab.id)
+                    if (newStages.length === 0) {
+                      toast.error(`「${tab.name}」タブにはステージが設定されていません。設定画面でステージを追加してください`)
+                      return
+                    }
+                    // 切替先タブに属するステージへ復元する（誤ってタブを往復してもステージが失われないように）。
+                    // フォームで選択中の未保存ステージを最優先、次に商談の保存済みステージ
+                    const formStageInTab = newStages.some((s) => s.id === form.stageId) ? form.stageId : null
+                    const savedStageId = dealModal.deal?.stage_id
+                    const savedStageInTab = savedStageId && newStages.some((s) => s.id === savedStageId) ? savedStageId : null
+                    const restoreStageId = formStageInTab ?? savedStageInTab
+                    // 既存商談のタブを本当に変える操作は、ステージが先頭にリセットされる破壊的変更なので確認を挟む
+                    if (isEdit && !restoreStageId) {
+                      const ok = window.confirm(
+                        `タブを「${tab.name}」に変更すると、ステージが「${newStages[0].name}」（先頭）に変わります。よろしいですか？`
+                      )
+                      if (!ok) return
+                    }
                     setSelectedTabId(tab.id)
-                    const newStages = computeActiveStages(activeDivisionId ?? '', tab.id)
-                    setForm((f) => ({ ...f, stageId: newStages[0]?.id ?? '' }))
+                    setForm((f) => ({ ...f, stageId: restoreStageId ?? newStages[0].id }))
                   }}
                   className={cn(
                     'px-3 py-1.5 rounded-lg text-xs font-medium border-2 transition-all',
@@ -395,12 +424,20 @@ export function DealModal() {
 
         {/* ステージ選択 */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">ステージ</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            ステージ
+            {/* ステージ数が多い事業部（M&A等）では選択中がどれか一目で分かるように現在値も併記する */}
+            {(() => {
+              const current = activeStages.find((s) => s.id === form.stageId)
+              return current ? <span className="ml-2 text-xs font-normal text-gray-400">現在: {current.name}</span> : null
+            })()}
+          </label>
           <div className="flex flex-wrap gap-2">
             {activeStages.map((stage) => (
               <button
                 key={stage.id}
                 type="button"
+                aria-pressed={form.stageId === stage.id}
                 onClick={() => setForm((f) => ({ ...f, stageId: stage.id }))}
                 className={cn(
                   'px-3 py-1.5 rounded-lg text-xs font-medium border-2 transition-all',
@@ -498,6 +535,12 @@ export function DealModal() {
           <DealDocumentsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
           <DealPaymentsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
         </div>
+      )}
+      {/* 新規作成時はセクション自体が出ないため、機能の存在と手順を案内する */}
+      {!isEdit && isSupabaseConfigured() && (
+        <p className="mt-3 text-xs text-gray-400 text-center">
+          資料（Driveリンク）と手数料・入金の管理は、商談を登録した後に編集画面から追加できます
+        </p>
       )}
     </Modal>
   )

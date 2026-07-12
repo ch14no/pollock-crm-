@@ -129,7 +129,10 @@ export function ActivityModal() {
           actionDate:   new Date(form.actionDate).toISOString(),
         })
         if (isTask) {
-          await upsertTaskMeta(savedId, taskUrgency, taskImportance, taskScope).catch(() => {})
+          await upsertTaskMeta(savedId, taskUrgency, taskImportance, taskScope).catch(() => {
+            // タスク本体は保存済みなので処理は続行するが、優先度が落ちたことは知らせる
+            toast.error('タスクの優先度（緊急度・重要度）の保存に失敗しました。タスク編集から設定し直してください')
+          })
         }
       }
 

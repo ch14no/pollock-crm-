@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { KanbanBoard } from '@/components/deals/KanbanBoard'
 import { Button } from '@/components/ui/Button'
 import { Plus, Lock } from 'lucide-react'
@@ -8,6 +8,8 @@ import { useAppStore, selectIsOwnDivision } from '@/store/appStore'
 import { formatCurrency } from '@/lib/utils'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchDealsByDivision } from '@/lib/db/deals'
+import { buildWonLostStageIds } from '@/lib/stage-status'
+import { DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import type { Deal } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -18,6 +20,7 @@ export default function DealsPage() {
   const openDealModal    = useAppStore((s) => s.openDealModal)
   const dealModalIsOpen  = useAppStore((s) => s.dealModal.isOpen)
   const localDeals       = useAppStore((s) => s.localDeals)
+  const divisionStages   = useAppStore((s) => s.divisionStages)
 
   const [dbDeals, setDbDeals] = useState<Deal[]>([])
   const [loading, setLoading] = useState(false)
@@ -72,7 +75,12 @@ export default function DealsPage() {
       ]
     : localDeals.filter((d) => d.division_id === activeDivisionId)
 
-  const activeDeals = divisionDeals.filter((d) => d.stage_id !== '受注' && d.stage_id !== '失注')
+  // 受注/失注判定は事業部別ステージ定義のIDで行う（本番のstage_idはUUIDのため名前比較では判定できない）
+  const { wonIds, lostIds } = useMemo(
+    () => buildWonLostStageIds(divisionStages[activeDivisionId ?? ''] ?? DEFAULT_DIVISION_STAGES[activeDivisionId ?? '']),
+    [divisionStages, activeDivisionId]
+  )
+  const activeDeals = divisionDeals.filter((d) => !wonIds.has(d.stage_id) && !lostIds.has(d.stage_id))
   const pipelineTotal = activeDeals.reduce((sum, d) => sum + d.amount, 0)
 
   return (

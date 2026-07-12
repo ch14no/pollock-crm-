@@ -55,6 +55,8 @@ export default function CompanyDetailPage() {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [editOpen, setEditOpen] = useState(false)
 
@@ -65,25 +67,32 @@ export default function CompanyDetailPage() {
     let cancelled = false
     const load = async () => {
       setLoading(true)
+      setLoadError(false)
       setCompany(null)
       setContacts([])
       setActivities([])
       if (!isSupabaseConfigured()) { setLoading(false); return }
-      const c = await fetchCompanyById(id)
-      if (cancelled) return
-      setCompany(c)
-      if (!c) { setLoading(false); return }
-      const contactsData = await fetchContactsByCompany(id)
-      if (cancelled) return
-      setContacts(contactsData)
-      const activitiesData = await fetchActivitiesByCompany(id, contactsData.map((c) => c.id))
-      if (cancelled) return
-      setActivities(activitiesData)
-      setLoading(false)
+      // 取得失敗時にスピナーが永久に回り続けないよう try/catch で受けてエラー表示に切り替える
+      try {
+        const c = await fetchCompanyById(id)
+        if (cancelled) return
+        setCompany(c)
+        if (!c) { setLoading(false); return }
+        const contactsData = await fetchContactsByCompany(id)
+        if (cancelled) return
+        setContacts(contactsData)
+        const activitiesData = await fetchActivitiesByCompany(id, contactsData.map((c) => c.id))
+        if (cancelled) return
+        setActivities(activitiesData)
+      } catch {
+        if (!cancelled) setLoadError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
     load()
     return () => { cancelled = true }
-  }, [id])
+  }, [id, reloadKey])
 
   const toggleExpand = (actId: string) => {
     setExpandedIds((prev) => {
@@ -103,19 +112,33 @@ export default function CompanyDetailPage() {
     )
   }
 
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <p className="text-gray-500">会社情報の読み込みに失敗しました</p>
+        <p className="text-xs text-gray-400 mt-1">通信環境を確認して、もう一度お試しください</p>
+        <div className="flex items-center gap-2 mt-4">
+          <Button variant="secondary" onClick={() => setReloadKey((k) => k + 1)}>再読み込み</Button>
+          <Button variant="ghost" onClick={() => router.push('/contacts')}>顧客一覧へ</Button>
+        </div>
+      </div>
+    )
+  }
+
   if (!company) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <p className="text-gray-500">会社が見つかりません</p>
-        <Button variant="ghost" onClick={() => router.back()} className="mt-4">戻る</Button>
+        <Button variant="ghost" onClick={() => router.push('/contacts')} className="mt-4">顧客一覧へ戻る</Button>
       </div>
     )
   }
 
   return (
     <div className="w-full">
+      {/* ラベル通り顧客一覧へ遷移させる（router.back()だと直前ページに戻り、ディープリンク時は戻れない） */}
       <button
-        onClick={() => router.back()}
+        onClick={() => router.push('/contacts')}
         className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-4 transition-colors"
       >
         <ArrowLeft size={16} />
