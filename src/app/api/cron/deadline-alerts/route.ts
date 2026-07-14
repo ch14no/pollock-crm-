@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 
 // M&A事業部要望⑧: 対応期日（マイルストーン・クロージング予定日）の指定日数前に
-// Slackへ自動通知するVercel Cron（毎日 UTC 22:00 = JST 7:00 に実行。vercel.json参照）。
+// Slackへ自動通知するVercel Cron（毎日 UTC 23:00 = JST 8:00 に実行。vercel.json参照）。
+// Hobbyプランは1日1回までのため、時間帯を変えたい場合はvercel.jsonのscheduleを
+// 書き換えて再デプロイする必要がある（DB設定からの動的変更はできない）。
 // 022マイグレーション（division_notification_settings / deal_milestones）が前提。
 
 export const dynamic = 'force-dynamic'
