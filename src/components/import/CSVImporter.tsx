@@ -294,7 +294,7 @@ export function CSVImporter({ divisionId }: CSVImporterProps) {
         const companyId = company ? (await findOrCreateCompany(company)) ?? undefined : undefined
         const tags = tagsRaw ? tagsRaw.split(/[|,、]/).map((t) => t.trim()).filter(Boolean) : []
 
-        const contact = await createContact({
+        const { contact } = await createContact({
           divisionId: targetDivisionId, name,
           email: email || undefined, phone: phone || undefined,
           position: position || undefined, department: department || undefined,

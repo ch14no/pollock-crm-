@@ -27,7 +27,8 @@ function normalize(str: string): string {
   )
 }
 
-function ContactSearchPopup({
+// ReferrerPicker（社外紹介者）でも同じ検索UXを再利用するため export する
+export function ContactSearchPopup({
   filterDivisionId,
   onSelect,
   onClose,

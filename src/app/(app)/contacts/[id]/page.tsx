@@ -18,6 +18,7 @@ import { getLocationConfig, sortTags } from '@/lib/config'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
+import { ReferrerPicker, type ReferrerValue, type ReferrerSelectDetail } from '@/components/ui/ReferrerPicker'
 import { cn, formatDate, formatRelativeTime, getInitials, formatCurrency, isValidEmail } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { STATUS_CONFIG } from '@/lib/contactStatus'
@@ -178,6 +179,11 @@ export default function ContactDetailPage() {
   // 基本情報インライン編集
   const [editingInfo, setEditingInfo] = useState(false)
   const [infoForm, setInfoForm] = useState({ name: '', position: '', phone: '', email: '', department: '', address: '', notes: '', tags: [] as string[], tagInput: '' })
+  // 紹介者（M&A事業部要望④）
+  const [referrerForm, setReferrerForm] = useState<ReferrerValue>({})
+  // 選択中の紹介者の表示用フルオブジェクト（修正9: loadContactData()の完了を待たずに
+  // 保存直後から表示名を反映するため、ReferrerPickerが選択時に渡す実体をそのまま保持する）
+  const [referrerDetail, setReferrerDetail] = useState<ReferrerSelectDetail>({})
 
   if (contactLoading) {
     return (
@@ -230,6 +236,16 @@ export default function ContactDetailPage() {
       tags: [...(displayContact.tags ?? [])],
       tagInput: '',
     })
+    setReferrerForm({
+      type: displayContact.referrer_type,
+      userId: displayContact.referrer_user_id,
+      contactId: displayContact.referrer_contact_id,
+    })
+    // 既存の紹介者表示名を引き継ぐ（今回の編集で紹介者欄を触らなければこのまま保存に使われる）
+    setReferrerDetail({
+      user: displayContact.referrer_user,
+      contact: displayContact.referrer_contact,
+    })
     setEditingInfo(true)
   }
 
@@ -246,6 +262,11 @@ export default function ContactDetailPage() {
       toast.error('メールアドレスの形式が正しくありません')
       return
     }
+    // 紹介者：選択中のタイプに応じて片方だけをセットし、CHECK制約（021）に合わせて
+    // 使わない側は毎回明示的にnullへ揃える（type切替時に古いIDが残らないように）
+    const referrerType = referrerForm.type ?? null
+    const referrerUserId = referrerForm.type === 'internal' ? (referrerForm.userId ?? null) : null
+    const referrerContactId = referrerForm.type === 'external' ? (referrerForm.contactId ?? null) : null
     const updates = {
       name: infoForm.name.trim(),
       position: infoForm.position.trim() || null,
@@ -255,6 +276,9 @@ export default function ContactDetailPage() {
       address: infoForm.address.trim() || null,
       notes: infoForm.notes.trim() || null,
       tags: infoForm.tags,
+      referrerType,
+      referrerUserId,
+      referrerContactId,
     }
     const prevEdit = localContactEdits[id]
     setLocalContactEdit(id, {
@@ -266,11 +290,27 @@ export default function ContactDetailPage() {
       address: updates.address ?? undefined,
       notes: updates.notes ?? undefined,
       tags: updates.tags,
+      referrer_type: referrerType ?? undefined,
+      referrer_user_id: referrerUserId ?? undefined,
+      referrer_contact_id: referrerContactId ?? undefined,
+      // 表示名はReferrerPickerが選択時に渡したフルオブジェクトをそのまま使う（修正9）。
+      // Supabase接続の有無・loadContactData()の完了を待たずに画面へ即時反映するため
+      referrer_user: referrerType === 'internal' ? referrerDetail.user : undefined,
+      referrer_contact: referrerType === 'external' ? referrerDetail.contact : undefined,
     })
     if (isSupabaseConfigured()) {
       try {
-        await updateContact(id, updates)
-        toast.success('顧客情報を保存しました')
+        const { strippedFields } = await updateContact(id, updates)
+        // OPTIONAL_CONTACT_COLUMNSは紹介者関連カラムのみなので、1件でも
+        // 含まれていれば紹介者欄が未反映であることを意味する（修正5）
+        if (strippedFields.length > 0) {
+          toast('保存しました（紹介者欄は未適用のため保存されていません。管理者にご確認ください）', { icon: '⚠️' })
+        } else {
+          toast.success('顧客情報を保存しました')
+        }
+        // 表示名は上のローカル編集で既に反映済み。ここでは他のjoinデータ
+        // （担当者・企業情報等）を実データと一致させるために取り直す
+        await loadContactData()
       } catch {
         // 楽観的更新をロールバックし、保存されたように見えて実際は未保存の状態を防ぐ
         setLocalContactEdit(id, prevEdit ?? {})
@@ -476,6 +516,23 @@ export default function ContactDetailPage() {
                       </div>
                     </div>
                   )}
+                  {/* 紹介者（M&A事業部要望④） */}
+                  {(displayContact.referrer_user || displayContact.referrer_contact) && (
+                    <div className="flex items-center gap-2 text-gray-600 pt-2 border-t border-gray-100">
+                      <Users size={14} className="flex-shrink-0 text-gray-400" />
+                      <div className="min-w-0">
+                        <span className="text-xs text-gray-400">紹介者: </span>
+                        {displayContact.referrer_user ? (
+                          <span className="text-gray-700 font-medium">{displayContact.referrer_user.name}（社内）</span>
+                        ) : displayContact.referrer_contact ? (
+                          <span className="text-gray-700 font-medium">
+                            {displayContact.referrer_contact.name}
+                            {displayContact.referrer_contact.companies && `（${displayContact.referrer_contact.companies.name}）`}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -500,6 +557,14 @@ export default function ContactDetailPage() {
                     />
                   </div>
                 ))}
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">紹介者</label>
+                  <ReferrerPicker
+                    value={referrerForm}
+                    onChange={(v, detail) => { setReferrerForm(v); setReferrerDetail(detail ?? {}) }}
+                    filterDivisionId={contact.division_id}
+                  />
+                </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-0.5">メモ・備考</label>
                   <AutoGrowTextarea

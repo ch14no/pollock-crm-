@@ -8,6 +8,7 @@ import {
   Users, Building2, Globe, Home, Camera, FolderOpen,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import { ReferrerPicker, type ReferrerValue } from '@/components/ui/ReferrerPicker'
 import { LOCATIONS } from '@/lib/config'
 import { getInitials, cn, isValidEmail } from '@/lib/utils'
 import toast from 'react-hot-toast'
@@ -152,6 +153,7 @@ export default function NewContactPage() {
   const [location,        setLocation]        = useState('')
   const [meetingContext,  setMeetingContext]   = useState('')
   const [customTags,      setCustomTags]       = useState('')
+  const [referrer,        setReferrer]         = useState<ReferrerValue>({})
 
   const [saving,    setSaving]    = useState(false)
 
@@ -297,11 +299,12 @@ export default function NewContactPage() {
         toast.error('事業部が選択されていません。サイドバーで事業部を選んでからもう一度お試しください')
         return
       }
+      let strippedFields: string[] = []
       if (isSupabaseConfigured() && activeDivision) {
         const companyId = fields.company
           ? (await findOrCreateCompany(fields.company)) ?? undefined
           : undefined
-        await createContact({
+        const result = await createContact({
           divisionId: activeDivision.id,
           name: fields.name,
           email: fields.email || undefined,
@@ -311,10 +314,20 @@ export default function NewContactPage() {
           companyId,
           tags,
           customAttributes,
+          referrerType: referrer.type,
+          referrerUserId: referrer.type === 'internal' ? referrer.userId : undefined,
+          referrerContactId: referrer.type === 'external' ? referrer.contactId : undefined,
         })
+        strippedFields = result.strippedFields
       }
       setStep('done')
-      toast.success(`${fields.name}さんを登録しました！`)
+      // OPTIONAL_CONTACT_COLUMNSは紹介者関連カラムのみなので、1件でも含まれていれば
+      // 紹介者欄が未反映であることを意味する（修正5）
+      if (strippedFields.length > 0) {
+        toast(`${fields.name}さんを登録しました（紹介者欄は未適用のため保存されていません。管理者にご確認ください）`, { icon: '⚠️' })
+      } else {
+        toast.success(`${fields.name}さんを登録しました！`)
+      }
     } catch {
       toast.error('保存に失敗しました。もう一度お試しください。')
     } finally {
@@ -330,6 +343,7 @@ export default function NewContactPage() {
     setLocation('')
     setMeetingContext('')
     setCustomTags('')
+    setReferrer({})
     setFieldErrors({})
     setFlow(null)
     setStep('select')
@@ -837,6 +851,14 @@ export default function NewContactPage() {
                 {activeDivision?.name ?? '—'}
               </div>
             </div>
+
+            {/* 紹介者（M&A事業部要望④） */}
+            <ReferrerPicker
+              label="紹介者（任意）"
+              value={referrer}
+              onChange={setReferrer}
+              filterDivisionId={activeDivision?.id}
+            />
           </div>
 
           <div className="flex justify-between gap-2">

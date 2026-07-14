@@ -8,7 +8,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import {
   Save, User, Building2, Bell, Shield, Users,
   Settings2, Tag, Trash2, Plus,
-  Check, X, ArrowUp, ArrowDown, Edit2, Eye, EyeOff, KeyRound, Info, FileText, BookOpen, Activity,
+  Check, X, ArrowUp, ArrowDown, Edit2, Eye, EyeOff, KeyRound, Info, FileText, BookOpen, Activity, Send,
 } from 'lucide-react'
 import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS, DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
 import type { Role } from '@/types/database'
@@ -29,6 +29,9 @@ import {
 import {
   fetchDivisionDocTypes, createDivisionDocType, updateDivisionDocType, deleteDivisionDocType,
 } from '@/lib/db/documents'
+import {
+  fetchNotificationSettings, upsertNotificationSettings,
+} from '@/lib/db/milestones'
 import {
   fetchDivisionKnowledgeCategories, createDivisionKnowledgeCategory, deleteDivisionKnowledgeCategory,
 } from '@/lib/db/knowledge'
@@ -66,6 +69,21 @@ function moveItem<T>(arr: T[], idx: number, dir: -1 | 1): T[] {
 export default function SettingsPage() {
   const { currentUser, setCurrentUser, activeDivision, divisions } = useAppStore()
   const isSuperAdmin = currentUser?.role === 'super_admin'
+  // Slack通知設定（022マイグレーションのRLS: division_notification_settings_select/_manage）は
+  // super_adminと当該事業部のmanagerの両方を許可する設計だが、以前はUI側が
+  // {isSuperAdmin && ...} ブロック内にしか置かれておらずmanagerが到達できなかった（修正6）。
+  // managerは自分の所属事業部のみ設定できるようにする
+  const isManager = currentUser?.role === 'manager'
+  const userOwnDivisionIds = useAppStore((s) => s.userOwnDivisionIds)
+  const managerDivisions = divisions.filter((d) => userOwnDivisionIds.includes(d.id))
+  const [managerNotifDivId, setManagerNotifDivId] = useState(activeDivision?.id ?? managerDivisions[0]?.id ?? '')
+  useEffect(() => {
+    if (activeDivision?.id && userOwnDivisionIds.includes(activeDivision.id)) setManagerNotifDivId(activeDivision.id)
+  }, [activeDivision?.id, userOwnDivisionIds])
+  if (!managerNotifDivId && managerDivisions.length > 0) {
+    setManagerNotifDivId(managerDivisions[0].id)
+  }
+  const managerNotifDivName = managerDivisions.find((d) => d.id === managerNotifDivId)?.name ?? ''
 
   const [name, setName] = useState(currentUser?.name ?? '')
   const [saving, setSaving] = useState(false)
@@ -268,6 +286,55 @@ export default function SettingsPage() {
           <KnowledgeCategoriesPanel key={`knowledge-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <MemoCategoriesPanel key={`memo-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <TaskStagesPanel key={`tasks-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+          <NotificationSettingsPanel key={`notif-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+        </>
+      )}
+
+      {/* ─── マネージャー設定（Slack通知のみ。修正6） ───
+          division_notification_settings_manage RLSはsuper_adminと当該事業部のmanagerの
+          両方を許可しているが、以前はUIがsuper_admin専用ブロックの中にしかなく
+          managerが到達できなかった。managerは自分の所属事業部のみ設定できるようにする */}
+      {isManager && !isSuperAdmin && managerDivisions.length > 0 && (
+        <>
+          <div className="flex items-center gap-2 pt-2">
+            <div className="flex-1 h-px bg-orange-100" />
+            <span className="text-xs font-bold text-orange-500 uppercase tracking-widest flex items-center gap-1.5">
+              <Send size={11} />マネージャー設定
+            </span>
+            <div className="flex-1 h-px bg-orange-100" />
+          </div>
+
+          {managerDivisions.length > 1 && (
+            <Card className="border-orange-200 ring-1 ring-orange-100">
+              <CardHeader>
+                <div className="flex items-center gap-2 font-bold text-gray-700">
+                  <Building2 size={18} className="text-orange-500" />対象事業部
+                </div>
+              </CardHeader>
+              <CardBody>
+                <p className="text-xs text-gray-500 mb-3">
+                  Slack通知設定を編集する事業部を選んでください（あなたが所属する事業部のみ選択できます）。
+                </p>
+                <select
+                  value={managerNotifDivId}
+                  onChange={(e) => setManagerNotifDivId(e.target.value)}
+                  aria-label="Slack通知設定の対象事業部"
+                  className="w-full px-3 py-2.5 text-sm font-bold text-gray-700 border-2 border-orange-200 rounded-lg
+                    focus:outline-none focus:ring-2 focus:ring-orange-500 bg-orange-50/50 cursor-pointer"
+                >
+                  {managerDivisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </CardBody>
+            </Card>
+          )}
+
+          {managerNotifDivId && (
+            <NotificationSettingsPanel
+              key={`notif-mgr-${managerNotifDivId}`}
+              divisionId={managerNotifDivId}
+              divisionName={managerNotifDivName}
+            />
+          )}
         </>
       )}
     </div>
@@ -1606,6 +1673,119 @@ function DocTypesPanel({ divisionId, divisionName }: MasterPanelProps) {
             className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50">
             <Plus size={13} />追加
           </button>
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+// ─── Slack通知設定（M&A事業部要望⑧） ─────────────────────────────
+// division_document_types_manage と同じ権限パターン（super_admin or 当該事業部manager）。
+// Webhook URLは機密情報のためRLSでもmanager/super_adminのみ閲覧可能に絞っている。
+function NotificationSettingsPanel({ divisionId, divisionName }: MasterPanelProps) {
+  const selectedDivId = divisionId
+  const [dbReady, setDbReady] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [webhookUrl, setWebhookUrl] = useState('')
+  const [mention, setMention] = useState('')
+  const [daysBefore, setDaysBefore] = useState(1)
+  const [enabled, setEnabled] = useState(false)
+
+  useEffect(() => {
+    if (!selectedDivId || !isSupabaseConfigured()) return
+    setLoading(true)
+    fetchNotificationSettings(selectedDivId)
+      .then((s) => {
+        setWebhookUrl(s?.slack_webhook_url ?? '')
+        setMention(s?.slack_mention ?? '')
+        setDaysBefore(s?.days_before ?? 1)
+        setEnabled(s?.enabled ?? false)
+        setDbReady(true)
+      })
+      .catch(() => setDbReady(false))
+      .finally(() => setLoading(false))
+  }, [selectedDivId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSave = async () => {
+    if (webhookUrl && !/^https?:\/\//i.test(webhookUrl)) {
+      toast.error('Webhook URLは http:// または https:// で始めてください')
+      return
+    }
+    setSaving(true)
+    try {
+      await upsertNotificationSettings(selectedDivId, {
+        slackWebhookUrl: webhookUrl.trim() || null,
+        slackMention: mention.trim() || null,
+        daysBefore,
+        enabled,
+      })
+      toast.success('Slack通知設定を保存しました')
+    } catch {
+      toast.error('保存に失敗しました')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2 font-bold text-gray-700">
+          <Send size={18} />Slack通知設定（{divisionName}）
+        </div>
+      </CardHeader>
+      <CardBody>
+        <p className="text-xs text-gray-500 mb-4">
+          対応期日（マイルストーン・クロージング予定日）の指定日数前になると、
+          Slackへ自動通知します。通知は毎朝（JST 7:00頃）にまとめて送信されます。
+        </p>
+
+        {isSupabaseConfigured() && !dbReady && !loading && (
+          <div className="mb-4 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-800">
+            通知設定のDBテーブル（022_deal_milestones_and_slack.sql）が未適用のため利用できません。
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-700">Slack通知を有効にする</span>
+            <button
+              onClick={() => setEnabled((v) => !v)}
+              disabled={!dbReady || saving || loading}
+              aria-pressed={enabled}
+              aria-label="Slack通知の有効/無効"
+              className={cn('relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50',
+                enabled ? 'bg-orange-500' : 'bg-gray-200')}
+            >
+              <span className={cn('inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform',
+                enabled ? 'translate-x-5' : 'translate-x-0.5')} />
+            </button>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Slack Incoming Webhook URL</label>
+            <input type="text" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)}
+              disabled={!dbReady || saving || loading}
+              placeholder="https://hooks.slack.com/services/..."
+              className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:opacity-50" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">メンション文字列（任意）</label>
+            <input type="text" value={mention} onChange={(e) => setMention(e.target.value)}
+              disabled={!dbReady || saving || loading}
+              placeholder="例: <!channel> や <@U0123456>"
+              className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:opacity-50" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">何日前に通知するか</label>
+            <input type="number" min={0} max={30} value={daysBefore}
+              onChange={(e) => setDaysBefore(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              disabled={!dbReady || saving || loading}
+              className="w-24 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:opacity-50" />
+          </div>
+          <Button size="sm" loading={saving} disabled={!dbReady || loading} onClick={handleSave} icon={<Save size={13} />}>
+            保存する
+          </Button>
         </div>
       </CardBody>
     </Card>

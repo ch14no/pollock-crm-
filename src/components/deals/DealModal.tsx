@@ -4,9 +4,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { ContactPicker } from '@/components/ui/ContactPicker'
+import { ReferrerPicker, type ReferrerValue } from '@/components/ui/ReferrerPicker'
 import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
 import { DealDocumentsSection } from '@/components/deals/DealDocumentsSection'
 import { DealPaymentsSection } from '@/components/deals/DealPaymentsSection'
+import { DealMilestonesSection } from '@/components/deals/DealMilestonesSection'
+import { DealConditionsSection } from '@/components/deals/DealConditionsSection'
 import type { DealPriority } from '@/types/database'
 import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS } from '@/lib/mock-data'
@@ -24,6 +27,7 @@ interface DealFormState {
   closeDate: string
   description: string
   priority: DealPriority
+  referrer: ReferrerValue
 }
 
 const PRIORITY_OPTIONS: { value: DealPriority; label: string; activeClass: string }[] = [
@@ -31,6 +35,10 @@ const PRIORITY_OPTIONS: { value: DealPriority; label: string; activeClass: strin
   { value: 'medium', label: '中', activeClass: 'bg-orange-500 text-white border-orange-500' },
   { value: 'low',    label: '低', activeClass: 'bg-gray-400 text-white border-gray-400' },
 ]
+
+// 021マイグレーション未適用の環境で紹介者関連カラムが黙って保存から外れたことを
+// 検知するための対象カラム一覧（修正5）
+const REFERRER_COLUMNS = ['referrer_type', 'referrer_user_id', 'referrer_contact_id']
 
 const FALLBACK_STAGES = [
   { id: 'リード',       name: 'リード',       isWon: false },
@@ -65,7 +73,14 @@ export function DealModal() {
 
   const [form, setForm] = useState<DealFormState>({
     title: '', contactId: '', amount: '', stageId: 'リード', closeDate: '', description: '', priority: 'medium',
+    referrer: {},
   })
+
+  // 売主/買主タブの判定はパイプラインタブの実装同様、タブ名の文字列マッチで行う
+  // （専用のboolean列はなく、タブ名は事業部管理者が自由入力で設定する運用のため）
+  const currentTabName = tabs.find((t) => t.id === selectedTabId)?.name ?? ''
+  const isBuyerTab = currentTabName.includes('買主')
+  const isSellerTab = currentTabName.includes('売主')
 
   // 指定した事業部・タブに紐づく「進行中」ステージ一覧（失注除く、受注絵文字付与、sortOrder順）。
   // タブを持たない事業部では tabId を無視して事業部の全ステージを対象にする。
@@ -99,6 +114,7 @@ export function DealModal() {
         closeDate: d.close_date ? d.close_date.slice(0, 10) : '',
         description: d.description ?? '',
         priority: d.priority ?? 'medium',
+        referrer: { type: d.referrer_type, userId: d.referrer_user_id, contactId: d.referrer_contact_id },
       })
       setAmountDisplay(d.amount > 0 ? d.amount.toLocaleString('ja-JP') : '')
       // 本番はDBのproduct_nameが真実源（nullは「未選択」の意味なので旧localStorage値で復活させない）。
@@ -119,6 +135,7 @@ export function DealModal() {
         closeDate: '',
         description: '',
         priority: 'medium',
+        referrer: {},
       })
       setAmountDisplay('')
       setSelectedProduct('')
@@ -144,11 +161,17 @@ export function DealModal() {
 
     setLoading(true)
     const now = new Date().toISOString()
+    // 紹介者：選択中のタイプに応じて片方だけをセットし、CHECK制約（021）に合わせて
+    // 使わない側は毎回明示的にnullへ揃える（type切替時に古いIDが残らないように）
+    const referrerType = form.referrer.type ?? null
+    const referrerUserId = form.referrer.type === 'internal' ? (form.referrer.userId ?? null) : null
+    const referrerContactId = form.referrer.type === 'external' ? (form.referrer.contactId ?? null) : null
+    let strippedFields: string[] = []
     try {
       if (isEdit && dealModal.deal) {
         // ── 編集 ──
         if (isSupabaseConfigured()) {
-          await updateDeal(dealModal.deal.id, {
+          const result = await updateDeal(dealModal.deal.id, {
             title: form.title.trim(),
             amount,
             stageId: form.stageId,
@@ -156,7 +179,11 @@ export function DealModal() {
             description: form.description.trim() || null,
             productName: selectedProduct || null,
             priority: form.priority,
+            referrerType,
+            referrerUserId,
+            referrerContactId,
           })
+          strippedFields = result.strippedFields
         }
         updateLocalDeal(dealModal.deal.id, {
           title: form.title.trim(),
@@ -166,6 +193,9 @@ export function DealModal() {
           description: form.description.trim() || undefined,
           product_name: selectedProduct || undefined,
           priority: form.priority,
+          referrer_type: referrerType ?? undefined,
+          referrer_user_id: referrerUserId ?? undefined,
+          referrer_contact_id: referrerContactId ?? undefined,
           updated_at: now,
         })
         // デモモードのみ旧localStorage保存を維持（本番はdeals.product_nameが真実源）
@@ -173,12 +203,16 @@ export function DealModal() {
           if (selectedProduct) setDealProduct(dealModal.deal.id, selectedProduct)
           else clearDealProduct(dealModal.deal.id)
         }
-        toast.success(`「${form.title}」を更新しました`)
+        if (strippedFields.some((f) => REFERRER_COLUMNS.includes(f))) {
+          toast(`「${form.title}」を更新しました（紹介者欄は未適用のため保存されていません。管理者にご確認ください）`, { icon: '⚠️' })
+        } else {
+          toast.success(`「${form.title}」を更新しました`)
+        }
       } else {
         // ── 新規作成 ──
         let dealId = `deal-local-${Date.now()}`
         if (isSupabaseConfigured() && activeDivisionId) {
-          dealId = await createDeal({
+          const result = await createDeal({
             divisionId: activeDivisionId,
             contactId: form.contactId || undefined,
             assignedUserId: currentUser?.id,
@@ -189,7 +223,12 @@ export function DealModal() {
             description: form.description.trim() || undefined,
             productName: selectedProduct || undefined,
             priority: form.priority,
+            referrerType: referrerType ?? undefined,
+            referrerUserId: referrerUserId ?? undefined,
+            referrerContactId: referrerContactId ?? undefined,
           })
+          dealId = result.id
+          strippedFields = result.strippedFields
         }
         addDeal({
           id: dealId,
@@ -203,12 +242,19 @@ export function DealModal() {
           description: form.description.trim() || undefined,
           product_name: selectedProduct || undefined,
           priority: form.priority,
+          referrer_type: referrerType ?? undefined,
+          referrer_user_id: referrerUserId ?? undefined,
+          referrer_contact_id: referrerContactId ?? undefined,
           created_at: now,
           updated_at: now,
           users: currentUser ?? undefined,
         })
         if (!isSupabaseConfigured() && selectedProduct) setDealProduct(dealId, selectedProduct)
-        toast.success(`商談「${form.title}」を作成しました`)
+        if (strippedFields.some((f) => REFERRER_COLUMNS.includes(f))) {
+          toast(`商談「${form.title}」を作成しました（紹介者欄は未適用のため保存されていません。管理者にご確認ください）`, { icon: '⚠️' })
+        } else {
+          toast.success(`商談「${form.title}」を作成しました`)
+        }
       }
       closeDealModal()
     } catch {
@@ -312,6 +358,14 @@ export function DealModal() {
           onSelect={(contactId) => setForm((f) => ({ ...f, contactId }))}
           onClear={() => setForm((f) => ({ ...f, contactId: '' }))}
           disabled={isEdit}
+        />
+
+        {/* 紹介者（M&A事業部要望④）。021マイグレーション未適用でも保存はfallbackされるため常に表示する */}
+        <ReferrerPicker
+          label="紹介者"
+          value={form.referrer}
+          onChange={(referrer) => setForm((f) => ({ ...f, referrer }))}
+          filterDivisionId={activeDivisionId ?? undefined}
         />
 
         {/* 見込み額 + クロージング予定日 */}
@@ -528,12 +582,16 @@ export function DealModal() {
         </Button>
       </form>
 
-      {/* 資料・金銭管理（登録済み商談の編集時のみ。013/014マイグレーション未適用時は自動的に非表示）
+      {/* 資料・金銭管理・対応期日・条件（登録済み商談の編集時のみ。各マイグレーション未適用時は自動的に非表示）
           ※ それぞれ内部に独自のformを持つため、上の商談フォームの外に配置する（ネストフォーム防止） */}
       {isEdit && dealModal.deal && isSupabaseConfigured() && !dealModal.deal.id.startsWith('deal-local-') && (
         <div className="mt-4 space-y-3">
           <DealDocumentsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
           <DealPaymentsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
+          <DealMilestonesSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
+          {(isSellerTab || isBuyerTab) && (
+            <DealConditionsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} party={isBuyerTab ? 'buyer' : 'seller'} />
+          )}
         </div>
       )}
       {/* 新規作成時はセクション自体が出ないため、機能の存在と手順を案内する */}

@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Division, User, Deal, Activity, ActivityStatus, Role, Tossup, TossupStatus } from '@/types/database'
+import type { Division, User, Deal, Activity, ActivityStatus, Role, Tossup, TossupStatus, ReferrerContact, ReferrerUser } from '@/types/database'
 
 // ─── 管理者用型定義 ─────────────────────────────────────────────
 export interface AdminUserRecord {
@@ -77,6 +77,14 @@ export interface ContactLocalEdit {
   address?: string
   notes?: string
   tags?: string[]
+  // 紹介者（M&A事業部要望④）
+  referrer_type?: 'internal' | 'external'
+  referrer_user_id?: string
+  referrer_contact_id?: string
+  // 表示名の即時反映用（修正9）。ReferrerPickerが選択時に渡すオブジェクトをそのまま保持する。
+  // DB保存はされない（referrer_user_id/referrer_contact_idのみが真実源）
+  referrer_user?: ReferrerUser
+  referrer_contact?: ReferrerContact
 }
 
 // 事業部別カスタムフィールド定義

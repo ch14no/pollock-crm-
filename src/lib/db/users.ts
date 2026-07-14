@@ -1,6 +1,6 @@
 import { getSupabase } from './client'
 import { createClient } from '@/lib/supabase/client'
-import type { User } from '@/types/database'
+import type { ReferrerUser, User } from '@/types/database'
 
 async function getAuthToken(): Promise<string | null> {
   try {
@@ -73,6 +73,22 @@ export async function deleteUserAdmin(id: string): Promise<void> {
   const res = await adminFetch(`/api/admin/users?id=${id}`, { method: 'DELETE' })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error ?? '削除に失敗しました')
+}
+
+// 紹介者ピッカー（社内）用: 全ユーザー＋主所属事業部名。
+// users テーブルを直接クエリすると users_select RLS（自分自身 or super_admin のみ）に
+// より一般ユーザー・managerからは自分以外が見えないため（修正2）、024マイグレーションの
+// SECURITY DEFINER関数 list_user_directory() 経由で取得する。
+// email等の機微情報は返さないため、戻り値もReferrerUser（id/nameのみ）ベースにしている
+export async function fetchUsersWithDivision(): Promise<(ReferrerUser & { primaryDivisionName?: string })[]> {
+  const { data, error } = await getSupabase().rpc('list_user_directory')
+  if (error) return []
+  type Raw = { id: string; name: string; primary_division_name: string | null }
+  return ((data ?? []) as Raw[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    primaryDivisionName: r.primary_division_name ?? undefined,
+  }))
 }
 
 export async function fetchDivisionUsers(divisionId: string): Promise<User[]> {

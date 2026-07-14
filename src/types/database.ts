@@ -4,6 +4,35 @@ export type ActivityStatus = 'todo' | 'doing' | 'done'
 export type TossupStatus = 'unread' | 'in_progress' | 'closed'
 export type TargetType = 'contact' | 'deal' | 'company'
 
+// 紹介者（M&A事業部要望④）。社内は users 参照、社外は contacts 参照。
+export type ReferrerType = 'internal' | 'external'
+
+// 紹介者として参照される社外担当者の要約情報。
+// フルの Contact 型（tags・custom_attributes 等が必須）をそのまま使うと
+// 浅いjoin結果でダミー値を埋める羽目になるため、表示に必要な項目のみの専用型にする。
+export interface ReferrerContact {
+  id: string
+  name: string
+  department?: string
+  position?: string
+  email?: string
+  phone?: string
+  company_id?: string
+  companies?: { id: string; name: string }
+}
+
+// 紹介者として参照される社内担当者の情報。DBのjoin結果（Contact/Dealのreferrer_user）は
+// フル（email/role/created_at含む）だが、紹介者検索（024マイグレーションのSECURITY DEFINER
+// 関数経由のfetchUsersWithDivision）はid/nameのみを返す（email等の機微情報を全社員に
+// 晒さない設計。修正2）ため、email/role/created_atは任意にしている
+export interface ReferrerUser {
+  id: string
+  name: string
+  email?: string
+  role?: Role
+  created_at?: string
+}
+
 export interface User {
   id: string
   name: string
@@ -58,12 +87,18 @@ export interface Contact {
   tags: string[]
   custom_attributes: Record<string, unknown>
   notes?: string
+  // 紹介者（M&A事業部要望④。021マイグレーション）
+  referrer_type?: ReferrerType
+  referrer_user_id?: string
+  referrer_contact_id?: string
   created_at: string
   updated_at: string
   // joined
   companies?: Company
   users?: User
   divisions?: Division
+  referrer_user?: ReferrerUser
+  referrer_contact?: ReferrerContact
 }
 
 export interface PipelineStage {
@@ -167,11 +202,89 @@ export interface Deal {
   description?: string
   product_name?: string
   priority?: DealPriority
+  // 紹介者（M&A事業部要望④。021マイグレーション）
+  referrer_type?: ReferrerType
+  referrer_user_id?: string
+  referrer_contact_id?: string
   created_at: string
   updated_at: string
   // joined
   contacts?: Contact
   users?: User
+  referrer_user?: ReferrerUser
+  referrer_contact?: ReferrerContact
+}
+
+// ─── 対応期日（マイルストーン）＋Slack通知設定（M&A事業部要望⑧。022マイグレーション） ───
+
+// 事業部ごとに設定可能なマイルストーン種別（013の division_document_types と同じパターン）
+export interface DivisionMilestoneType {
+  id: string
+  division_id: string
+  name: string
+  sort_order: number
+  created_at: string
+}
+
+// 案件ごとのマイルストーン期日
+export interface DealMilestone {
+  id: string
+  deal_id: string
+  division_id: string
+  milestone_type_id: string
+  due_date?: string
+  notified_at?: string
+  created_at: string
+  updated_at: string
+  // joined
+  division_milestone_types?: DivisionMilestoneType
+}
+
+// 事業部ごとのSlack通知設定（webhook URLはmanager/super_adminのみ閲覧可）
+export interface DivisionNotificationSettings {
+  division_id: string
+  slack_webhook_url?: string
+  slack_mention?: string
+  days_before: number
+  enabled: boolean
+  updated_at: string
+}
+
+// ─── 売主・買主の希望条件（M&A事業部要望㉒。023マイグレーション） ───
+
+export type DesiredArea = '全国' | '1都3県' | '関東' | '関西' | '中部' | '九州' | 'その他'
+export type LossDeficitOk = '可' | '否'
+export type FundingMethod = '手元資金' | '借入' | 'エクイティ'
+
+// 売主の譲渡希望条件（1商談＝1レコード）
+export interface DealSellerConditions {
+  deal_id: string
+  division_id: string
+  desired_timing?: string
+  desired_scheme?: string
+  desired_price?: string
+  other_conditions?: string
+  updated_at: string
+}
+
+// 買主の買収意向（1商談＝1レコード）
+export interface DealBuyerConditions {
+  deal_id: string
+  division_id: string
+  desired_area?: DesiredArea
+  desired_industry?: string
+  desired_revenue_size?: string
+  valuation_method?: string
+  investment_budget_max?: string
+  loss_deficit_ok?: LossDeficitOk
+  funding_method?: FundingMethod
+  funding_amount_max?: string
+  key_man_lockup?: string
+  audit_by_company?: string
+  audit_by_specialist?: string
+  review_period?: string
+  approval_flow?: string
+  updated_at: string
 }
 
 export interface Activity {
