@@ -13,6 +13,7 @@ import { getSupabase, isSupabaseConfigured } from '@/lib/db/client'
 import {
   fetchDivisions, fetchUserDivisions,
   fetchDivisionStagesMapped, fetchDivisionTabsMapped, fetchDivisionCustomFields,
+  fetchDivisionTaskStagesDb,
 } from '@/lib/db/divisions'
 import { fetchDivisionProductsData } from '@/lib/db/products'
 import { MOCK_DIVISIONS, MOCK_USER, MOCK_USER_DIVISIONS } from '@/lib/mock-data'
@@ -25,6 +26,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const setDivisionCustomFields = useAppStore((s) => s.setDivisionCustomFields)
   const setDivisionProducts = useAppStore((s) => s.setDivisionProducts)
   const setDivisionProductsEnabled = useAppStore((s) => s.setDivisionProductsEnabled)
+  const setDivisionTaskStages = useAppStore((s) => s.setDivisionTaskStages)
 
   // 閲覧中の事業部が変わるたびに、その事業部のマスタ（ステージ・タブ・カスタム項目・商品）を
   // DBからストアへ同期する。従来は設定画面を開いた端末のlocalStorageにしか入らず、
@@ -34,11 +36,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     let cancelled = false
     const load = async () => {
       try {
-        const [stages, tabs, fields, productsData] = await Promise.all([
+        const [stages, tabs, fields, productsData, taskStages] = await Promise.all([
           fetchDivisionStagesMapped(activeDivisionId),
           fetchDivisionTabsMapped(activeDivisionId),
           fetchDivisionCustomFields(activeDivisionId),
           fetchDivisionProductsData(activeDivisionId),
+          // タスクカンバン列（025）。マイグレーション未適用でも他マスタの同期を
+          // 巻き込んで失敗させないよう、ここだけ個別にフォールバックする
+          fetchDivisionTaskStagesDb(activeDivisionId).catch(() => null),
         ])
         if (cancelled) return
         setDivisionStages(activeDivisionId, stages)
@@ -48,13 +53,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           setDivisionProducts(activeDivisionId, productsData.products)
           setDivisionProductsEnabled(activeDivisionId, productsData.enabled)
         }
+        // 行が無い事業部（未設定）はlocalStorage→デフォルトの従来フォールバックを維持
+        if (taskStages && taskStages.length > 0) {
+          setDivisionTaskStages(activeDivisionId, taskStages)
+        }
       } catch {
         // 取得失敗時は既存のローカルキャッシュ表示を維持する（画面を壊さない）
       }
     }
     load()
     return () => { cancelled = true }
-  }, [activeDivisionId, setDivisionStages, setDivisionTabs, setDivisionCustomFields, setDivisionProducts, setDivisionProductsEnabled])
+  }, [activeDivisionId, setDivisionStages, setDivisionTabs, setDivisionCustomFields, setDivisionProducts, setDivisionProductsEnabled, setDivisionTaskStages])
 
   useEffect(() => {
     const supabase = getSupabase()

@@ -51,6 +51,9 @@ export default function TasksPage() {
   const openActivityModal    = useAppStore((s) => s.openActivityModal)
   const activityModalIsOpen  = useAppStore((s) => s.activityModal.isOpen)
 
+  // 列定義はDBが真実源（025_task_kanban_stages.sql）。DBからのハイドレーションは
+  // 他の事業部マスタと同様に layout.tsx で一括実施される。
+  // 行が無い事業部はlocalStorage→デフォルトの順でフォールバックする
   const divisionTaskStages = useAppStore((s) => s.divisionTaskStages)
 
   const kanbanStages = activeDivisionId

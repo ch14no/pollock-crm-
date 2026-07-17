@@ -308,7 +308,9 @@ export function TaskKanbanBoard({
   const byStage = (stageId: string) =>
     tasks.filter((t) => {
       const mapped = taskStageMap[t.id]
-      if (mapped) return mapped === stageId
+      // 割当先の列が削除・変更されて存在しない場合は未割当として先頭列に出す
+      // （どの列にも該当せずタスクがボードから消えるのを防ぐ）
+      if (mapped && stages.some((s) => s.id === mapped)) return mapped === stageId
       return stageId === stages[0]?.id
     })
 

@@ -22,6 +22,7 @@ import {
   fetchDivisionCustomFields,
   createDivisionCustomField, updateDivisionCustomField, deleteDivisionCustomField,
   fetchDivisions, createDivision, updateDivision, deleteDivision, checkDivisionReferences,
+  fetchDivisionTaskStagesDb, saveDivisionTaskStages,
 } from '@/lib/db/divisions'
 import {
   fetchDivisionProductsData, addDivisionProduct, removeDivisionProduct, saveDivisionProductsEnabled,
@@ -1968,14 +1969,64 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
   const stages: TaskKanbanStage[] = divisionTaskStages[divId] ?? DEFAULT_DIVISION_TASK_STAGES[divId] ?? []
   const [newName, setNewName]   = useState('')
   const [newColor, setNewColor] = useState('blue')
+  const [saving, setSaving]     = useState(false)
+  // DB同期状態。'loading'中は編集をブロックする（初回取得前の編集が、後から届いた
+  // 取得結果に上書きされて静かに消えるのを防ぐ。ProductsPanelのproductsLoadingと同じ理由）。
+  // 'local'はDBに行が無い＝現在の列構成がこの端末のブラウザにしか無い状態。
+  // （このパネルは事業部ごとにkey付きで再マウントされるため、初期値でSupabase未設定を判定してよい）
+  const [syncState, setSyncState] = useState<'loading' | 'synced' | 'local' | 'unavailable'>(
+    () => (isSupabaseConfigured() ? 'loading' : 'unavailable')
+  )
 
-  const handleAdd = () => {
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return
+    let cancelled = false
+    fetchDivisionTaskStagesDb(divId)
+      .then((rows) => {
+        if (cancelled) return
+        if (rows.length > 0) {
+          setDivisionTaskStages(divId, rows)
+          setSyncState('synced')
+        } else {
+          setSyncState('local')
+        }
+      })
+      .catch(() => { if (!cancelled) setSyncState('unavailable') })
+    return () => { cancelled = true }
+  }, [divId, setDivisionTaskStages])
+
+  // 初回読み込み中と保存中は全操作を無効化（連打による保存の交錯も防ぐ）
+  const controlsDisabled = saving || syncState === 'loading'
+
+  // ストアに即時反映しつつDBへ保存して全端末に共有する。
+  // DB保存に失敗したらストアを巻き戻し、「保存されたつもり」の端末ローカル状態を残さない。
+  const applyStages = async (next: TaskKanbanStage[]): Promise<boolean> => {
+    const prev = stages
+    setDivisionTaskStages(divId, next)
+    if (!isSupabaseConfigured()) return true // ローカルモードではストア保存のみで完結
+    setSaving(true)
+    try {
+      await saveDivisionTaskStages(divId, next)
+      setSyncState('synced')
+      return true
+    } catch (e) {
+      setDivisionTaskStages(divId, prev)
+      const msg = e instanceof Error ? e.message : String(e)
+      toast.error(`列構成の保存に失敗したため、変更を取り消しました（${msg}）`, { duration: 6000 })
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleAdd = async () => {
     const trimmed = newName.trim()
     if (!trimmed) return
     if (stages.some((s) => s.name === trimmed)) { toast.error('同じ名前の列がすでに存在します'); return }
-    setDivisionTaskStages(divId, [...stages, { id: `stage-${Date.now()}`, name: trimmed, color: newColor }])
-    setNewName('')
-    toast.success(`列「${trimmed}」を追加しました`)
+    if (await applyStages([...stages, { id: `stage-${Date.now()}`, name: trimmed, color: newColor }])) {
+      setNewName('')
+      toast.success(`列「${trimmed}」を追加しました`)
+    }
   }
 
   const move = (idx: number, dir: -1 | 1) => {
@@ -1983,8 +2034,21 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
     const target = idx + dir
     if (target < 0 || target >= next.length) return
     ;[next[idx], next[target]] = [next[target], next[idx]]
-    setDivisionTaskStages(divId, next)
+    void applyStages(next) // 失敗時はapplyStages内で巻き戻し・通知
   }
+
+  const handleDelete = (stage: TaskKanbanStage) => {
+    // 空の列リストはDB上「未設定」と区別できず他端末に伝播しないため、最後の1列は削除不可
+    if (stages.length <= 1) {
+      toast.error('最後の列は削除できません（カンバンには最低1列必要です）')
+      return
+    }
+    void applyStages(stages.filter((x) => x.id !== stage.id))
+  }
+
+  // この端末のlocalStorageにだけ残っているカスタム列構成（DB導入前に編集されたもの）
+  const hasLocalOnlyCustomization =
+    syncState === 'local' && (divisionTaskStages[divId]?.length ?? 0) > 0
 
   return (
     <Card>
@@ -2009,10 +2073,35 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
           <ul className="list-disc pl-4 space-y-0.5 text-gray-400">
             <li>下の入力欄で色と列名を決めて「追加」</li>
             <li><ArrowUp size={10} className="inline" /><ArrowDown size={10} className="inline" /> で列の並び順を変更、ゴミ箱アイコンで削除</li>
-            <li>変更はこの事業部のタスクカンバンに即時反映されます</li>
+            <li>変更は保存され、この事業部の全メンバーのタスクカンバンに反映されます（他の端末は画面の再読み込みで反映）</li>
           </ul>
           <p className="text-gray-400">財務支援では補助金フロー用の列（例: 申請中）がデフォルト設定されています。</p>
         </div>
+
+        {/* DBに接続できない場合は「全メンバーに反映される」という上の説明が成立しないことを明示 */}
+        {syncState === 'unavailable' && isSupabaseConfigured() && (
+          <div className="mb-4 p-3 bg-red-50 rounded-xl border border-red-200 text-xs text-red-700">
+            列構成のDBに接続できないため、現在は列構成を変更できません（保存に失敗した変更は自動的に取り消されます）。
+            SQLマイグレーション 025_task_kanban_stages.sql の適用状況を確認してください。
+          </div>
+        )}
+
+        {/* DB導入前にこの端末で編集された列構成の救済導線。
+            押すと現在表示中の列構成がDBに保存され、全メンバー・全端末で共有される */}
+        {hasLocalOnlyCustomization && (
+          <div className="mb-4 p-3 bg-yellow-50 rounded-xl border border-yellow-200 text-xs text-yellow-800 space-y-2">
+            <p className="font-medium">
+              この列構成は現在この端末のブラウザにのみ保存されており、他のメンバー・他のPCには反映されていません。
+            </p>
+            <button
+              onClick={async () => { if (await applyStages(stages)) toast.success('列構成を全メンバーに共有しました') }}
+              disabled={controlsDisabled}
+              className="px-3 py-1.5 bg-yellow-500 text-white text-xs font-bold rounded-lg hover:bg-yellow-600 transition-colors disabled:opacity-50"
+            >
+              この列構成を全メンバーに共有する
+            </button>
+          </div>
+        )}
 
         <p className="text-xs font-medium text-gray-500 mb-1.5">現在の列（上から順にカンバンの左→右に並びます）</p>
         <div className="space-y-1.5 mb-3">
@@ -2024,14 +2113,14 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
               <span className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', COLOR_DOT[s.color] ?? 'bg-gray-400')} />
               <span className="flex-1 text-sm text-gray-700">{s.name}</span>
               <div className="flex gap-0.5">
-                <button onClick={() => move(idx, -1)} disabled={idx === 0} aria-label={`${s.name}を上へ`}
+                <button onClick={() => move(idx, -1)} disabled={idx === 0 || controlsDisabled} aria-label={`${s.name}を上へ`}
                   className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowUp size={12} /></button>
-                <button onClick={() => move(idx, 1)} disabled={idx === stages.length - 1} aria-label={`${s.name}を下へ`}
+                <button onClick={() => move(idx, 1)} disabled={idx === stages.length - 1 || controlsDisabled} aria-label={`${s.name}を下へ`}
                   className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowDown size={12} /></button>
               </div>
-              <button onClick={() => setDivisionTaskStages(divId, stages.filter((x) => x.id !== s.id))}
+              <button onClick={() => handleDelete(s)} disabled={controlsDisabled}
                 aria-label={`${s.name}を削除`}
-                className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
+                className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-20"><Trash2 size={13} /></button>
             </div>
           ))}
         </div>
@@ -2041,12 +2130,12 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
             className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white">
             {STAGE_COLOR_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
-          <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleAdd() }}
+          <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} maxLength={100}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && !controlsDisabled) handleAdd() }}
             placeholder="列名（例: 申請中）"
             className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
-          <button onClick={handleAdd}
-            className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors">
+          <button onClick={handleAdd} disabled={controlsDisabled}
+            className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50">
             <Plus size={13} />追加
           </button>
         </div>

@@ -1,7 +1,7 @@
 import { getSupabase } from './client'
 import { createClient } from '@/lib/supabase/client'
 import type { Division } from '@/types/database'
-import type { DivisionCustomField, DivisionStage, PipelineTab } from '@/store/appStore'
+import type { DivisionCustomField, DivisionStage, PipelineTab, TaskKanbanStage } from '@/store/appStore'
 
 async function getAuthToken(): Promise<string | null> {
   try {
@@ -208,6 +208,37 @@ export async function upsertPipelineStagesForTab(
       name: s.name, sort_order: s.sort_order, is_won: s.is_won, is_lost: s.is_lost,
     }))
   )
+  if (error) throw error
+}
+
+// ─── タスクカンバンの列定義（025_task_kanban_stages.sql） ─────────────
+// 列定義はDBが真実源。行が無い事業部はクライアント側でデフォルト
+// （DEFAULT_DIVISION_TASK_STAGES）やlocalStorageの値にフォールバックする。
+
+export async function fetchDivisionTaskStagesDb(divisionId: string): Promise<TaskKanbanStage[]> {
+  const { data, error } = await getSupabase()
+    .from('task_kanban_stages')
+    .select('id, name, color')
+    .eq('division_id', divisionId)
+    .order('sort_order')
+  if (error) throw error
+  return (data ?? []).map((r) => ({
+    id: r.id as string,
+    name: r.name as string,
+    color: r.color as string,
+  }))
+}
+
+// 列リスト全体を置換保存する。クライアントからのdelete→insert 2リクエスト方式は
+// insertだけ失敗した場合に列定義が丸ごと消えるため、1トランザクションで置換する
+// RPC（replace_task_kanban_stages・権限不足時は例外）を使う。
+// idはクライアント生成のTEXT（'todo'/'stage-<ts>'等）をそのまま保存し、
+// task_meta.kanban_stage_id との紐付けを維持する。
+export async function saveDivisionTaskStages(divisionId: string, stages: TaskKanbanStage[]): Promise<void> {
+  const { error } = await getSupabase().rpc('replace_task_kanban_stages', {
+    p_division_id: divisionId,
+    p_stages: stages.map((s, i) => ({ id: s.id, name: s.name, color: s.color, sort_order: i })),
+  })
   if (error) throw error
 }
 
