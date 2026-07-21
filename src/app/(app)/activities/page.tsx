@@ -105,6 +105,10 @@ export default function ActivitiesPage() {
         const acts = await fetchActivitiesByContactIds(contactIds)
         setDbActivities(acts)
       }
+    } catch {
+      // 握りつぶすと「他のメンバーの活動だけ表示されない」無音故障になる
+      // （URL長制限による取得失敗で実際に発生した）ため必ず通知する
+      toast.error('活動の読み込みに失敗しました。ページを再読み込みしてください', { duration: 6000 })
     } finally {
       setLoading(false)
     }

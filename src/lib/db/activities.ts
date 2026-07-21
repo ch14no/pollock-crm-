@@ -1,4 +1,4 @@
-import { getSupabase } from './client'
+import { getSupabase, chunkIdList } from './client'
 import type { Activity, DivisionMemoCategory } from '@/types/database'
 
 // カテゴリ未設定の事業部向けフォールバック（020適用前・カテゴリ0件でもすぐ使えるように）
@@ -83,12 +83,16 @@ export async function updateTaskKanbanStage(activityId: string, stageId: string)
 
 export async function fetchTaskKanbanStages(activityIds: string[]): Promise<Record<string, string>> {
   if (activityIds.length === 0) return {}
-  const { data } = await getSupabase()
-    .from('task_meta')
-    .select('activity_id, kanban_stage_id')
-    .in('activity_id', activityIds)
+  // IDリストはURL長制限を超えないよう分割して取得（chunkIdListのコメント参照）
+  const rows = await Promise.all(chunkIdList(activityIds).map(async (ids) => {
+    const { data } = await getSupabase()
+      .from('task_meta')
+      .select('activity_id, kanban_stage_id')
+      .in('activity_id', ids)
+    return data ?? []
+  }))
   const result: Record<string, string> = {}
-  for (const row of (data ?? [])) {
+  for (const row of rows.flat()) {
     if (row.kanban_stage_id) result[row.activity_id as string] = row.kanban_stage_id as string
   }
   return result
@@ -103,15 +107,23 @@ export async function fetchActivitiesByDivision(divisionId: string): Promise<Act
 
 export async function fetchActivitiesByContactIds(contactIds: string[]): Promise<Activity[]> {
   if (contactIds.length === 0) return []
-  const { data, error } = await getSupabase()
-    .from('activities')
-    .select('*, users:user_id(id,name,email,role,created_at)')
-    .eq('target_type', 'contact')
-    .in('target_id', contactIds)
-    .order('action_date', { ascending: false })
-    .limit(500)
-  if (error) throw error
-  return (data ?? []).map(toActivity)
+  // 事業部の全顧客IDが渡されるため件数の上限がない。URL長制限（chunkIdListの
+  // コメント参照）を超えると事業部全体のタスク・活動一覧が静かに空になるので分割取得する
+  const results = await Promise.all(chunkIdList(contactIds).map(async (ids) => {
+    const { data, error } = await getSupabase()
+      .from('activities')
+      .select('*, users:user_id(id,name,email,role,created_at)')
+      .eq('target_type', 'contact')
+      .in('target_id', ids)
+      .order('action_date', { ascending: false })
+      .limit(500)
+    if (error) throw error
+    return (data ?? []).map(toActivity)
+  }))
+  // 分割前と同じ「全体で直近500件」に揃える
+  return results.flat()
+    .sort((a, b) => new Date(b.action_date).getTime() - new Date(a.action_date).getTime())
+    .slice(0, 500)
 }
 
 export async function fetchActivitiesByCompany(companyId: string, contactIds: string[]): Promise<Activity[]> {
@@ -148,19 +160,26 @@ export async function fetchRecentDealStageChanges(
   const dealIds = (deals ?? []).map((d: { id: string }) => d.id)
   if (dealIds.length === 0) return []
 
-  let query = getSupabase()
-    .from('activities')
-    .select('*, users:user_id(id,name,email,role,created_at)')
-    .eq('target_type', 'deal')
-    .in('target_id', dealIds)
-    .like('title', 'ステージ変更:%')
-    .gte('action_date', sinceIso)
-    .order('action_date', { ascending: false })
-    .limit(20)
-  if (excludeUserId) query = query.neq('user_id', excludeUserId)
-  const { data, error } = await query
-  if (error) throw error
-  return (data ?? []).map(toActivity)
+  // dealIdsは最大500件になり得るためURL長制限（chunkIdListのコメント参照）を避けて分割取得
+  const results = await Promise.all(chunkIdList(dealIds).map(async (ids) => {
+    let query = getSupabase()
+      .from('activities')
+      .select('*, users:user_id(id,name,email,role,created_at)')
+      .eq('target_type', 'deal')
+      .in('target_id', ids)
+      .like('title', 'ステージ変更:%')
+      .gte('action_date', sinceIso)
+      .order('action_date', { ascending: false })
+      .limit(20)
+    if (excludeUserId) query = query.neq('user_id', excludeUserId)
+    const { data, error } = await query
+    if (error) throw error
+    return (data ?? []).map(toActivity)
+  }))
+  // 分割前と同じ「全体で直近20件」に揃える
+  return results.flat()
+    .sort((a, b) => new Date(b.action_date).getTime() - new Date(a.action_date).getTime())
+    .slice(0, 20)
 }
 
 export async function deleteActivity(id: string): Promise<void> {

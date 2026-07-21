@@ -95,6 +95,10 @@ export default function TasksPage() {
       Object.entries(stageMap).forEach(([id, stageId]) => {
         if (!taskStageMap[id]) setTaskStage(id, stageId) // ローカル未設定のみDBから適用
       })
+    } catch {
+      // 握りつぶすと「他のメンバーのタスクだけ表示されない」無音故障になる
+      // （URL長制限による取得失敗で実際に発生した）ため必ず通知する
+      toast.error('タスクの読み込みに失敗しました。ページを再読み込みしてください', { duration: 6000 })
     } finally {
       setLoading(false)
     }

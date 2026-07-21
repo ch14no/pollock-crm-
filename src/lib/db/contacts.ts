@@ -1,4 +1,4 @@
-import { getSupabase } from './client'
+import { getSupabase, chunkIdList } from './client'
 import type { Contact, ReferrerType } from '@/types/database'
 
 type RawContact = {
@@ -213,13 +213,16 @@ export async function updateContact(id: string, updates: {
 
 export async function fetchContactsCustomValues(contactIds: string[]): Promise<Record<string, Record<string, string>>> {
   if (contactIds.length === 0) return {}
-  const { data, error } = await getSupabase()
-    .from('contact_custom_values')
-    .select('contact_id, field_id, value')
-    .in('contact_id', contactIds)
-  if (error) return {}
+  // 事業部の全顧客IDが渡され得るためURL長制限（chunkIdListのコメント参照）を避けて分割取得
+  const rows = await Promise.all(chunkIdList(contactIds).map(async (ids) => {
+    const { data, error } = await getSupabase()
+      .from('contact_custom_values')
+      .select('contact_id, field_id, value')
+      .in('contact_id', ids)
+    return error ? [] : (data ?? [])
+  }))
   const result: Record<string, Record<string, string>> = {}
-  for (const row of (data ?? [])) {
+  for (const row of rows.flat()) {
     const cid = row.contact_id as string
     const fid = row.field_id as string
     if (!result[cid]) result[cid] = {}
@@ -262,12 +265,16 @@ export async function fetchContactCustomValues(contactId: string): Promise<Recor
 // 顧客ステータス一括取得（リスト画面用）
 export async function fetchContactStatusesBatch(contactIds: string[]): Promise<Record<string, string[]>> {
   if (contactIds.length === 0) return {}
-  const { data } = await getSupabase()
-    .from('contact_statuses')
-    .select('contact_id, status')
-    .in('contact_id', contactIds)
+  // 事業部の全顧客IDが渡され得るためURL長制限（chunkIdListのコメント参照）を避けて分割取得
+  const rows = await Promise.all(chunkIdList(contactIds).map(async (ids) => {
+    const { data } = await getSupabase()
+      .from('contact_statuses')
+      .select('contact_id, status')
+      .in('contact_id', ids)
+    return data ?? []
+  }))
   const result: Record<string, string[]> = {}
-  for (const row of (data ?? [])) {
+  for (const row of rows.flat()) {
     const cid = row.contact_id as string
     if (!result[cid]) result[cid] = []
     result[cid].push(row.status as string)
