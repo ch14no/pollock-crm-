@@ -164,8 +164,14 @@ export async function fetchRecentDealStageChanges(
 }
 
 export async function deleteActivity(id: string): Promise<void> {
-  const { error } = await getSupabase().from('activities').delete().eq('id', id)
+  // RLSに弾かれた削除はエラーにならず0行で成功扱いになる（activities_deleteポリシーが
+  // 存在しなかった期間、削除が無音で効いていなかった）。0件削除を失敗として検知する
+  const { data, error } = await getSupabase()
+    .from('activities').delete().eq('id', id).select('id')
   if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('削除できませんでした（対象が存在しないか、削除する権限がありません）')
+  }
 }
 
 export async function updateActivityFields(id: string, updates: {
