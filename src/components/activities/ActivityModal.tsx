@@ -59,7 +59,7 @@ export function ActivityModal() {
   useEffect(() => {
     if (!activityModal.isOpen) return
     setForm({
-      type: 'call', title: '', memo: '', memoCategory: '',
+      type: activityModal.prefillKanbanStageId ? 'task' : 'call', title: '', memo: '', memoCategory: '',
       contactId: activityModal.prefillContactId ?? '',
       assigneeId: currentUser?.id ?? '',
       actionDate: todayStr(), dueDate: '', status: 'todo',
@@ -202,6 +202,11 @@ export function ActivityModal() {
               </button>
             ))}
           </div>
+          {form.type !== 'task' && (
+            <p className="mt-1.5 text-xs text-gray-500">
+              「タスク」以外は活動履歴にのみ記録され、タスク管理画面（カンバン）には表示されません。
+            </p>
+          )}
         </div>
 
         {/* 件名 */}
