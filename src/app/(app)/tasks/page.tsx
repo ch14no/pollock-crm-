@@ -228,13 +228,13 @@ export default function TasksPage() {
     toast.success('タスクを更新しました')
   }
 
-  const handleReassign = async (task: Activity, newUserId: string) => {
-    if (newUserId === task.user_id) return
-    const newAssignee = divisionMembers.find((m) => m.id === newUserId)
+  const handleReassign = async (task: Activity, newUserId: string | null) => {
+    if ((newUserId ?? null) === (task.user_id ?? null)) return
+    const newAssignee = newUserId ? divisionMembers.find((m) => m.id === newUserId) : undefined
     // ロールバックは担当者関連フィールドのみを戻す。task全体（prevTask）で上書きすると、
     // 失敗判明までの間に別操作（タイトル編集等）が成功していた場合にその変更まで巻き戻してしまうため
     const prevAssignee: Partial<Activity> = { user_id: task.user_id, users: task.users }
-    const storeUpdates: Partial<Activity> = { user_id: newUserId, users: newAssignee }
+    const storeUpdates: Partial<Activity> = { user_id: newUserId ?? undefined, users: newAssignee }
     updateLocalActivity(task.id, storeUpdates)
     setDbTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, ...storeUpdates } : t))
     if (isSupabaseConfigured() && !task.id.startsWith('act-local-')) {
@@ -247,7 +247,7 @@ export default function TasksPage() {
         return
       }
     }
-    toast.success(`担当を${newAssignee?.name ?? ''}に変更しました`)
+    toast.success(newAssignee ? `担当を${newAssignee.name}に変更しました` : '担当を未設定に戻しました')
   }
 
   // ─── 課題データ ──────────────────────────────────────────────────

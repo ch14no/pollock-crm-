@@ -202,8 +202,9 @@ export async function updateActivityFields(id: string, updates: {
 
 // タスクの担当者変更。activities_update の RLS（本人のみUPDATE可）は他フィールドの
 // 誤編集を避けるため広げず、再アサインという1操作に絞った SECURITY DEFINER 関数
-// （029_task_reassignment.sql）経由で行う。同一事業部メンバー間のみ許可される
-export async function reassignTask(activityId: string, newAssigneeId: string): Promise<void> {
+// （029_task_reassignment.sql）経由で行う。同一事業部メンバー間のみ許可される。
+// newAssigneeId に null を渡すと「未担当」に戻せる
+export async function reassignTask(activityId: string, newAssigneeId: string | null): Promise<void> {
   const { error } = await getSupabase()
     .rpc('reassign_task', { target_activity_id: activityId, new_assignee_id: newAssigneeId })
   if (error) throw error

@@ -56,6 +56,11 @@
 --   ため、担当候補一覧から除外する。管理者自身が誰かのタスクを引き取ること自体は
 --   reassign_task側では引き続き許可されたまま（is_super_adminが全チェックを
 --   バイパスするため）で、変更されるのは「候補として一覧に出すか」のみ。
+--
+-- 「未担当」への解除（2026-07-23）:
+--   new_assignee_id に NULL を渡すことで担当を未設定（activities.user_id = NULL）
+--   に戻せるようにした。NULLの場合はteammateチェック（相手が同事業部か）を
+--   スキップする（そもそも相手が存在しないため判定不能）。
 -- ============================================================
 
 -- 担当候補一覧（呼び出し元がその事業部のメンバー、またはsuper_adminの場合のみ返す）
@@ -152,8 +157,10 @@ BEGIN
     RAISE EXCEPTION 'not permitted to reassign this task';
   END IF;
 
-  -- 変更先の新担当者も、呼び出し元と事業部を共有するメンバーであること（無関係な他事業部への付け替え防止）
-  IF NOT (
+  -- 変更先の新担当者も、呼び出し元と事業部を共有するメンバーであること（無関係な他事業部への付け替え防止）。
+  -- new_assignee_id が NULL（「未担当」に戻す）の場合はteammateチェック自体が
+  -- 意味をなさないため誰でも実行できる（030で編集自体が同一事業部メンバーに開放済み）
+  IF new_assignee_id IS NOT NULL AND NOT (
     is_super_admin
     OR public.shares_division_with(new_assignee_id)
   ) THEN

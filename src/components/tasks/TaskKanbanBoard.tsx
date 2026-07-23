@@ -67,7 +67,7 @@ function TaskCard({
   onComplete?: (task: Activity) => void
   onDelete?: (task: Activity) => void
   onSave?: (task: Activity, data: { title: string; dueDate: string; memo: string }) => void
-  onReassign?: (task: Activity, newUserId: string) => void
+  onReassign?: (task: Activity, newUserId: string | null) => void
 }) {
   const currentUser  = useAppStore((s) => s.currentUser)
   const taskStatuses = useAppStore((s) => s.taskStatuses)
@@ -272,6 +272,17 @@ function TaskCard({
         <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
           <p className="text-xs text-gray-400 px-0.5">担当を選択</p>
           <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => { onReassign?.(task, null); setMode('view') }}
+              className={cn(
+                'text-xs px-2 py-1 rounded-lg border border-dashed transition-colors',
+                !task.user_id
+                  ? 'bg-gray-200 text-gray-700 border-gray-300'
+                  : 'border-gray-200 text-gray-400 hover:bg-gray-50'
+              )}
+            >
+              未担当
+            </button>
             {divisionMembers.map((m) => (
               <button
                 key={m.id}
@@ -334,7 +345,7 @@ interface TaskKanbanBoardProps {
   onComplete?: (task: Activity) => void
   onDelete?: (task: Activity) => void
   onSave?: (task: Activity, data: { title: string; dueDate: string; memo: string }) => void
-  onReassign?: (task: Activity, newUserId: string) => void
+  onReassign?: (task: Activity, newUserId: string | null) => void
   onReopen?: (task: Activity) => void
   onToggleCompleted?: () => void
 }
