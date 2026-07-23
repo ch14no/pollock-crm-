@@ -68,9 +68,10 @@ export function ActivityModal() {
     setTaskImportance(activityModal.prefillTaskImportance ?? false)
     setTaskScope('personal')
 
-    // 事業部メンバーを取得（マネージャーのタスク割り当て用）
+    // 事業部メンバーを取得（マネージャーのタスク割り当て用）。
+    // 失敗時は自分のみ割当可能な状態にフォールバック（fetchDivisionUsersがエラーをthrowするようになったため）
     if (isManager && activeDivisionId && isSupabaseConfigured()) {
-      fetchDivisionUsers(activeDivisionId).then(setDivisionMembers)
+      fetchDivisionUsers(activeDivisionId).then(setDivisionMembers).catch(() => setDivisionMembers([]))
     }
     // 用途別カテゴリを取得。未設定の事業部は既定値へフォールバック。
     // 取得失敗（＝020未適用でmemo_category列も無い環境）では空にしてカテゴリUIごと非表示にし、

@@ -85,7 +85,15 @@ export default function TasksPage() {
       contacts.forEach((c) => { cMap[c.id] = c })
       setContactsMap(cMap)
 
-      fetchDivisionUsers(activeDivisionId).then(setDivisionMembers)
+      // await せず並行に取得。失敗を握りつぶすと「担当バッジが押せない」原因が
+      // 分からないまま無音故障になる（2026-07-23 財務支援事業部で実際に発生）ため、
+      // 失敗時は明示的にトーストで知らせる
+      fetchDivisionUsers(activeDivisionId)
+        .then(setDivisionMembers)
+        .catch(() => {
+          setDivisionMembers([])
+          toast.error('事業部メンバー一覧の取得に失敗しました。担当変更ができません（ページ再読み込みをお試しください）', { duration: 8000 })
+        })
 
       const contactIds = contacts.map((c) => c.id)
       const rawActs = scope === 'personal'

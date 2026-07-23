@@ -99,6 +99,6 @@ export async function fetchUsersWithDivision(): Promise<(ReferrerUser & { primar
 export async function fetchDivisionUsers(divisionId: string): Promise<User[]> {
   const { data, error } = await getSupabase()
     .rpc('list_division_members', { target_division_id: divisionId })
-  if (error) return []
+  if (error) throw error
   return (data ?? []) as User[]
 }
