@@ -20,7 +20,7 @@ import { isSupabaseConfigured } from '@/lib/db/client'
 import { updateTaskKanbanStage } from '@/lib/db/activities'
 import toast from 'react-hot-toast'
 import type { TaskKanbanStage } from '@/store/appStore'
-import type { Activity } from '@/types/database'
+import type { Activity, User } from '@/types/database'
 
 const STAGE_COLORS: Record<string, { bg: string; border: string; badge: string; dot: string }> = {
   blue:   { bg: 'bg-blue-50',   border: 'border-blue-200',   badge: 'bg-blue-100 text-blue-700',     dot: 'bg-blue-500'   },
@@ -56,16 +56,18 @@ function DroppableColumn({ stageId, isEmpty, children }: {
   )
 }
 
-type CardMode = 'view' | 'confirmComplete' | 'confirmDelete' | 'edit'
+type CardMode = 'view' | 'confirmComplete' | 'confirmDelete' | 'edit' | 'reassign'
 
 function TaskCard({
-  task, isDragging, onComplete, onDelete, onSave,
+  task, isDragging, divisionMembers, onComplete, onDelete, onSave, onReassign,
 }: {
   task: Activity
   isDragging?: boolean
+  divisionMembers: User[]
   onComplete?: (task: Activity) => void
   onDelete?: (task: Activity) => void
   onSave?: (task: Activity, data: { title: string; dueDate: string; memo: string }) => void
+  onReassign?: (task: Activity, newUserId: string) => void
 }) {
   const currentUser  = useAppStore((s) => s.currentUser)
   const taskStatuses = useAppStore((s) => s.taskStatuses)
@@ -147,7 +149,19 @@ function TaskCard({
                   {formatDate(task.due_date)}
                 </span>
               )}
-              {assignName && (
+              {divisionMembers.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setMode('reassign') }}
+                  className={cn(
+                    'ml-auto flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full transition-colors',
+                    isMyTask ? 'bg-orange-50 text-orange-600 hover:bg-orange-100' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  )}
+                  title="担当を変更"
+                >
+                  <UserCircle size={10} />{assignName ?? '未担当'}
+                </button>
+              ) : assignName && (
                 <span className={cn(
                   'ml-auto flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full',
                   isMyTask ? 'bg-orange-50 text-orange-600' : 'bg-gray-100 text-gray-500'
@@ -252,6 +266,37 @@ function TaskCard({
           </div>
         </div>
       )}
+
+      {/* ─── 担当変更 ─── */}
+      {mode === 'reassign' && (
+        <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
+          <p className="text-xs text-gray-400 px-0.5">担当を選択</p>
+          <div className="flex flex-wrap gap-1.5">
+            {divisionMembers.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => { onReassign?.(task, m.id); setMode('view') }}
+                className={cn(
+                  'text-xs px-2 py-1 rounded-lg border transition-colors',
+                  m.id === task.user_id
+                    ? 'bg-orange-500 text-white border-orange-500'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                )}
+              >
+                {m.name}
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end">
+            <button
+              onClick={() => setMode('view')}
+              className="flex items-center gap-1 text-xs text-gray-400 px-2 py-1 rounded-lg hover:bg-gray-100"
+            >
+              <X size={11} />閉じる
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -283,18 +328,20 @@ interface TaskKanbanBoardProps {
   tasks: Activity[]
   completedTasks?: Activity[]
   stages: TaskKanbanStage[]
+  divisionMembers?: User[]
   showCompleted?: boolean
   onAddTask?: (stageId: string) => void
   onComplete?: (task: Activity) => void
   onDelete?: (task: Activity) => void
   onSave?: (task: Activity, data: { title: string; dueDate: string; memo: string }) => void
+  onReassign?: (task: Activity, newUserId: string) => void
   onReopen?: (task: Activity) => void
   onToggleCompleted?: () => void
 }
 
 export function TaskKanbanBoard({
-  tasks, completedTasks = [], stages,
-  showCompleted, onAddTask, onComplete, onDelete, onSave, onReopen, onToggleCompleted,
+  tasks, completedTasks = [], stages, divisionMembers = [],
+  showCompleted, onAddTask, onComplete, onDelete, onSave, onReassign, onReopen, onToggleCompleted,
 }: TaskKanbanBoardProps) {
   const setTaskStage = useAppStore((s) => s.setTaskStage)
   const taskStageMap = useAppStore((s) => s.taskStageMap)
@@ -367,9 +414,11 @@ export function TaskKanbanBoard({
                         key={task.id}
                         task={task}
                         isDragging={task.id === activeId}
+                        divisionMembers={divisionMembers}
                         onComplete={onComplete}
                         onDelete={onDelete}
                         onSave={onSave}
+                        onReassign={onReassign}
                       />
                     ))}
                   </DroppableColumn>
@@ -391,7 +440,7 @@ export function TaskKanbanBoard({
         <DragOverlay>
           {activeTask && (
             <div className="opacity-90 rotate-2">
-              <TaskCard task={activeTask} />
+              <TaskCard task={activeTask} divisionMembers={[]} />
             </div>
           )}
         </DragOverlay>

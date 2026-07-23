@@ -11,12 +11,13 @@ import type { Challenge, TaskMeta } from '@/store/appStore'
 import { cn, formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields, fetchTaskKanbanStages } from '@/lib/db/activities'
+import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields, reassignTask, fetchTaskKanbanStages } from '@/lib/db/activities'
 import { fetchContactsByDivision } from '@/lib/db/contacts'
+import { fetchDivisionUsers } from '@/lib/db/users'
 import { fetchChallenges, createChallenge, updateChallengeStatus, deleteChallenge } from '@/lib/db/challenges'
 import { DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
 import { TaskKanbanBoard } from '@/components/tasks/TaskKanbanBoard'
-import type { Activity, Contact } from '@/types/database'
+import type { Activity, Contact, User as UserType } from '@/types/database'
 import toast from 'react-hot-toast'
 
 // ─── 象限設定 ─────────────────────────────────────────────────────
@@ -70,6 +71,7 @@ export default function TasksPage() {
   // ─── Supabase データ ─────────────────────────────────────────────
   const [dbTasks, setDbTasks]         = useState<Activity[]>([])
   const [contactsMap, setContactsMap] = useState<Record<string, Contact>>({})
+  const [divisionMembers, setDivisionMembers] = useState<UserType[]>([])
   const [dbChallenges, setDbChallenges] = useState<Challenge[]>([])
   const [loading, setLoading]         = useState(false)
   const prevModalOpen = useRef(false)
@@ -82,6 +84,8 @@ export default function TasksPage() {
       const cMap: Record<string, Contact> = {}
       contacts.forEach((c) => { cMap[c.id] = c })
       setContactsMap(cMap)
+
+      fetchDivisionUsers(activeDivisionId).then(setDivisionMembers)
 
       const contactIds = contacts.map((c) => c.id)
       const rawActs = scope === 'personal'
@@ -216,6 +220,28 @@ export default function TasksPage() {
     toast.success('タスクを更新しました')
   }
 
+  const handleReassign = async (task: Activity, newUserId: string) => {
+    if (newUserId === task.user_id) return
+    const newAssignee = divisionMembers.find((m) => m.id === newUserId)
+    // ロールバックは担当者関連フィールドのみを戻す。task全体（prevTask）で上書きすると、
+    // 失敗判明までの間に別操作（タイトル編集等）が成功していた場合にその変更まで巻き戻してしまうため
+    const prevAssignee: Partial<Activity> = { user_id: task.user_id, users: task.users }
+    const storeUpdates: Partial<Activity> = { user_id: newUserId, users: newAssignee }
+    updateLocalActivity(task.id, storeUpdates)
+    setDbTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, ...storeUpdates } : t))
+    if (isSupabaseConfigured() && !task.id.startsWith('act-local-')) {
+      try {
+        await reassignTask(task.id, newUserId)
+      } catch {
+        toast.error('担当の変更に失敗しました')
+        updateLocalActivity(task.id, prevAssignee)
+        setDbTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, ...prevAssignee } : t))
+        return
+      }
+    }
+    toast.success(`担当を${newAssignee?.name ?? ''}に変更しました`)
+  }
+
   // ─── 課題データ ──────────────────────────────────────────────────
   const challenges = isSupabaseConfigured() ? dbChallenges : []
   const filteredChallenges = useMemo(() => {
@@ -342,11 +368,13 @@ export default function TasksPage() {
           tasks={filteredTasks}
           completedTasks={completedTasks}
           stages={kanbanStages}
+          divisionMembers={divisionMembers}
           showCompleted={showCompleted}
           onAddTask={(stageId) => openActivityModal({ prefillKanbanStageId: stageId })}
           onComplete={(task) => handleComplete(task.id)}
           onDelete={(task) => handleDelete(task.id)}
           onSave={handleEditSave}
+          onReassign={handleReassign}
           onReopen={(task) => handleReopen(task.id)}
           onToggleCompleted={() => setShowCompleted((v) => !v)}
         />

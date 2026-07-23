@@ -91,13 +91,14 @@ export async function fetchUsersWithDivision(): Promise<(ReferrerUser & { primar
   }))
 }
 
+// 事業部メンバー一覧（タスクの担当者選択・再アサイン用）。
+// users テーブルを直接joinすると users_select RLS（本人 or super_admin のみ閲覧可）
+// により本人以外がnullになり実質「自分のみ」しか返らないため（029の背景コメント参照）、
+// list_user_directory（024）と同方針の SECURITY DEFINER 関数 list_division_members
+// 経由で取得する。呼び出し元がその事業部のメンバーでなければ空配列が返る。
 export async function fetchDivisionUsers(divisionId: string): Promise<User[]> {
   const { data, error } = await getSupabase()
-    .from('user_divisions')
-    .select('users:user_id(id,name,email,role,created_at)')
-    .eq('division_id', divisionId)
+    .rpc('list_division_members', { target_division_id: divisionId })
   if (error) return []
-  return (data ?? [])
-    .map((r: Record<string, unknown>) => r.users)
-    .filter(Boolean) as User[]
+  return (data ?? []) as User[]
 }
