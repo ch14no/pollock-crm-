@@ -172,16 +172,16 @@ function TaskCard({
             </div>
           </div>
 
-          {/* アクションボタン */}
-          {isMyTask && (
-            <div className="flex gap-0.5 flex-shrink-0">
-              <button
-                onClick={openEdit}
-                className="p-0.5 text-gray-200 hover:text-orange-400 transition-colors"
-                title="編集"
-              >
-                <Edit2 size={11} />
-              </button>
+          {/* アクションボタン: 編集は同一事業部メンバーなら誰でも可（030）。削除は本人のみ維持 */}
+          <div className="flex gap-0.5 flex-shrink-0">
+            <button
+              onClick={openEdit}
+              className="p-0.5 text-gray-200 hover:text-orange-400 transition-colors"
+              title="編集"
+            >
+              <Edit2 size={11} />
+            </button>
+            {isMyTask && (
               <button
                 onClick={(e) => { e.stopPropagation(); setMode('confirmDelete') }}
                 className="p-0.5 text-gray-200 hover:text-red-400 transition-colors"
@@ -189,8 +189,8 @@ function TaskCard({
               >
                 <Trash2 size={11} />
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 

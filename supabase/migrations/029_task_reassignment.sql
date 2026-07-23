@@ -50,6 +50,12 @@
 --   本番でSQLを流した後も気づけなかった。usersテーブルにエイリアスを付けて
 --   明示的に修飾することで解消（reassign_taskはRETURNS voidで同名の出力変数が
 --   存在しないため元々問題なかったが、同じ罠の再発防止のため合わせて修飾した）。
+--
+-- 表示調整（2026-07-23・システム管理者からの要望）:
+--   super_admin（システム管理者アカウント）は実務でタスクを担当する社員ではない
+--   ため、担当候補一覧から除外する。管理者自身が誰かのタスクを引き取ること自体は
+--   reassign_task側では引き続き許可されたまま（is_super_adminが全チェックを
+--   バイパスするため）で、変更されるのは「候補として一覧に出すか」のみ。
 -- ============================================================
 
 -- 担当候補一覧（呼び出し元がその事業部のメンバー、またはsuper_adminの場合のみ返す）
@@ -86,11 +92,13 @@ BEGIN
     RETURN;
   END IF;
 
+  -- super_admin（システム管理者）は実務担当者ではないため候補から除外する
   RETURN QUERY
     SELECT u.id, u.name, u.email, u.role, u.created_at
     FROM public.user_divisions ud
     JOIN public.users u ON u.id = ud.user_id
     WHERE ud.division_id = target_division_id
+      AND u.role <> 'super_admin'
     ORDER BY u.name;
 END;
 $$;
