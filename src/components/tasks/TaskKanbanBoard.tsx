@@ -7,7 +7,7 @@ import {
   useDroppable,
 } from '@dnd-kit/core'
 import {
-  SortableContext, useSortable, verticalListSortingStrategy,
+  SortableContext, useSortable, verticalListSortingStrategy, arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
@@ -434,16 +434,28 @@ export function TaskKanbanBoard({
     const draggedTask = tasks.find((t) => t.id === taskId)
     if (!draggedTask) return
 
-    // 移動先列（自分自身を除く）に、overIdの位置（列内タスクなら その位置、
-    // 列の空白部分なら末尾）へ挿入し直した並びを作る
-    const targetList = byStage(targetStage.id).filter((t) => t.id !== taskId)
-    const overIndex = targetList.findIndex((t) => t.id === overId)
-    const insertAt = overIndex >= 0 ? overIndex : targetList.length
-    const newTargetOrder = [
-      ...targetList.slice(0, insertAt),
-      draggedTask,
-      ...targetList.slice(insertAt),
-    ]
+    let newTargetOrder: Activity[]
+    if (sourceStageId === targetStage.id) {
+      // 同じ列内での並び替え: 自分を含んだ元の並びに対してarrayMoveで移動する。
+      // 一度自分を取り除いてから相手の（取り除いた後の）位置に挿入する方式だと、
+      // 下方向への移動時だけ挿入位置が1つ手前にずれる（隣のカードにドロップしても
+      // 位置が変わらず、その次まで持っていってやっと1つ下がる）バグになっていた
+      const currentList = byStage(targetStage.id)
+      const oldIndex = currentList.findIndex((t) => t.id === taskId)
+      const overIdx = currentList.findIndex((t) => t.id === overId)
+      const newIndex = overIdx >= 0 ? overIdx : currentList.length - 1
+      newTargetOrder = arrayMove(currentList, oldIndex, newIndex)
+    } else {
+      // 別の列への移動: overIdの位置（列内タスクならその位置、列の空白部分なら末尾）へ挿入
+      const targetList = byStage(targetStage.id)
+      const overIndex = targetList.findIndex((t) => t.id === overId)
+      const insertAt = overIndex >= 0 ? overIndex : targetList.length
+      newTargetOrder = [
+        ...targetList.slice(0, insertAt),
+        draggedTask,
+        ...targetList.slice(insertAt),
+      ]
+    }
 
     // ローカル即時反映
     if (sourceStageId !== targetStage.id) setTaskStage(taskId, targetStage.id)
