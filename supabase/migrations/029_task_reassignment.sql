@@ -39,6 +39,17 @@
 --   併せて SELECT〜UPDATE 間のTOCTOU（同時に複数人が同じタスクを再アサインする
 --   競合）を避けるため取得行に FOR UPDATE でロックし、UPDATE の影響行数も検証する
 --   （deleteActivity が踏んだ「0行更新が無音で成功扱いになる」罠と同じ対策）。
+--
+-- 実機バグ修正（2026-07-23・財務支援事業部の実テストで発覚）:
+--   list_division_members は `RETURNS TABLE (id, name, email, role, created_at)` の
+--   ため、id・role が関数内の暗黙の出力変数名としても存在する。関数本体の
+--   `(SELECT role = 'super_admin' FROM public.users WHERE id = auth.uid())` は
+--   role・id いずれも「出力変数」なのか「usersテーブルの列」なのかPostgreSQLが
+--   区別できず、実行時に `42702 column reference "role" is ambiguous` で落ちていた。
+--   CREATE FUNCTION自体は構文チェックのみで通ってしまい（実行時にしか検出されない）、
+--   本番でSQLを流した後も気づけなかった。usersテーブルにエイリアスを付けて
+--   明示的に修飾することで解消（reassign_taskはRETURNS voidで同名の出力変数が
+--   存在しないため元々問題なかったが、同じ罠の再発防止のため合わせて修飾した）。
 -- ============================================================
 
 -- 担当候補一覧（呼び出し元がその事業部のメンバー、またはsuper_adminの場合のみ返す）
@@ -61,8 +72,10 @@ BEGIN
     RETURN;
   END IF;
 
+  -- usr エイリアスで明示的に修飾（この関数はRETURNS TABLEにid/roleがあり、
+  -- 無修飾のid/roleは出力変数と解釈されて曖昧になり実行時エラーになるため）
   is_super_admin := COALESCE(
-    (SELECT role = 'super_admin' FROM public.users WHERE id = auth.uid()),
+    (SELECT usr.role = 'super_admin' FROM public.users usr WHERE usr.id = auth.uid()),
     FALSE
   );
 
@@ -104,7 +117,7 @@ BEGIN
   END IF;
 
   is_super_admin := COALESCE(
-    (SELECT role = 'super_admin' FROM public.users WHERE id = auth.uid()),
+    (SELECT usr.role = 'super_admin' FROM public.users usr WHERE usr.id = auth.uid()),
     FALSE
   );
 
