@@ -17,7 +17,7 @@ import {
 import { cn, formatDate } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { updateTaskKanbanStage } from '@/lib/db/activities'
+import { updateTaskKanbanStage, upsertTaskOrders } from '@/lib/db/activities'
 import toast from 'react-hot-toast'
 import type { TaskKanbanStage } from '@/store/appStore'
 import type { Activity, User } from '@/types/database'
@@ -341,6 +341,11 @@ interface TaskKanbanBoardProps {
   stages: TaskKanbanStage[]
   divisionMembers?: User[]
   showCompleted?: boolean
+  // 列内の並び替え（保存）を許可するか。「個人」スコープでは tasks に自分の
+  // タスクしか含まれず、列の一部だけを見て並び順を採番すると他メンバーの
+  // タスクのsort_orderと衝突するため、「チーム」スコープ（列の全件が見えている
+  // とき）のみ true にする。false のときはステージ移動のみ行い並び順には触れない
+  canReorder?: boolean
   onAddTask?: (stageId: string) => void
   onComplete?: (task: Activity) => void
   onDelete?: (task: Activity) => void
@@ -351,11 +356,13 @@ interface TaskKanbanBoardProps {
 }
 
 export function TaskKanbanBoard({
-  tasks, completedTasks = [], stages, divisionMembers = [],
+  tasks, completedTasks = [], stages, divisionMembers = [], canReorder = false,
   showCompleted, onAddTask, onComplete, onDelete, onSave, onReassign, onReopen, onToggleCompleted,
 }: TaskKanbanBoardProps) {
   const setTaskStage = useAppStore((s) => s.setTaskStage)
   const taskStageMap = useAppStore((s) => s.taskStageMap)
+  const taskOrderMap = useAppStore((s) => s.taskOrderMap)
+  const setTaskOrders = useAppStore((s) => s.setTaskOrders)
 
   const [activeId, setActiveId] = useState<string | null>(null)
 
@@ -364,15 +371,34 @@ export function TaskKanbanBoard({
   )
 
   const byStage = (stageId: string) =>
-    tasks.filter((t) => {
-      const mapped = taskStageMap[t.id]
-      // 割当先の列が削除・変更されて存在しない場合は未割当として先頭列に出す
-      // （どの列にも該当せずタスクがボードから消えるのを防ぐ）
-      if (mapped && stages.some((s) => s.id === mapped)) return mapped === stageId
-      return stageId === stages[0]?.id
-    })
+    tasks
+      .filter((t) => {
+        const mapped = taskStageMap[t.id]
+        // 割当先の列が削除・変更されて存在しない場合は未割当として先頭列に出す
+        // （どの列にも該当せずタスクがボードから消えるのを防ぐ）
+        if (mapped && stages.some((s) => s.id === mapped)) return mapped === stageId
+        return stageId === stages[0]?.id
+      })
+      // 列内の並び順（taskOrderMap）でソート。未設定のタスクは既存の並び（action_date順）を
+      // 保ったまま、並び順が設定済みのタスクより後ろに置く（Array.sortの安定ソートを利用）
+      .slice()
+      .sort((a, b) => {
+        const oa = taskOrderMap[a.id]
+        const ob = taskOrderMap[b.id]
+        if (oa !== undefined && ob !== undefined) return oa - ob
+        if (oa !== undefined) return -1
+        if (ob !== undefined) return 1
+        return 0
+      })
 
   const activeTask = activeId ? tasks.find((t) => t.id === activeId) : null
+
+  // byStage と同じ「未割当は先頭列」フォールバックだけをO(1)で判定する
+  // （sourceStage/targetStageの特定に byStage の filter+sort をまるごと呼ぶ必要はないため）
+  const resolveStageId = (taskId: string) => {
+    const mapped = taskStageMap[taskId]
+    return (mapped && stages.some((s) => s.id === mapped)) ? mapped : stages[0]?.id
+  }
 
   const handleDragStart = (e: DragStartEvent) => setActiveId(String(e.active.id))
 
@@ -380,16 +406,58 @@ export function TaskKanbanBoard({
     setActiveId(null)
     const { active, over } = e
     if (!over) return
-    const taskId  = String(active.id)
-    const overId  = String(over.id)
-    const targetStage = stages.find((s) => s.id === overId)
-      ?? stages.find((s) => byStage(s.id).some((t) => t.id === overId))
-    if (!targetStage) return
-    setTaskStage(taskId, targetStage.id)
-    // DB に保存して全ユーザーに同期
-    if (isSupabaseConfigured() && !taskId.startsWith('act-local-')) {
-      updateTaskKanbanStage(taskId, targetStage.id).catch(() => {
-        toast.error('ステージの同期に失敗しました。SQLマイグレーションが必要な場合があります。', { duration: 4000 })
+    const taskId = String(active.id)
+    const overId = String(over.id)
+    if (taskId === overId) return
+
+    const sourceStageId = resolveStageId(taskId)
+    // overIdが列自体（空白部分へのドロップ）ならそのまま、タスクの上ならそのタスクの所属列
+    const targetStageId = stages.some((s) => s.id === overId) ? overId : resolveStageId(overId)
+    const targetStage = stages.find((s) => s.id === targetStageId)
+    if (!sourceStageId || !targetStage) return
+
+    if (!canReorder) {
+      // 「個人」スコープ等、列の一部しか見えていない状態では列内の並び順を
+      // 正しく採番できない（他メンバーのタスクとsort_orderが衝突しうる）ため、
+      // ステージ移動のみ行い並び順は変更しない
+      if (sourceStageId !== targetStage.id) {
+        setTaskStage(taskId, targetStage.id)
+        if (isSupabaseConfigured() && !taskId.startsWith('act-local-')) {
+          updateTaskKanbanStage(taskId, targetStage.id).catch(() => {
+            toast.error('ステージの同期に失敗しました。SQLマイグレーションが必要な場合があります。', { duration: 4000 })
+          })
+        }
+      }
+      return
+    }
+
+    const draggedTask = tasks.find((t) => t.id === taskId)
+    if (!draggedTask) return
+
+    // 移動先列（自分自身を除く）に、overIdの位置（列内タスクなら その位置、
+    // 列の空白部分なら末尾）へ挿入し直した並びを作る
+    const targetList = byStage(targetStage.id).filter((t) => t.id !== taskId)
+    const overIndex = targetList.findIndex((t) => t.id === overId)
+    const insertAt = overIndex >= 0 ? overIndex : targetList.length
+    const newTargetOrder = [
+      ...targetList.slice(0, insertAt),
+      draggedTask,
+      ...targetList.slice(insertAt),
+    ]
+
+    // ローカル即時反映
+    if (sourceStageId !== targetStage.id) setTaskStage(taskId, targetStage.id)
+    const orderUpdates: Record<string, number> = {}
+    newTargetOrder.forEach((t, i) => { orderUpdates[t.id] = i })
+    setTaskOrders(orderUpdates)
+
+    // DBに保存して全ユーザーに同期（ローカル専用の未保存タスクは対象外）
+    const persistable = newTargetOrder
+      .map((t, i) => ({ activityId: t.id, stageId: targetStage.id, sortOrder: i }))
+      .filter((o) => !o.activityId.startsWith('act-local-'))
+    if (isSupabaseConfigured() && persistable.length > 0) {
+      upsertTaskOrders(persistable).catch(() => {
+        toast.error('並び順の同期に失敗しました。SQLマイグレーションが必要な場合があります。', { duration: 4000 })
       })
     }
   }

@@ -98,6 +98,39 @@ export async function fetchTaskKanbanStages(activityIds: string[]): Promise<Reco
   return result
 }
 
+// 列内の並び順（031_task_kanban_sort_order.sql・task_meta.sort_order）
+export async function fetchTaskOrders(activityIds: string[]): Promise<Record<string, number>> {
+  if (activityIds.length === 0) return {}
+  const rows = await Promise.all(chunkIdList(activityIds).map(async (ids) => {
+    const { data } = await getSupabase()
+      .from('task_meta')
+      .select('activity_id, sort_order')
+      .in('activity_id', ids)
+    return data ?? []
+  }))
+  const result: Record<string, number> = {}
+  for (const row of rows.flat()) {
+    if (row.sort_order !== null && row.sort_order !== undefined) {
+      result[row.activity_id as string] = row.sort_order as number
+    }
+  }
+  return result
+}
+
+// カード移動時（列変更・列内並び替え）に、移動先の列全体を連番で一括保存する。
+// task_metaのUPDATE権限は030で同一事業部メンバーに開放済みのため追加の権限確認は不要
+export async function upsertTaskOrders(
+  orders: { activityId: string; stageId: string; sortOrder: number }[]
+): Promise<void> {
+  if (orders.length === 0) return
+  const { error } = await getSupabase()
+    .from('task_meta')
+    .upsert(orders.map((o) => ({
+      activity_id: o.activityId, kanban_stage_id: o.stageId, sort_order: o.sortOrder,
+    })))
+  if (error) throw error
+}
+
 export async function fetchActivitiesByDivision(divisionId: string): Promise<Activity[]> {
   const { data: contacts } = await getSupabase()
     .from('contacts').select('id').eq('division_id', divisionId)

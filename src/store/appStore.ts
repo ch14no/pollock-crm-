@@ -278,6 +278,10 @@ interface AppState {
   taskStageMap: Record<string, string>
   setTaskStage: (activityId: string, stageId: string) => void
 
+  // タスクの列内の並び順（activityId -> sortOrder。小さいほど上）
+  taskOrderMap: Record<string, number>
+  setTaskOrders: (updates: Record<string, number>) => void
+
   // 顧客の事業部別カスタムフィールド値
   contactCustomValues: Record<string, Record<string, string>>  // contactId -> { fieldId -> value }
   setContactCustomValue: (contactId: string, fieldId: string, value: string) => void
@@ -485,6 +489,10 @@ export const useAppStore = create<AppState>()(
       setTaskStage: (activityId, stageId) =>
         set((state) => ({ taskStageMap: { ...state.taskStageMap, [activityId]: stageId } })),
 
+      taskOrderMap: {},
+      setTaskOrders: (updates) =>
+        set((state) => ({ taskOrderMap: { ...state.taskOrderMap, ...updates } })),
+
       contactCustomValues: {},
       setContactCustomValue: (contactId, fieldId, value) =>
         set((state) => ({
@@ -552,6 +560,7 @@ export const useAppStore = create<AppState>()(
         dealProducts: state.dealProducts,
         divisionTaskStages: state.divisionTaskStages,
         taskStageMap: state.taskStageMap,
+        taskOrderMap: state.taskOrderMap,
         contactCustomValues: state.contactCustomValues,
         contactStatuses: state.contactStatuses,
         localContactEdits: state.localContactEdits,
