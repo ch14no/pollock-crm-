@@ -123,15 +123,19 @@ export async function fetchPipelineStages(divisionId: string) {
   return data ?? []
 }
 
+// ステージの一括置き換え。旧実装はDELETE→INSERTを別リクエストで行っており、
+// INSERT失敗時にステージ定義が全消えする不具合があったため、単一トランザクションで
+// 実行されるRPC(replace_pipeline_stages・035)に委譲する。RPCが未適用の環境では
+// 呼び出しごと失敗して何も削除されない（fail-closed）ため、旧実装より安全。
 export async function upsertPipelineStages(
   divisionId: string,
   stages: { name: string; sort_order: number; is_won: boolean; is_lost: boolean }[]
 ): Promise<void> {
-  await getSupabase().from('pipeline_stages').delete().eq('division_id', divisionId).is('tab_id', null)
-  if (stages.length === 0) return
-  const { error } = await getSupabase().from('pipeline_stages').insert(
-    stages.map((s) => ({ division_id: divisionId, name: s.name, sort_order: s.sort_order, is_won: s.is_won, is_lost: s.is_lost }))
-  )
+  const { error } = await getSupabase().rpc('replace_pipeline_stages', {
+    p_division_id: divisionId,
+    p_tab_id: null,
+    p_stages: stages,
+  })
   if (error) throw error
 }
 
@@ -195,19 +199,17 @@ export async function migrateUntabbedStagesToTab(divisionId: string, tabId: stri
   if (error) throw error
 }
 
+// タブ配下のステージ一括置き換え。upsertPipelineStagesと同じ理由でRPCに委譲する。
 export async function upsertPipelineStagesForTab(
   divisionId: string,
   tabId: string,
   stages: { name: string; sort_order: number; is_won: boolean; is_lost: boolean }[]
 ): Promise<void> {
-  await getSupabase().from('pipeline_stages').delete().eq('tab_id', tabId)
-  if (stages.length === 0) return
-  const { error } = await getSupabase().from('pipeline_stages').insert(
-    stages.map((s) => ({
-      division_id: divisionId, tab_id: tabId,
-      name: s.name, sort_order: s.sort_order, is_won: s.is_won, is_lost: s.is_lost,
-    }))
-  )
+  const { error } = await getSupabase().rpc('replace_pipeline_stages', {
+    p_division_id: divisionId,
+    p_tab_id: tabId,
+    p_stages: stages,
+  })
   if (error) throw error
 }
 

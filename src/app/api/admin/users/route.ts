@@ -77,10 +77,20 @@ export async function POST(req: NextRequest) {
     // 除外されるのが既定（032）。この画面でチェックした事業部＝表示してよい
     // 事業部という意味を兼ねるため一律trueにする（一般ユーザー・マネージャーは
     // 元々常に表示対象なのでこの値は無視され、実害はない）
-    const rows = divisionIds.map((divId, i) => ({
+    // division_idの重複はPK(user_id,division_id)違反で一括INSERTごと失敗するため除去する
+    const uniqueIds = [...new Set(divisionIds)]
+    const rows = uniqueIds.map((divId, i) => ({
       user_id: userId, division_id: divId, is_primary: i === 0, show_as_task_assignee: true,
     }))
-    await admin.from('user_divisions').insert(rows)
+    const { error: divError } = await admin.from('user_divisions').insert(rows)
+    if (divError) {
+      // 事業部割当に失敗したら、作成済みのauthユーザー・usersレコードごと
+      // ロールバックする（「作成されたが無所属」の中途半端なユーザーを残さない。
+      // usersテーブルのdbErrorと同じ方針）
+      await admin.from('users').delete().eq('id', userId)
+      await admin.auth.admin.deleteUser(userId)
+      return NextResponse.json({ error: divError.message }, { status: 500 })
+    }
   }
 
   return NextResponse.json({ id: userId, name, email, role }, { status: 201 })
@@ -112,13 +122,35 @@ export async function PUT(req: NextRequest) {
   }
 
   if (divisionIds !== undefined) {
-    await admin.from('user_divisions').delete().eq('user_id', id)
-    if (divisionIds.length > 0) {
+    // 旧実装は「全削除→一括INSERT」だったが、INSERTが失敗（division_id重複・
+    // 削除済み事業部への参照等）するとdeleteだけ確定してユーザーが無所属になり、
+    // 全データにアクセス不能になる不具合があった。そこで
+    // 「望ましい行をupsert → 不要になった行だけ削除」の順に変更し、
+    // 途中で失敗しても既存の所属が消えない（無所属化しない）ようにする。
+    const uniqueIds = [...new Set(divisionIds)]
+
+    const { data: existing, error: exErr } = await admin
+      .from('user_divisions').select('division_id').eq('user_id', id)
+    if (exErr) return NextResponse.json({ error: exErr.message }, { status: 500 })
+
+    if (uniqueIds.length > 0) {
       // show_as_task_assignee: POSTと同じ理由で一律true（詳細はPOST側のコメント参照）
-      const rows = divisionIds.map((divId, i) => ({
+      const rows = uniqueIds.map((divId, i) => ({
         user_id: id, division_id: divId, is_primary: i === 0, show_as_task_assignee: true,
       }))
-      await admin.from('user_divisions').insert(rows)
+      const { error: upErr } = await admin
+        .from('user_divisions').upsert(rows, { onConflict: 'user_id,division_id' })
+      if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
+    }
+
+    // 今回のリストに含まれなくなった事業部の行だけを削除する
+    const toDelete = (existing ?? [])
+      .map((r) => r.division_id as string)
+      .filter((d) => !uniqueIds.includes(d))
+    if (toDelete.length > 0) {
+      const { error: delErr } = await admin
+        .from('user_divisions').delete().eq('user_id', id).in('division_id', toDelete)
+      if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 })
     }
   }
 
