@@ -134,11 +134,17 @@ export async function fetchTaskKanbanMeta(activityIds: string[]): Promise<Record
 }
 
 // カード移動時（列変更・列内並び替え）に、移動先の列全体を連番で保存する。
-// 1件ずつ独立してupsertする（Promise.allSettled）。他ブラウザで既に削除された
-// タスクのIDがローカルキャッシュに残っていた場合、そのactivity_idはactivities
-// テーブルに存在せずRLS（EXISTS句）が拒否するが、一括upsertだと1件の失敗で
-// 列全体がロールバックされてしまう（実際に発生した障害）。行ごとに分離することで
-// 削除済みタスク以外の正常な行は失敗の巻き添えにならないようにする。
+// 1件ずつ独立してupsertする（Promise.allSettled）。1件でも失敗すると、一括upsert
+// では1回のSQL文が丸ごとロールバックされ列全体の保存が失敗していた（実際に発生した障害）。
+// 想定される単一行の失敗要因は2種類あり、いずれもエラーコードで分岐せず一律に
+// 弾いてfailedIdsへ回す:
+//   (1) 他ブラウザで既に削除されたタスクがローカルキャッシュに残っている場合。
+//       task_meta.activity_idはactivitiesへのFK（ON DELETE CASCADE）なので親が
+//       消えるとtask_meta行もCASCADE削除され、upsertはINSERT扱いになりFK違反(23503)で弾かれる
+//       （task_metaのINSERTポリシーはauth.uid() IS NOT NULLのみで、ここではRLSは弾かない）。
+//   (2) 既存行だが呼び出し元にUPDATE権限が無い場合（例: 対象がcompany等でdivisionを
+//       解決できない未担当タスク）。ON CONFLICT DO UPDATEのUSING不成立でRLS(42501)が上がる。
+// 行ごとに分離することで、これら失敗行以外の正常な行は巻き添えにならない。
 // task_metaのUPDATE権限は030で同一事業部メンバーに開放済みのため追加の権限確認は不要
 export async function upsertTaskOrders(
   orders: { activityId: string; stageId: string; sortOrder: number }[]
