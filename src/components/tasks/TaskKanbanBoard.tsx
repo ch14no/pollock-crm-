@@ -478,18 +478,38 @@ export function TaskKanbanBoard({
       .map((t, i) => ({ activityId: t.id, stageId: targetStage.id, sortOrder: i }))
       .filter((o) => !o.activityId.startsWith('act-local-'))
     if (isSupabaseConfigured() && persistable.length > 0) {
-      upsertTaskOrders(persistable).catch((e) => {
-        toast.error(`並び順の同期に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
-        // ロールバック: 移動したタスクはステージも戻し、列内の並び順は変更前の値に戻す。
-        // 変更前に並び順が未設定だったタスクは戻しようがないため、その値のまま残る
-        // （実害は小さい。次に誰かがこの列を操作すれば全体が振り直されて解消する）
-        if (sourceStageId !== targetStage.id) setTaskStage(taskId, prevStageId)
-        const revertedOrders: Record<string, number> = {}
-        prevOrderEntries.forEach(([id, order]) => {
-          if (order !== undefined) revertedOrders[id] = order
+      upsertTaskOrders(persistable)
+        .then(({ failedIds }) => {
+          if (failedIds.length === 0) return
+          // 一部の行だけ失敗（他ブラウザで既に削除されたタスク等）。失敗した
+          // タスクだけをロールバックし、成功した行はそのまま残す（列全体を
+          // 巻き戻すと正常に保存できた分まで無駄に失われるため）
+          const failedSet = new Set(failedIds)
+          toast.error(
+            `並び順の同期に一部失敗しました（${failedIds.length}件。削除済みの可能性があります。画面を更新してください）`,
+            { duration: 8000 }
+          )
+          if (failedSet.has(taskId) && sourceStageId !== targetStage.id) {
+            setTaskStage(taskId, prevStageId)
+          }
+          const revertedOrders: Record<string, number> = {}
+          prevOrderEntries.forEach(([id, order]) => {
+            if (failedSet.has(id) && order !== undefined) revertedOrders[id] = order
+          })
+          setTaskOrders(revertedOrders)
         })
-        setTaskOrders(revertedOrders)
-      })
+        .catch((e) => {
+          toast.error(`並び順の同期に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
+          // ロールバック: 移動したタスクはステージも戻し、列内の並び順は変更前の値に戻す。
+          // 変更前に並び順が未設定だったタスクは戻しようがないため、その値のまま残る
+          // （実害は小さい。次に誰かがこの列を操作すれば全体が振り直されて解消する）
+          if (sourceStageId !== targetStage.id) setTaskStage(taskId, prevStageId)
+          const revertedOrders: Record<string, number> = {}
+          prevOrderEntries.forEach(([id, order]) => {
+            if (order !== undefined) revertedOrders[id] = order
+          })
+          setTaskOrders(revertedOrders)
+        })
     }
   }
 
@@ -501,13 +521,18 @@ export function TaskKanbanBoard({
     if (!isSupabaseConfigured() || syncing) return
     setSyncing(true)
     try {
+      let totalFailed = 0
       for (const stage of stages) {
         const persistable = byStage(stage.id)
           .map((t, i) => ({ activityId: t.id, stageId: stage.id, sortOrder: i }))
           .filter((o) => !o.activityId.startsWith('act-local-'))
         if (persistable.length > 0) {
           try {
-            await upsertTaskOrders(persistable)
+            // 1件ずつ独立してupsertするため、他ブラウザで既に削除されたタスクが
+            // このブラウザのローカルキャッシュに残っていても、その1件だけが
+            // 失敗し、同じ列の他の正常な行は保存される（列全体は巻き添えにしない）
+            const { failedIds } = await upsertTaskOrders(persistable)
+            totalFailed += failedIds.length
           } catch (e) {
             // どの列で・どんなエラーで失敗したかをそのままトーストに出す。
             // DevToolsを開けない/開き慣れていないユーザーからもスクリーンショット
@@ -517,7 +542,14 @@ export function TaskKanbanBoard({
           }
         }
       }
-      toast.success('列・並び順をサーバーに同期しました')
+      if (totalFailed > 0) {
+        toast.error(
+          `列・並び順を同期しましたが、${totalFailed}件は保存できませんでした（削除済みの可能性があります。画面を更新してください）`,
+          { duration: 10000 }
+        )
+      } else {
+        toast.success('列・並び順をサーバーに同期しました')
+      }
     } finally {
       setSyncing(false)
     }

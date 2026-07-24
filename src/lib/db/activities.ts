@@ -133,18 +133,33 @@ export async function fetchTaskKanbanMeta(activityIds: string[]): Promise<Record
   return result
 }
 
-// カード移動時（列変更・列内並び替え）に、移動先の列全体を連番で一括保存する。
+// カード移動時（列変更・列内並び替え）に、移動先の列全体を連番で保存する。
+// 1件ずつ独立してupsertする（Promise.allSettled）。他ブラウザで既に削除された
+// タスクのIDがローカルキャッシュに残っていた場合、そのactivity_idはactivities
+// テーブルに存在せずRLS（EXISTS句）が拒否するが、一括upsertだと1件の失敗で
+// 列全体がロールバックされてしまう（実際に発生した障害）。行ごとに分離することで
+// 削除済みタスク以外の正常な行は失敗の巻き添えにならないようにする。
 // task_metaのUPDATE権限は030で同一事業部メンバーに開放済みのため追加の権限確認は不要
 export async function upsertTaskOrders(
   orders: { activityId: string; stageId: string; sortOrder: number }[]
-): Promise<void> {
-  if (orders.length === 0) return
-  const { error } = await getSupabase()
-    .from('task_meta')
-    .upsert(orders.map((o) => ({
-      activity_id: o.activityId, kanban_stage_id: o.stageId, sort_order: o.sortOrder,
-    })))
-  if (error) throw error
+): Promise<{ failedIds: string[] }> {
+  if (orders.length === 0) return { failedIds: [] }
+  const results = await Promise.allSettled(
+    orders.map((o) =>
+      getSupabase()
+        .from('task_meta')
+        .upsert({
+          activity_id: o.activityId, kanban_stage_id: o.stageId, sort_order: o.sortOrder,
+        })
+        .then(({ error }) => {
+          if (error) throw error
+        })
+    )
+  )
+  const failedIds = orders
+    .filter((_, i) => results[i].status === 'rejected')
+    .map((o) => o.activityId)
+  return { failedIds }
 }
 
 export async function fetchActivitiesByDivision(divisionId: string): Promise<Activity[]> {
