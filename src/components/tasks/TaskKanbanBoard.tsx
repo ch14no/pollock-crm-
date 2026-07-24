@@ -12,7 +12,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   Plus, UserCircle, AlertCircle, GripVertical,
-  Check, Trash2, Edit2, RotateCcw, ChevronDown, X,
+  Check, Trash2, Edit2, RotateCcw, ChevronDown, X, RefreshCw,
 } from 'lucide-react'
 import { cn, formatDate } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
@@ -365,6 +365,7 @@ export function TaskKanbanBoard({
   const setTaskOrders = useAppStore((s) => s.setTaskOrders)
 
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -474,8 +475,48 @@ export function TaskKanbanBoard({
     }
   }
 
+  // ボード全体を今見えている並び（＝このブラウザのローカルなtaskStageMap/taskOrderMapを
+  // 反映した状態）でまとめてDBに保存し直す。タスク作成時にDBへ書き込まれず
+  // ローカルのみに列情報が残ってしまっていたタスク（2026-07-24 修正済みの不具合）を、
+  // カードを1枚ずつドラッグし直さなくても一括で直せるようにするための復旧用ボタン
+  const handleSyncAllToDb = async () => {
+    if (!isSupabaseConfigured() || syncing) return
+    setSyncing(true)
+    try {
+      for (const stage of stages) {
+        const persistable = byStage(stage.id)
+          .map((t, i) => ({ activityId: t.id, stageId: stage.id, sortOrder: i }))
+          .filter((o) => !o.activityId.startsWith('act-local-'))
+        if (persistable.length > 0) {
+          await upsertTaskOrders(persistable)
+        }
+      }
+      toast.success('列・並び順をサーバーに同期しました')
+    } catch {
+      toast.error('同期に失敗しました。もう一度お試しください')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
+      {/* 復旧用: 列・並び順をまとめてDBに同期し直す（個人スコープでは一部のタスクしか
+          見えておらず、他メンバーの列情報を巻き込んで壊しかねないためチームスコープのみ表示） */}
+      {canReorder && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={handleSyncAllToDb}
+            disabled={syncing}
+            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-orange-500 disabled:opacity-50 transition-colors"
+            title="このブラウザに表示されている列・並び順の状態をサーバーに保存し直します"
+          >
+            <RefreshCw size={12} className={cn(syncing && 'animate-spin')} />
+            {syncing ? '同期中...' : '列・並び順をサーバーに同期'}
+          </button>
+        </div>
+      )}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
