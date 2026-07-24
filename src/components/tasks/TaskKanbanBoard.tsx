@@ -84,6 +84,9 @@ function TaskCard({
     : null
   const isOverdue = daysLeft !== null && daysLeft < 0
   const isMyTask  = task.user_id === currentUser?.id
+  // 削除は原則担当者本人のみ（誤操作防止）。ただしsuper_adminは他人・未担当の
+  // タスクも削除できる（RLSのactivities_deleteも034でsuper_adminを許可済み）
+  const canDelete = isMyTask || currentUser?.role === 'super_admin'
   const assignName = task.users?.name ?? null
 
   const openEdit = (e: React.MouseEvent) => {
@@ -181,7 +184,7 @@ function TaskCard({
             >
               <Edit2 size={11} />
             </button>
-            {isMyTask && (
+            {canDelete && (
               <button
                 onClick={(e) => { e.stopPropagation(); setMode('confirmDelete') }}
                 className="p-0.5 text-gray-200 hover:text-red-400 transition-colors"
