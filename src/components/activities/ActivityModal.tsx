@@ -8,7 +8,7 @@ import { ContactPicker } from '@/components/ui/ContactPicker'
 import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { createActivity, upsertTaskMeta, fetchDivisionMemoCategories, DEFAULT_MEMO_CATEGORY_NAMES } from '@/lib/db/activities'
+import { createActivity, upsertTaskMeta, updateTaskKanbanStage, fetchDivisionMemoCategories, DEFAULT_MEMO_CATEGORY_NAMES } from '@/lib/db/activities'
 import { fetchDivisionUsers } from '@/lib/db/users'
 import { getInitials, cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
@@ -158,6 +158,14 @@ export function ActivityModal() {
         setTaskMeta(savedId, { urgency: taskUrgency, importance: taskImportance, scope: taskScope })
         if (activityModal.prefillKanbanStageId) {
           setTaskStage(savedId, activityModal.prefillKanbanStageId)
+          // ローカルのstoreだけでなくDB（task_meta.kanban_stage_id）にも書き込む。
+          // これが無いと作成者のブラウザでは正しい列に見えるが、他のメンバーの画面では
+          // その列情報が一切存在せず先頭列に見えてしまう（2026-07-24 実際に報告された不具合）
+          if (isSupabaseConfigured() && !savedId.startsWith('act-local-')) {
+            updateTaskKanbanStage(savedId, activityModal.prefillKanbanStageId).catch(() => {
+              toast.error('カンバン列の保存に失敗しました。カードをドラッグして列を選び直してください', { duration: 6000 })
+            })
+          }
         }
       }
 
