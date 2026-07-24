@@ -10,7 +10,7 @@ import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { createActivity, upsertTaskMeta, updateTaskKanbanStage, fetchDivisionMemoCategories, DEFAULT_MEMO_CATEGORY_NAMES } from '@/lib/db/activities'
 import { fetchDivisionUsers } from '@/lib/db/users'
-import { getInitials, cn } from '@/lib/utils'
+import { getInitials, cn, formatErrorDetail } from '@/lib/utils'
 import toast from 'react-hot-toast'
 import type { Activity, ActivityType, User } from '@/types/database'
 
@@ -130,9 +130,9 @@ export function ActivityModal() {
           actionDate:   new Date(form.actionDate).toISOString(),
         })
         if (isTask) {
-          await upsertTaskMeta(savedId, taskUrgency, taskImportance, taskScope).catch(() => {
+          await upsertTaskMeta(savedId, taskUrgency, taskImportance, taskScope).catch((e) => {
             // タスク本体は保存済みなので処理は続行するが、優先度が落ちたことは知らせる
-            toast.error('タスクの優先度（緊急度・重要度）の保存に失敗しました。タスク編集から設定し直してください')
+            toast.error(`タスクの優先度（緊急度・重要度）の保存に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
           })
         }
       }
@@ -168,8 +168,11 @@ export function ActivityModal() {
             // 再発パターン。code-reviewで指摘）
             updateTaskKanbanStage(savedId, stageId)
               .then(() => setTaskStage(savedId, stageId))
-              .catch(() => {
-                toast.error('カンバン列の保存に失敗しました。カードをドラッグして列を選び直してください', { duration: 6000 })
+              .catch((e) => {
+                toast.error(
+                  `カンバン列の保存に失敗しました: ${formatErrorDetail(e)}（カードをドラッグして列を選び直してください）`,
+                  { duration: 8000 }
+                )
               })
           } else {
             // ローカル専用タスク（Supabase未接続・デモモード）はDB自体が無いので即反映
@@ -185,8 +188,8 @@ export function ActivityModal() {
       } else {
         toast.success(isTask ? `タスク「${form.title}」を作成しました` : `${typeLabel}を記録しました`)
       }
-    } catch {
-      toast.error('保存に失敗しました。もう一度お試しください。')
+    } catch (e) {
+      toast.error(`保存に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
     } finally {
       setLoading(false)
     }

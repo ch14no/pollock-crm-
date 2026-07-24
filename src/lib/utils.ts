@@ -5,6 +5,21 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// Supabase(PostgrestError)・素のErrorどちらからも読める形でエラー詳細を1行にまとめる。
+// トーストにそのまま出せるようにし、DevToolsを開けない/開き慣れていないユーザーからも
+// スクリーンショットだけで原因（RLS拒否・カラム不在等）を特定できるようにする
+export function formatErrorDetail(e: unknown): string {
+  if (!e || typeof e !== 'object') return String(e)
+  const err = e as { message?: string; details?: string; hint?: string; code?: string }
+  const parts = [
+    err.code && `[${err.code}]`,
+    err.message,
+    err.details,
+    err.hint && `(${err.hint})`,
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' ') : '不明なエラー'
+}
+
 // モバイルの自動大文字化（HTTPS://...）も有効なURLとして受け付ける
 export function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value.trim())

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import type { Challenge, TaskMeta } from '@/store/appStore'
-import { cn, formatDate } from '@/lib/utils'
+import { cn, formatDate, formatErrorDetail } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields, reassignTask, fetchTaskKanbanMeta } from '@/lib/db/activities'
@@ -89,9 +89,9 @@ export default function TasksPage() {
       // 失敗時は明示的にトーストで知らせる
       fetchDivisionUsers(activeDivisionId)
         .then(setDivisionMembers)
-        .catch(() => {
+        .catch((e) => {
           setDivisionMembers([])
-          toast.error('事業部メンバー一覧の取得に失敗しました。担当変更ができません（ページ再読み込みをお試しください）', { duration: 8000 })
+          toast.error(`事業部メンバー一覧の取得に失敗しました: ${formatErrorDetail(e)}（担当変更ができません）`, { duration: 8000 })
         })
 
       const contactIds = contacts.map((c) => c.id)
@@ -105,12 +105,15 @@ export default function TasksPage() {
       // task_meta.updated_at（033）とローカルの記録時刻を比較し、DBの方が新しい
       // 場合だけ適用する（古いブラウザに残った値がずっと直らない問題への対応）
       const taskIds = tasks.map((t) => t.id)
-      const metaMap = await fetchTaskKanbanMeta(taskIds).catch(() => ({}))
+      const metaMap = await fetchTaskKanbanMeta(taskIds).catch((e) => {
+        toast.error(`カンバン列・並び順の取得に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
+        return {}
+      })
       hydrateTaskMeta(metaMap)
-    } catch {
+    } catch (e) {
       // 握りつぶすと「他のメンバーのタスクだけ表示されない」無音故障になる
       // （URL長制限による取得失敗で実際に発生した）ため必ず通知する
-      toast.error('タスクの読み込みに失敗しました。ページを再読み込みしてください', { duration: 6000 })
+      toast.error(`タスクの読み込みに失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
     } finally {
       setLoading(false)
     }
@@ -175,8 +178,8 @@ export default function TasksPage() {
   const handleComplete = async (id: string) => {
     setTaskStatus(id, 'done')
     if (isSupabaseConfigured() && !id.startsWith('act-local-')) {
-      updateActivityStatus(id, 'done').catch(() => {
-        toast.error('ステータス更新に失敗しました')
+      updateActivityStatus(id, 'done').catch((e) => {
+        toast.error(`ステータス更新に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
       })
     }
     setCompleteConfirmId(null)
@@ -186,8 +189,8 @@ export default function TasksPage() {
   const handleReopen = async (id: string) => {
     setTaskStatus(id, 'todo')
     if (isSupabaseConfigured() && !id.startsWith('act-local-')) {
-      updateActivityStatus(id, 'todo').catch(() => {
-        toast.error('ステータス更新に失敗しました')
+      updateActivityStatus(id, 'todo').catch((e) => {
+        toast.error(`ステータス更新に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
       })
     }
     toast.success('タスクを未完了に戻しました')
@@ -198,8 +201,8 @@ export default function TasksPage() {
       try {
         await deleteActivity(id)
         setDbTasks((prev) => prev.filter((t) => t.id !== id))
-      } catch {
-        toast.error('削除に失敗しました')
+      } catch (e) {
+        toast.error(`削除に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
         setDeleteConfirmId(null)
         return
       }
@@ -223,7 +226,7 @@ export default function TasksPage() {
     updateLocalActivity(task.id, storeUpdates)
     setDbTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, ...storeUpdates } : t))
     if (isSupabaseConfigured() && !task.id.startsWith('act-local-')) {
-      updateActivityFields(task.id, dbUpdates).catch(() => toast.error('保存に失敗しました'))
+      updateActivityFields(task.id, dbUpdates).catch((e) => toast.error(`保存に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 }))
     }
     toast.success('タスクを更新しました')
   }
@@ -240,8 +243,8 @@ export default function TasksPage() {
     if (isSupabaseConfigured() && !task.id.startsWith('act-local-')) {
       try {
         await reassignTask(task.id, newUserId)
-      } catch {
-        toast.error('担当の変更に失敗しました')
+      } catch (e) {
+        toast.error(`担当の変更に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
         updateLocalActivity(task.id, prevAssignee)
         setDbTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, ...prevAssignee } : t))
         return
@@ -294,8 +297,8 @@ export default function TasksPage() {
       toast.success(`課題「${challenge.title}」を追加しました`)
       setChallengeForm({ title: '', description: '', scope: 'personal', deadline: '' })
       setShowChallengeForm(false)
-    } catch {
-      toast.error('保存に失敗しました')
+    } catch (e) {
+      toast.error(`保存に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
     } finally {
       setChallengeSaving(false)
     }
@@ -304,7 +307,7 @@ export default function TasksPage() {
   const handleChallengeStatusChange = async (id: string, status: Challenge['status']) => {
     setDbChallenges((prev) => prev.map((c) => c.id === id ? { ...c, status } : c))
     if (isSupabaseConfigured() && !id.startsWith('challenge-')) {
-      updateChallengeStatus(id, status).catch(() => toast.error('更新に失敗しました'))
+      updateChallengeStatus(id, status).catch((e) => toast.error(`更新に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 }))
     }
   }
 
@@ -312,8 +315,8 @@ export default function TasksPage() {
     if (isSupabaseConfigured() && !id.startsWith('challenge-')) {
       try {
         await deleteChallenge(id)
-      } catch {
-        toast.error('削除に失敗しました')
+      } catch (e) {
+        toast.error(`削除に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
         return
       }
     }

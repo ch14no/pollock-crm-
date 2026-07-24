@@ -14,7 +14,7 @@ import {
   Plus, UserCircle, AlertCircle, GripVertical,
   Check, Trash2, Edit2, RotateCcw, ChevronDown, X, RefreshCw,
 } from 'lucide-react'
-import { cn, formatDate } from '@/lib/utils'
+import { cn, formatDate, formatErrorDetail } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { updateTaskKanbanStage, upsertTaskOrders } from '@/lib/db/activities'
@@ -425,8 +425,8 @@ export function TaskKanbanBoard({
         const prevStageId = sourceStageId
         setTaskStage(taskId, targetStage.id)
         if (isSupabaseConfigured() && !taskId.startsWith('act-local-')) {
-          updateTaskKanbanStage(taskId, targetStage.id).catch(() => {
-            toast.error('ステージの同期に失敗しました。SQLマイグレーションが必要な場合があります。', { duration: 4000 })
+          updateTaskKanbanStage(taskId, targetStage.id).catch((e) => {
+            toast.error(`ステージの同期に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
             // DB保存が失敗したのに見た目だけ移動したままだと、以後リロードするまで
             // 実際のDBの状態とローカルの表示がズレたままになるため元の列に戻す
             setTaskStage(taskId, prevStageId)
@@ -478,8 +478,8 @@ export function TaskKanbanBoard({
       .map((t, i) => ({ activityId: t.id, stageId: targetStage.id, sortOrder: i }))
       .filter((o) => !o.activityId.startsWith('act-local-'))
     if (isSupabaseConfigured() && persistable.length > 0) {
-      upsertTaskOrders(persistable).catch(() => {
-        toast.error('並び順の同期に失敗しました。SQLマイグレーションが必要な場合があります。', { duration: 4000 })
+      upsertTaskOrders(persistable).catch((e) => {
+        toast.error(`並び順の同期に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
         // ロールバック: 移動したタスクはステージも戻し、列内の並び順は変更前の値に戻す。
         // 変更前に並び順が未設定だったタスクは戻しようがないため、その値のまま残る
         // （実害は小さい。次に誰かがこの列を操作すれば全体が振り直されて解消する）
@@ -506,12 +506,18 @@ export function TaskKanbanBoard({
           .map((t, i) => ({ activityId: t.id, stageId: stage.id, sortOrder: i }))
           .filter((o) => !o.activityId.startsWith('act-local-'))
         if (persistable.length > 0) {
-          await upsertTaskOrders(persistable)
+          try {
+            await upsertTaskOrders(persistable)
+          } catch (e) {
+            // どの列で・どんなエラーで失敗したかをそのままトーストに出す。
+            // DevToolsを開けない/開き慣れていないユーザーからもスクリーンショット
+            // だけで原因（RLS拒否・カラム不在等）を特定できるようにするため
+            toast.error(`「${stage.name}」列の同期に失敗しました: ${formatErrorDetail(e)}`, { duration: 10000 })
+            throw e
+          }
         }
       }
       toast.success('列・並び順をサーバーに同期しました')
-    } catch {
-      toast.error('同期に失敗しました。もう一度お試しください')
     } finally {
       setSyncing(false)
     }
