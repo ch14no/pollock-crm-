@@ -422,10 +422,14 @@ export function TaskKanbanBoard({
       // 正しく採番できない（他メンバーのタスクとsort_orderが衝突しうる）ため、
       // ステージ移動のみ行い並び順は変更しない
       if (sourceStageId !== targetStage.id) {
+        const prevStageId = sourceStageId
         setTaskStage(taskId, targetStage.id)
         if (isSupabaseConfigured() && !taskId.startsWith('act-local-')) {
           updateTaskKanbanStage(taskId, targetStage.id).catch(() => {
             toast.error('ステージの同期に失敗しました。SQLマイグレーションが必要な場合があります。', { duration: 4000 })
+            // DB保存が失敗したのに見た目だけ移動したままだと、以後リロードするまで
+            // 実際のDBの状態とローカルの表示がズレたままになるため元の列に戻す
+            setTaskStage(taskId, prevStageId)
           })
         }
       }
@@ -458,6 +462,11 @@ export function TaskKanbanBoard({
       ]
     }
 
+    // ロールバック用に、影響を受ける列全体の変更前の状態を保存しておく。
+    // 通信失敗時に見た目だけ変わったままDBと食い違い続けるのを防ぐため
+    const prevStageId = sourceStageId
+    const prevOrderEntries = newTargetOrder.map((t) => [t.id, taskOrderMap[t.id]] as const)
+
     // ローカル即時反映
     if (sourceStageId !== targetStage.id) setTaskStage(taskId, targetStage.id)
     const orderUpdates: Record<string, number> = {}
@@ -471,6 +480,15 @@ export function TaskKanbanBoard({
     if (isSupabaseConfigured() && persistable.length > 0) {
       upsertTaskOrders(persistable).catch(() => {
         toast.error('並び順の同期に失敗しました。SQLマイグレーションが必要な場合があります。', { duration: 4000 })
+        // ロールバック: 移動したタスクはステージも戻し、列内の並び順は変更前の値に戻す。
+        // 変更前に並び順が未設定だったタスクは戻しようがないため、その値のまま残る
+        // （実害は小さい。次に誰かがこの列を操作すれば全体が振り直されて解消する）
+        if (sourceStageId !== targetStage.id) setTaskStage(taskId, prevStageId)
+        const revertedOrders: Record<string, number> = {}
+        prevOrderEntries.forEach(([id, order]) => {
+          if (order !== undefined) revertedOrders[id] = order
+        })
+        setTaskOrders(revertedOrders)
       })
     }
   }

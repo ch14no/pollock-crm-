@@ -157,14 +157,23 @@ export function ActivityModal() {
       if (isTask) {
         setTaskMeta(savedId, { urgency: taskUrgency, importance: taskImportance, scope: taskScope })
         if (activityModal.prefillKanbanStageId) {
-          setTaskStage(savedId, activityModal.prefillKanbanStageId)
-          // ローカルのstoreだけでなくDB（task_meta.kanban_stage_id）にも書き込む。
-          // これが無いと作成者のブラウザでは正しい列に見えるが、他のメンバーの画面では
-          // その列情報が一切存在せず先頭列に見えてしまう（2026-07-24 実際に報告された不具合）
+          const stageId = activityModal.prefillKanbanStageId
           if (isSupabaseConfigured() && !savedId.startsWith('act-local-')) {
-            updateTaskKanbanStage(savedId, activityModal.prefillKanbanStageId).catch(() => {
-              toast.error('カンバン列の保存に失敗しました。カードをドラッグして列を選び直してください', { duration: 6000 })
-            })
+            // 先にDBに保存できてからローカルへ反映する。先にローカルへ反映すると、
+            // DB保存が失敗した場合に「作成者のブラウザだけ正しい列に見えるが
+            // DBのkanban_stage_idはNULLのまま」という状態が固定化してしまう。
+            // これは他メンバーに一生反映されないだけでなく、hydrateTaskMetaの
+            // 「DB側にstageIdが無ければ上書きしない」仕様により、作成者自身が
+            // 再読み込みしても直らない（2026-07-24 実際に報告された不具合の
+            // 再発パターン。code-reviewで指摘）
+            updateTaskKanbanStage(savedId, stageId)
+              .then(() => setTaskStage(savedId, stageId))
+              .catch(() => {
+                toast.error('カンバン列の保存に失敗しました。カードをドラッグして列を選び直してください', { duration: 6000 })
+              })
+          } else {
+            // ローカル専用タスク（Supabase未接続・デモモード）はDB自体が無いので即反映
+            setTaskStage(savedId, stageId)
           }
         }
       }

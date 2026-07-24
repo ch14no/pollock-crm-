@@ -11,7 +11,7 @@ import type { Challenge, TaskMeta } from '@/store/appStore'
 import { cn, formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields, reassignTask, fetchTaskKanbanStages, fetchTaskOrders } from '@/lib/db/activities'
+import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields, reassignTask, fetchTaskKanbanMeta } from '@/lib/db/activities'
 import { fetchContactsByDivision } from '@/lib/db/contacts'
 import { fetchDivisionUsers } from '@/lib/db/users'
 import { fetchChallenges, createChallenge, updateChallengeStatus, deleteChallenge } from '@/lib/db/challenges'
@@ -47,10 +47,7 @@ export default function TasksPage() {
   const taskMeta          = useAppStore((s) => s.taskMeta)
   const removeLocalActivity  = useAppStore((s) => s.removeLocalActivity)
   const updateLocalActivity  = useAppStore((s) => s.updateLocalActivity)
-  const setTaskStage         = useAppStore((s) => s.setTaskStage)
-  const taskStageMap         = useAppStore((s) => s.taskStageMap)
-  const taskOrderMap         = useAppStore((s) => s.taskOrderMap)
-  const setTaskOrders        = useAppStore((s) => s.setTaskOrders)
+  const hydrateTaskMeta      = useAppStore((s) => s.hydrateTaskMeta)
   const openActivityModal    = useAppStore((s) => s.openActivityModal)
   const activityModalIsOpen  = useAppStore((s) => s.activityModal.isOpen)
 
@@ -104,21 +101,12 @@ export default function TasksPage() {
 
       const tasks = rawActs.filter((a) => a.activity_type === 'task')
       setDbTasks(tasks)
-      // DBのカンバンステージ・列内並び順をストアに反映（ローカルで既に設定済みのものは
-      // 上書きしない）。互いに独立した読み取りなので並行実行する
+      // DBのカンバンステージ・列内並び順をストアに反映。hydrateTaskMetaが
+      // task_meta.updated_at（033）とローカルの記録時刻を比較し、DBの方が新しい
+      // 場合だけ適用する（古いブラウザに残った値がずっと直らない問題への対応）
       const taskIds = tasks.map((t) => t.id)
-      const [stageMap, orderMap] = await Promise.all([
-        fetchTaskKanbanStages(taskIds).catch(() => ({})),
-        fetchTaskOrders(taskIds).catch(() => ({})),
-      ])
-      Object.entries(stageMap).forEach(([id, stageId]) => {
-        if (!taskStageMap[id]) setTaskStage(id, stageId) // ローカル未設定のみDBから適用
-      })
-      const newOrders: Record<string, number> = {}
-      Object.entries(orderMap).forEach(([id, order]) => {
-        if (taskOrderMap[id] === undefined) newOrders[id] = order
-      })
-      if (Object.keys(newOrders).length > 0) setTaskOrders(newOrders)
+      const metaMap = await fetchTaskKanbanMeta(taskIds).catch(() => ({}))
+      hydrateTaskMeta(metaMap)
     } catch {
       // 握りつぶすと「他のメンバーのタスクだけ表示されない」無音故障になる
       // （URL長制限による取得失敗で実際に発生した）ため必ず通知する

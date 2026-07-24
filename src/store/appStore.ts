@@ -282,6 +282,15 @@ interface AppState {
   taskOrderMap: Record<string, number>
   setTaskOrders: (updates: Record<string, number>) => void
 
+  // taskStageMap/taskOrderMapの各値が「いつ時点のものか」（activityId -> ISO日時）。
+  // setTaskStage/setTaskOrdersは自分の操作なので常に「今」を記録し、
+  // hydrateTaskMetaはDBのtask_meta.updated_at（033）と比較して、より新しい方だけを
+  // 反映する。永続化はしない（意図的。セッションをまたいだ古い記録が残ると、
+  // 逆に本当に新しいDBの変更を「ローカルの方が新しい」と誤って拒否し続けてしまうため。
+  // 再読み込みごとに空へリセットされることで、毎回必ずDBの最新状態に揃う）
+  taskMetaUpdatedAt: Record<string, string>
+  hydrateTaskMeta: (updates: Record<string, { stageId?: string; sortOrder?: number; updatedAt: string }>) => void
+
   // 顧客の事業部別カスタムフィールド値
   contactCustomValues: Record<string, Record<string, string>>  // contactId -> { fieldId -> value }
   setContactCustomValue: (contactId: string, fieldId: string, value: string) => void
@@ -487,11 +496,40 @@ export const useAppStore = create<AppState>()(
 
       taskStageMap: {},
       setTaskStage: (activityId, stageId) =>
-        set((state) => ({ taskStageMap: { ...state.taskStageMap, [activityId]: stageId } })),
+        set((state) => ({
+          taskStageMap: { ...state.taskStageMap, [activityId]: stageId },
+          taskMetaUpdatedAt: { ...state.taskMetaUpdatedAt, [activityId]: new Date().toISOString() },
+        })),
 
       taskOrderMap: {},
       setTaskOrders: (updates) =>
-        set((state) => ({ taskOrderMap: { ...state.taskOrderMap, ...updates } })),
+        set((state) => {
+          const now = new Date().toISOString()
+          const stamps: Record<string, string> = {}
+          Object.keys(updates).forEach((id) => { stamps[id] = now })
+          return {
+            taskOrderMap: { ...state.taskOrderMap, ...updates },
+            taskMetaUpdatedAt: { ...state.taskMetaUpdatedAt, ...stamps },
+          }
+        }),
+
+      taskMetaUpdatedAt: {},
+      hydrateTaskMeta: (updates) =>
+        set((state) => {
+          const nextStageMap = { ...state.taskStageMap }
+          const nextOrderMap = { ...state.taskOrderMap }
+          const nextTimestamps = { ...state.taskMetaUpdatedAt }
+          for (const [id, meta] of Object.entries(updates)) {
+            const known = nextTimestamps[id]
+            // ローカルの方が新しいか同じなら何もしない（自分の直近の操作を、
+            // まだDBに反映されていない古い読み取りで巻き戻さないため）
+            if (known && new Date(known).getTime() >= new Date(meta.updatedAt).getTime()) continue
+            if (meta.stageId) nextStageMap[id] = meta.stageId
+            if (meta.sortOrder !== undefined) nextOrderMap[id] = meta.sortOrder
+            nextTimestamps[id] = meta.updatedAt
+          }
+          return { taskStageMap: nextStageMap, taskOrderMap: nextOrderMap, taskMetaUpdatedAt: nextTimestamps }
+        }),
 
       contactCustomValues: {},
       setContactCustomValue: (contactId, fieldId, value) =>

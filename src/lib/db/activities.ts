@@ -81,37 +81,53 @@ export async function updateTaskKanbanStage(activityId: string, stageId: string)
   if (error) throw error
 }
 
-export async function fetchTaskKanbanStages(activityIds: string[]): Promise<Record<string, string>> {
+export interface TaskKanbanMeta {
+  stageId?: string
+  sortOrder?: number
+  updatedAt: string
+}
+
+// タスクの列・並び順・更新日時をまとめて取得する（033・task_meta.updated_at）。
+// updatedAtはフロント側でDBとローカルどちらが新しいか比較するために使う
+// （appStore.hydrateTaskMeta参照）。以前はfetchTaskKanbanStages/fetchTaskOrdersの
+// 2関数に分かれ同じテーブルへ2回問い合わせていたが、1回にまとめた。
+//
+// 1クエリにまとめた副作用として、updated_at（033）が未適用の環境ではクエリ全体が
+// エラーになる。以前は列（025）と並び順（031）が独立クエリだったため、
+// どちらか一方が未適用でも他方は正常に取得できていたが、統合後はそれが失われて
+// 「デプロイ直後・マイグレーション未適用の間、列・並び順の同期が全ユーザーぶん
+// サイレントに完全停止する」リスクがある（code-reviewで指摘）。createActivityの
+// isMissingColumnErrorと同じ方針で、updated_at列が無い場合はそれを含めずに
+// 再取得し、列・並び順の同期だけは引き続き機能させる
+export async function fetchTaskKanbanMeta(activityIds: string[]): Promise<Record<string, TaskKanbanMeta>> {
   if (activityIds.length === 0) return {}
   // IDリストはURL長制限を超えないよう分割して取得（chunkIdListのコメント参照）
   const rows = await Promise.all(chunkIdList(activityIds).map(async (ids) => {
-    const { data } = await getSupabase()
+    let data: Record<string, unknown>[] | null
+    let error: { message?: string } | null
+    ;({ data, error } = await getSupabase()
       .from('task_meta')
-      .select('activity_id, kanban_stage_id')
-      .in('activity_id', ids)
+      .select('activity_id, kanban_stage_id, sort_order, updated_at')
+      .in('activity_id', ids))
+    if (error && isMissingColumnError(error, 'updated_at')) {
+      ;({ data, error } = await getSupabase()
+        .from('task_meta')
+        .select('activity_id, kanban_stage_id, sort_order')
+        .in('activity_id', ids))
+    }
+    if (error) return []
     return data ?? []
   }))
-  const result: Record<string, string> = {}
+  const result: Record<string, TaskKanbanMeta> = {}
   for (const row of rows.flat()) {
-    if (row.kanban_stage_id) result[row.activity_id as string] = row.kanban_stage_id as string
-  }
-  return result
-}
-
-// 列内の並び順（031_task_kanban_sort_order.sql・task_meta.sort_order）
-export async function fetchTaskOrders(activityIds: string[]): Promise<Record<string, number>> {
-  if (activityIds.length === 0) return {}
-  const rows = await Promise.all(chunkIdList(activityIds).map(async (ids) => {
-    const { data } = await getSupabase()
-      .from('task_meta')
-      .select('activity_id, sort_order')
-      .in('activity_id', ids)
-    return data ?? []
-  }))
-  const result: Record<string, number> = {}
-  for (const row of rows.flat()) {
-    if (row.sort_order !== null && row.sort_order !== undefined) {
-      result[row.activity_id as string] = row.sort_order as number
+    result[row.activity_id as string] = {
+      stageId: (row.kanban_stage_id as string | null | undefined) ?? undefined,
+      sortOrder: (row.sort_order as number | null | undefined) ?? undefined,
+      // updated_at未適用環境ではrowに含まれない。この場合は比較のしようがないため
+      // 最古の日時にしておき、ローカルに既知の値があれば上書きしない
+      // （＝033適用前の古い「ローカル優先」挙動にフォールバックする。033適用後の
+      // 環境では通常この分岐に入らない）
+      updatedAt: (row.updated_at as string | undefined) ?? new Date(0).toISOString(),
     }
   }
   return result
