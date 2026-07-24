@@ -73,8 +73,12 @@ export async function POST(req: NextRequest) {
   }
 
   if (divisionIds && divisionIds.length > 0) {
+    // show_as_task_assignee: システム管理者はタスク看板の担当候補一覧から
+    // 除外されるのが既定（032）。この画面でチェックした事業部＝表示してよい
+    // 事業部という意味を兼ねるため一律trueにする（一般ユーザー・マネージャーは
+    // 元々常に表示対象なのでこの値は無視され、実害はない）
     const rows = divisionIds.map((divId, i) => ({
-      user_id: userId, division_id: divId, is_primary: i === 0,
+      user_id: userId, division_id: divId, is_primary: i === 0, show_as_task_assignee: true,
     }))
     await admin.from('user_divisions').insert(rows)
   }
@@ -110,8 +114,9 @@ export async function PUT(req: NextRequest) {
   if (divisionIds !== undefined) {
     await admin.from('user_divisions').delete().eq('user_id', id)
     if (divisionIds.length > 0) {
+      // show_as_task_assignee: POSTと同じ理由で一律true（詳細はPOST側のコメント参照）
       const rows = divisionIds.map((divId, i) => ({
-        user_id: id, division_id: divId, is_primary: i === 0,
+        user_id: id, division_id: divId, is_primary: i === 0, show_as_task_assignee: true,
       }))
       await admin.from('user_divisions').insert(rows)
     }

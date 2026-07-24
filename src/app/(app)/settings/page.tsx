@@ -14,7 +14,7 @@ import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES, DEFAULT_DIVISI
 import type { Role } from '@/types/database'
 import { cn, getInitials } from '@/lib/utils'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { updateUserName, fetchAllUsers, createUserAdmin, updateUserAdmin, deleteUserAdmin, fetchUserDivisionIds } from '@/lib/db/users'
+import { updateUserName, fetchAllUsers, createUserAdmin, updateUserAdmin, deleteUserAdmin, fetchUserDivisionIds, fetchUserTaskAssigneeDivisionIds } from '@/lib/db/users'
 import {
   fetchPipelineStages, upsertPipelineStages,
   fetchPipelineTabs, createPipelineTab, updatePipelineTab, deletePipelineTab, upsertPipelineStagesForTab,
@@ -423,10 +423,28 @@ function AccountsPanel() {
   }
 
   const openEdit = async (user: UserType) => {
-    const divIds = await fetchUserDivisionIds(user.id)
+    // super_adminは「所属」ではなく「タスク看板に表示する事業部」チェックボックスとして
+    // 見せているため、show_as_task_assignee=trueの事業部のみを初期値にする。
+    // fetchUserDivisionIds（単純な所属有無）のままだと、opt-inしていない既存の
+    // user_divisions行まで全部チェック済みに見えてしまい、何も変えず保存しただけで
+    // 全事業部がshow_as_task_assignee=trueになってしまう
+    const divIds = user.role === 'super_admin'
+      ? await fetchUserTaskAssigneeDivisionIds(user.id)
+      : await fetchUserDivisionIds(user.id)
     setEditingId(user.id)
     setEditForm({ name: user.name, role: user.role as Role, divisionIds: divIds })
     setPwResetId(null)
+  }
+
+  // divisionIdsの意味はroleによって変わる（super_admin以外＝所属事業部、super_admin＝
+  // タスク看板opt-in事業部）。super_adminをまたぐロール変更（昇格・降格どちらも）が
+  // 起きたときにdivisionIdsをそのまま持ち越すと、意味が変わったのに値だけ残ってしまい、
+  // 「編集フォームを開いた後にその場でsuper_adminへ昇格して保存する」だけで
+  // 旧所属の全事業部がタスク担当候補として即座に露出する事故になる（032が防ごうとした
+  // 問題の再発）。super_adminをまたぐときはdivisionIdsをリセットし、明示的に選び直させる
+  const changeRole = <T extends { role: Role; divisionIds: string[] }>(form: T, newRole: Role): T => {
+    const crossesSuperAdminBoundary = (form.role === 'super_admin') !== (newRole === 'super_admin')
+    return { ...form, role: newRole, divisionIds: crossesSuperAdminBoundary ? [] : form.divisionIds }
   }
 
   const toggleDivision = (form: typeof EMPTY_EDIT, divId: string) =>
@@ -497,7 +515,7 @@ function AccountsPanel() {
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-0.5">権限</label>
-                <select value={createForm.role} onChange={(e) => setCreateForm((f) => ({ ...f, role: e.target.value as Role }))}
+                <select value={createForm.role} onChange={(e) => setCreateForm((f) => changeRole(f, e.target.value as Role))}
                   className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white">
                   <option value="user">ユーザー</option>
                   <option value="manager">マネージャー</option>
@@ -505,9 +523,13 @@ function AccountsPanel() {
                 </select>
               </div>
             </div>
-            {createForm.role !== 'super_admin' && divisions.length > 0 && (
+            {divisions.length > 0 && (
               <div>
-                <label className="block text-xs text-gray-500 mb-1">所属事業部</label>
+                <label className="block text-xs text-gray-500 mb-1">
+                  {createForm.role === 'super_admin'
+                    ? 'タスク看板に担当者として表示する事業部（選択しない場合は表示されません）'
+                    : '所属事業部'}
+                </label>
                 <div className="flex flex-wrap gap-3">
                   {divisions.map((div) => (
                     <label key={div.id} className="flex items-center gap-1.5 text-sm cursor-pointer">
@@ -616,7 +638,7 @@ function AccountsPanel() {
                         </div>
                         <div>
                           <label className="block text-xs text-gray-500 mb-0.5">権限</label>
-                          <select value={editForm.role} onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value as Role }))}
+                          <select value={editForm.role} onChange={(e) => setEditForm((f) => changeRole(f, e.target.value as Role))}
                             className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white">
                             <option value="user">ユーザー</option>
                             <option value="manager">マネージャー</option>
@@ -624,9 +646,13 @@ function AccountsPanel() {
                           </select>
                         </div>
                       </div>
-                      {editForm.role !== 'super_admin' && divisions.length > 0 && (
+                      {divisions.length > 0 && (
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">所属事業部</label>
+                          <label className="block text-xs text-gray-500 mb-1">
+                            {editForm.role === 'super_admin'
+                              ? 'タスク看板に担当者として表示する事業部（選択しない場合は表示されません）'
+                              : '所属事業部'}
+                          </label>
                           <div className="flex flex-wrap gap-3">
                             {divisions.map((div) => (
                               <label key={div.id} className="flex items-center gap-1.5 text-sm cursor-pointer">

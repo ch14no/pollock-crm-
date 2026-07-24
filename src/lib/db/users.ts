@@ -69,6 +69,19 @@ export async function fetchUserDivisionIds(userId: string): Promise<string[]> {
   return (data ?? []).map((r) => r.division_id as string)
 }
 
+// システム管理者の編集フォーム用。show_as_task_assignee=trueの事業部のみ返す
+// （032）。fetchUserDivisionIdsをそのまま使うと、既存のsuper_adminが持つ
+// user_divisions行（表示opt-inしていないものも含む）が全部チェック済みに見えてしまい、
+// 何も変更せず保存しただけで全事業部がshow_as_task_assignee=trueになってしまうため分離した
+export async function fetchUserTaskAssigneeDivisionIds(userId: string): Promise<string[]> {
+  const { data } = await getSupabase()
+    .from('user_divisions')
+    .select('division_id')
+    .eq('user_id', userId)
+    .eq('show_as_task_assignee', true)
+  return (data ?? []).map((r) => r.division_id as string)
+}
+
 export async function deleteUserAdmin(id: string): Promise<void> {
   const res = await adminFetch(`/api/admin/users?id=${id}`, { method: 'DELETE' })
   const data = await res.json()
