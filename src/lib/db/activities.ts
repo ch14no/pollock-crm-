@@ -263,8 +263,29 @@ export async function deleteActivity(id: string): Promise<void> {
     .from('activities').delete().eq('id', id).select('id')
   if (error) throw error
   if (!data || data.length === 0) {
-    throw new Error('削除できませんでした（対象が存在しないか、削除する権限がありません）')
+    // 0行の理由は「行が既に無い」か「行はあるがRLSで削除不可」の2通り。
+    // 前者（他の端末で削除済みだがこのブラウザのlocalStorageに幽霊として残って
+    // いるタスク）は削除の目的が既に達成されているので成功扱いにする。こうしないと
+    // 呼び出し元がローカルコピーを消す処理に到達できず、幽霊タスクを永久に
+    // 画面から消せなくなる（2026-07-27 財務支援事業部で実際に発生した障害）
+    const { data: existing } = await getSupabase()
+      .from('activities').select('id').eq('id', id).maybeSingle()
+    if (!existing) return
+    throw new Error('削除できませんでした（削除する権限がありません）')
   }
+}
+
+// localStorageに残った幽霊タスク（他の端末でDBから削除済みなのに、このブラウザの
+// ローカルコピーが表示され続けるタスク）の検出用。渡したIDのうちDBに実在するものを返す
+export async function fetchExistingActivityIds(ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set()
+  const results = await Promise.all(chunkIdList(ids).map(async (chunk) => {
+    const { data, error } = await getSupabase()
+      .from('activities').select('id').in('id', chunk)
+    if (error) throw error
+    return (data ?? []).map((r: { id: string }) => r.id)
+  }))
+  return new Set(results.flat())
 }
 
 export async function updateActivityFields(id: string, updates: {

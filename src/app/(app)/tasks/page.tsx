@@ -11,7 +11,7 @@ import type { Challenge, TaskMeta } from '@/store/appStore'
 import { cn, formatDate, formatErrorDetail } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields, reassignTask, fetchTaskKanbanMeta } from '@/lib/db/activities'
+import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields, reassignTask, fetchTaskKanbanMeta, fetchExistingActivityIds } from '@/lib/db/activities'
 import { fetchContactsByDivision } from '@/lib/db/contacts'
 import { fetchDivisionUsers } from '@/lib/db/users'
 import { fetchChallenges, createChallenge, updateChallengeStatus, deleteChallenge } from '@/lib/db/challenges'
@@ -101,6 +101,32 @@ export default function TasksPage() {
 
       const tasks = rawActs.filter((a) => a.activity_type === 'task')
       setDbTasks(tasks)
+
+      // 幽霊タスクの掃除: 活動作成時に楽観的更新用としてlocalStorageへ保存された
+      // コピー（localActivities）は、その後DB側で削除されてもこのブラウザに残り
+      // 続け、allTasksのマージで「ローカルのみのタスク」として表示され続ける。
+      // 削除もできない（DBに行が無いので削除が失敗する）ため、リロードしても
+      // 直らない幽霊カードになる（2026-07-27 財務支援事業部で実際に発生）。
+      // DB取得のたびに、実UUIDを持つのにDB結果に無いローカルタスクの実在を
+      // 直接確認し、DBに存在しないものはローカルからも取り除く。
+      // ※target_type='deal'のタスクはチーム表示の取得（contact起点）に含まれない
+      //   ため、「取得結果に無い」だけでは削除済みと断定できない。必ずIDで実在確認する
+      const dbIdSet = new Set(tasks.map((t) => t.id))
+      // loadTasksのクロージャに残った古いlocalActivitiesではなく、ストアの最新値で判定する
+      const ghostCandidates = useAppStore.getState().localActivities
+        .filter((a) => a.activity_type === 'task' && !a.id.startsWith('act-local-') && !dbIdSet.has(a.id))
+        .map((a) => a.id)
+      if (ghostCandidates.length > 0) {
+        fetchExistingActivityIds(ghostCandidates)
+          .then((existing) => {
+            const ghosts = ghostCandidates.filter((id) => !existing.has(id))
+            if (ghosts.length === 0) return
+            ghosts.forEach((id) => removeLocalActivity(id))
+            toast(`他の端末で削除済みのタスク${ghosts.length}件を表示から取り除きました`, { duration: 6000 })
+          })
+          .catch(() => { /* 確認に失敗しても表示が増える以上の実害はないため次回ロードに任せる */ })
+      }
+
       // DBのカンバンステージ・列内並び順をストアに反映。hydrateTaskMetaが
       // task_meta.updated_at（033）とローカルの記録時刻を比較し、DBの方が新しい
       // 場合だけ適用する（古いブラウザに残った値がずっと直らない問題への対応）
