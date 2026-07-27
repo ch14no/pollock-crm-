@@ -148,7 +148,7 @@ export async function fetchTaskKanbanMeta(activityIds: string[]): Promise<Record
 // task_metaのUPDATE権限は030で同一事業部メンバーに開放済みのため追加の権限確認は不要
 export async function upsertTaskOrders(
   orders: { activityId: string; stageId: string; sortOrder: number }[]
-): Promise<{ failedIds: string[] }> {
+): Promise<{ failedIds: string[]; firstError?: unknown }> {
   if (orders.length === 0) return { failedIds: [] }
   const results = await Promise.allSettled(
     orders.map((o) =>
@@ -165,7 +165,11 @@ export async function upsertTaskOrders(
   const failedIds = orders
     .filter((_, i) => results[i].status === 'rejected')
     .map((o) => o.activityId)
-  return { failedIds }
+  // 失敗理由（RLS拒否か削除済みFK違反か等）を1件分だけ拾って呼び出し元のトーストに
+  // 出せるようにする。「削除済みの可能性があります」という決め打ち文言だけでは
+  // 実際にRLS拒否だった場合に原因特定が遅れるため（formatErrorDetailと同じ狙い）
+  const firstRejected = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
+  return { failedIds, firstError: firstRejected?.reason }
 }
 
 export async function fetchActivitiesByDivision(divisionId: string): Promise<Activity[]> {
