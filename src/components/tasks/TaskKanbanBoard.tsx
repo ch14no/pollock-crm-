@@ -84,9 +84,14 @@ function TaskCard({
     : null
   const isOverdue = daysLeft !== null && daysLeft < 0
   const isMyTask  = task.user_id === currentUser?.id
-  // 削除は原則担当者本人のみ（誤操作防止）。ただしsuper_adminは他人・未担当の
-  // タスクも削除できる（RLSのactivities_deleteも034でsuper_adminを許可済み）
-  const canDelete = isMyTask || currentUser?.role === 'super_admin'
+  // 削除は原則担当者本人のみ（誤操作防止）。super_adminは他人のタスクも削除できる。
+  // 未担当（user_id===null）タスクは「守るべき担当者」がそもそも存在しないため
+  // 誤操作防止の対象外とし、同一事業部メンバーなら誰でも削除できる。
+  // このボードに表示されている時点で対象は自分の事業部のもの（fetchActivitiesByContactIds
+  // が事業部内のcontactに紐づく活動のみを返す設計）なので追加の事業部チェックは不要。
+  // RLSのactivities_delete（034）も未担当タスクをshares_division_with_activity_targetで
+  // 同一事業部メンバーに開放済みで、この変更は既存のDB権限にUIの表示条件を合わせるもの。
+  const canDelete = isMyTask || currentUser?.role === 'super_admin' || task.user_id === null
   const assignName = task.users?.name ?? null
 
   const openEdit = (e: React.MouseEvent) => {
@@ -175,7 +180,7 @@ function TaskCard({
             </div>
           </div>
 
-          {/* アクションボタン: 編集は同一事業部メンバーなら誰でも可（030）。削除は本人のみ維持 */}
+          {/* アクションボタン: 編集は同一事業部メンバーなら誰でも可（030）。削除は本人/未担当/super_adminのみ（canDelete参照） */}
           <div className="flex gap-0.5 flex-shrink-0">
             <button
               onClick={openEdit}
@@ -482,14 +487,15 @@ export function TaskKanbanBoard({
       .filter((o) => !o.activityId.startsWith('act-local-'))
     if (isSupabaseConfigured() && persistable.length > 0) {
       upsertTaskOrders(persistable)
-        .then(({ failedIds }) => {
+        .then(({ failedIds, firstError }) => {
           if (failedIds.length === 0) return
           // 一部の行だけ失敗（他ブラウザで既に削除されたタスク等）。失敗した
           // タスクだけをロールバックし、成功した行はそのまま残す（列全体を
           // 巻き戻すと正常に保存できた分まで無駄に失われるため）
           const failedSet = new Set(failedIds)
           toast.error(
-            `並び順の同期に一部失敗しました（${failedIds.length}件。削除済みの可能性があります。画面を更新してください）`,
+            `並び順の同期に一部失敗しました（${failedIds.length}件。削除済みの可能性があります。画面を更新してください）` +
+              (firstError ? ` [詳細: ${formatErrorDetail(firstError)}]` : ''),
             { duration: 8000 }
           )
           if (failedSet.has(taskId) && sourceStageId !== targetStage.id) {
@@ -525,6 +531,7 @@ export function TaskKanbanBoard({
     setSyncing(true)
     try {
       let totalFailed = 0
+      let lastFailedError: unknown
       for (const stage of stages) {
         const persistable = byStage(stage.id)
           .map((t, i) => ({ activityId: t.id, stageId: stage.id, sortOrder: i }))
@@ -534,8 +541,9 @@ export function TaskKanbanBoard({
             // 1件ずつ独立してupsertするため、他ブラウザで既に削除されたタスクが
             // このブラウザのローカルキャッシュに残っていても、その1件だけが
             // 失敗し、同じ列の他の正常な行は保存される（列全体は巻き添えにしない）
-            const { failedIds } = await upsertTaskOrders(persistable)
+            const { failedIds, firstError } = await upsertTaskOrders(persistable)
             totalFailed += failedIds.length
+            if (firstError) lastFailedError = firstError
           } catch (e) {
             // どの列で・どんなエラーで失敗したかをそのままトーストに出す。
             // DevToolsを開けない/開き慣れていないユーザーからもスクリーンショット
@@ -547,7 +555,8 @@ export function TaskKanbanBoard({
       }
       if (totalFailed > 0) {
         toast.error(
-          `列・並び順を同期しましたが、${totalFailed}件は保存できませんでした（削除済みの可能性があります。画面を更新してください）`,
+          `列・並び順を同期しましたが、${totalFailed}件は保存できませんでした（削除済みの可能性があります。画面を更新してください）` +
+            (lastFailedError ? ` [詳細: ${formatErrorDetail(lastFailedError)}]` : ''),
           { duration: 10000 }
         )
       } else {
