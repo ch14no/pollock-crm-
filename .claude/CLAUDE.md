@@ -55,3 +55,23 @@
 - 「Success」表示だけでは関数が動く保証にならない。適用後に一度呼ぶか、フロントでRPCエラーをthrow/toastする。
 - 一括書き込み（配列 `.upsert`/`.insert`、delete→insert）は1件の失敗で全体が巻き添えになる。行別化（allSettled）か単一トランザクション（RPC）にする。
 - **UI側のガードがRLSより厳しくなっていないか要確認**: RLSを緩めた/増やしたときは「クライアント側の表示条件（ボタンのif等）が新しいRLSに追従しているか」を必ず突き合わせる。RLSだけ直してUIを直し忘れると、DB上は操作可能なのに「できない」という紛らわしい不具合報告になる（本件の実例）。逆にUIだけ緩めてRLSを直し忘れるケースも同様に確認すること。
+
+## 環境変数の復旧（別端末でのセットアップ）
+
+作成すべきファイル: `.env.local`（テンプレートは `.env.local.example`）
+
+**最速の復旧手順**:
+1. 端末でVercel CLIにログイン（`vercel login`。端末ごとに必要）
+2. `vercel link`（プロジェクト名: **pollock-crm**）
+3. `vercel env pull .env.local`
+
+上記でVercelに設定済みの本番/開発環境変数がそのままローカルに落ちてくる。手動で1つずつ設定する場合は下表を参照。
+
+| 変数名 | 用途 | 取得元 |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase接続URL | Supabaseダッシュボード → Settings → API |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonキー（クライアント用） | Supabaseダッシュボード → Settings → API |
+| `SUPABASE_SERVICE_ROLE_KEY` | サーバー側管理操作用（ユーザー作成/削除、`api/admin/*`、`api/webhooks/division-sync`）※絶対に公開しないこと。現状ローカル `.env.local` には未設定（Vercel本番環境のみに設定されている可能性が高い） | Supabaseダッシュボード → Settings → API → service_role |
+| `ANTHROPIC_API_KEY` | 名刺OCR（Claude Vision API、`api/ocr/business-card`） | Anthropic Console（https://console.anthropic.com/） |
+| `DIVISION_SYNC_SECRET` | pollock-cupとの事業部(divisions/departments)相互同期Webhook（`api/webhooks/division-sync`）用の共有シークレット | 自己生成の任意文字列（pollock-cup側の同名変数と値を一致させる必要あり。現状 `.env.local.example` ではコメントアウトされておりVercel本番環境のみに設定されている可能性が高い） |
+| `CRON_SECRET` | Slack自動通知cron（`api/cron/deadline-alerts`）の認証用シークレット。Vercel Cronが付与する `Authorization: Bearer <値>` と一致させる | 自己生成のランダム文字列（現状 `.env.local.example` ではコメントアウトされておりVercel本番環境のみに設定されている可能性が高い） |
