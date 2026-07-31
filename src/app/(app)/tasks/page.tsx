@@ -11,12 +11,14 @@ import type { Challenge, TaskMeta } from '@/store/appStore'
 import { cn, formatDate, formatErrorDetail } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields, reassignTask, fetchTaskKanbanMeta, fetchExistingActivityIds } from '@/lib/db/activities'
+import { fetchActivitiesByUser, fetchActivitiesByContactIds, updateActivityStatus, deleteActivity, updateActivityFields, reassignTask, fetchTaskKanbanMeta, fetchExistingActivityIds, updateTaskKanbanStage } from '@/lib/db/activities'
+import type { TaskKanbanMeta } from '@/lib/db/activities'
 import { fetchContactsByDivision } from '@/lib/db/contacts'
 import { fetchDivisionUsers } from '@/lib/db/users'
 import { fetchChallenges, createChallenge, updateChallengeStatus, deleteChallenge } from '@/lib/db/challenges'
 import { DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
 import { TaskKanbanBoard } from '@/components/tasks/TaskKanbanBoard'
+import { useTaskRealtime } from '@/hooks/useTaskRealtime'
 import type { Activity, Contact, User as UserType } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -55,13 +57,26 @@ export default function TasksPage() {
   // 他の事業部マスタと同様に layout.tsx で一括実施される。
   // 行が無い事業部はlocalStorage→デフォルトの順でフォールバックする
   const divisionTaskStages = useAppStore((s) => s.divisionTaskStages)
-
-  const kanbanStages = activeDivisionId
-    ? (divisionTaskStages[activeDivisionId] ?? DEFAULT_DIVISION_TASK_STAGES[activeDivisionId] ?? DEFAULT_DIVISION_TASK_STAGES['div-1'])
-    : []
+  // 個人ビューでの担当外列の非表示設定（037）。エントリが無いユーザーはfail-open（全列表示）
+  const taskStageVisibility = useAppStore((s) => s.taskStageVisibility)
+  // 非表示列に割り当て済みのタスクをkanbanTasksから除外するために参照する
+  const taskStageMap = useAppStore((s) => s.taskStageMap)
 
   const [tab, setTab]     = useState<'kanban' | 'tasks' | 'challenges'>('kanban')
   const [scope, setScope] = useState<'personal' | 'team'>('team')
+
+  const allKanbanStages = activeDivisionId
+    ? (divisionTaskStages[activeDivisionId] ?? DEFAULT_DIVISION_TASK_STAGES[activeDivisionId] ?? DEFAULT_DIVISION_TASK_STAGES['div-1'])
+    : []
+
+  // チームスコープは常に全列。個人スコープのみ、管理者が登録した表示列allowlistで絞り込む
+  // （この絞り込みはUIの利便機能でありセキュリティ境界ではない。タスク自体のRLSは不変）
+  const allowedStageIds = scope === 'personal' && activeDivisionId && currentUser
+    ? taskStageVisibility[activeDivisionId]?.[currentUser.id]
+    : undefined
+  const kanbanStages = allowedStageIds && allowedStageIds.length > 0
+    ? allKanbanStages.filter((s) => allowedStageIds.includes(s.id))
+    : allKanbanStages
   const [expandedQ, setExpandedQ] = useState<Set<number>>(new Set([1, 2, 3, 4]))
   const [deleteConfirmId,   setDeleteConfirmId]   = useState<string | null>(null)
   const [completeConfirmId, setCompleteConfirmId] = useState<string | null>(null)
@@ -131,11 +146,28 @@ export default function TasksPage() {
       // task_meta.updated_at（033）とローカルの記録時刻を比較し、DBの方が新しい
       // 場合だけ適用する（古いブラウザに残った値がずっと直らない問題への対応）
       const taskIds = tasks.map((t) => t.id)
-      const metaMap = await fetchTaskKanbanMeta(taskIds).catch((e) => {
+      const metaMap: Record<string, TaskKanbanMeta> = await fetchTaskKanbanMeta(taskIds).catch((e) => {
         toast.error(`カンバン列・並び順の取得に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
         return {}
       })
       hydrateTaskMeta(metaMap)
+
+      // task_meta行が無い、またはkanban_stage_idがNULLのタスク（一度もドラッグされて
+      // いない）は、DBに列情報が永久に書き込まれないままになる。全クライアントで
+      // 先頭列に表示されるフォールバックがあるため見た目上は問題ないが、「並び順を
+      // 整理」等のDB側処理は対象にできず、旧・復旧ボタンが兼ねていた「未着地タスクの
+      // 救済」機能が失われていた（/code-reviewで発覚）。表示中の先頭列をこの機会に
+      // 1行だけ書き込む（他人の値を上書きしない追加専用の操作なので、Stage 1で撤去した
+      // ローカルキャッシュ一括push方式の危険性は持ち込まない。書き込み後は次回以降
+      // metaMapに載るため自然と収束する）
+      if (allKanbanStages.length > 0) {
+        const firstStageId = allKanbanStages[0].id
+        taskIds
+          .filter((id) => !metaMap[id]?.stageId && !id.startsWith('act-local-'))
+          .forEach((id) => {
+            updateTaskKanbanStage(id, firstStageId).catch(() => { /* 失敗しても表示に影響なし。次回ロード時に再試行される */ })
+          })
+      }
     } catch (e) {
       // 握りつぶすと「他のメンバーのタスクだけ表示されない」無音故障になる
       // （URL長制限による取得失敗で実際に発生した）ため必ず通知する
@@ -162,6 +194,9 @@ export default function TasksPage() {
     prevModalOpen.current = activityModalIsOpen
   }, [activityModalIsOpen]) // eslint-disable-line
 
+  // 他ユーザーによる列・並び順の変更をリアルタイムで反映する（036/037）
+  useTaskRealtime(activeDivisionId, loadTasks)
+
   // ─── タスクリスト（DB + ローカル楽観的更新） ────────────────────
   const allTasks = useMemo((): Activity[] => {
     const base = isSupabaseConfigured() ? dbTasks : localActivities.filter((a) => a.activity_type === 'task')
@@ -184,6 +219,24 @@ export default function TasksPage() {
     if (scope === 'team') return pendingTasks
     return pendingTasks.filter((t) => t.user_id === currentUser?.id)
   }, [pendingTasks, scope, currentUser?.id])
+
+  // カンバン専用: 個人ビューで非表示に設定された列に割り当て済みのタスクを除外する。
+  // TaskKanbanBoardのbyStage/resolveStageIdは「列が存在しない（削除された）」場合に
+  // 未割当として先頭列へフォールバックする設計だが、これは「列は実在するが個人ビューで
+  // 非表示」ケースと区別できない。フィルタ後のstages（kanbanStages）だけを渡すと、
+  // 非表示のはずの列のタスクが誤って先頭の可視列に紛れ込んで表示されてしまう
+  // （/code-reviewで発覚）ため、渡すtasks自体から該当タスクを取り除いて完全に非表示にする。
+  // 「削除された列」のタスクは引き続き先頭列フォールバックで表示させたいので、
+  // allKanbanStagesに実在する列だけを除外対象にする（存在しない列は除外しない）
+  const kanbanTasks = useMemo(() => {
+    if (!allowedStageIds || allowedStageIds.length === 0) return filteredTasks
+    return filteredTasks.filter((t) => {
+      const mapped = taskStageMap[t.id]
+      const existsInDivision = mapped && allKanbanStages.some((s) => s.id === mapped)
+      if (!existsInDivision) return true
+      return allowedStageIds.includes(mapped)
+    })
+  }, [filteredTasks, allowedStageIds, taskStageMap, allKanbanStages])
 
   const byQuadrant = useMemo(() => {
     const map: Record<number, typeof filteredTasks> = { 1: [], 2: [], 3: [], 4: [] }
@@ -402,14 +455,16 @@ export default function TasksPage() {
       {/* ─── カンバンビュー ─── */}
       {tab === 'kanban' && (
         <TaskKanbanBoard
-          tasks={filteredTasks}
+          tasks={kanbanTasks}
           completedTasks={completedTasks}
           stages={kanbanStages}
           divisionMembers={divisionMembers}
+          divisionId={activeDivisionId}
           // 「個人」スコープでは自分のタスクしか渡ってこないため、列内の並び順を
           // 正しく採番できない（他メンバーのタスクと衝突しうる）。「チーム」スコープ
           // （列の全件が見えるとき）のみ並び替えの保存を許可する
           canReorder={scope === 'team'}
+          onRefresh={loadTasks}
           showCompleted={showCompleted}
           onAddTask={(stageId) => openActivityModal({ prefillKanbanStageId: stageId })}
           onComplete={(task) => handleComplete(task.id)}

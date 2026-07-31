@@ -14,7 +14,7 @@ import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES, DEFAULT_DIVISI
 import type { Role } from '@/types/database'
 import { cn, getInitials } from '@/lib/utils'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { updateUserName, fetchAllUsers, createUserAdmin, updateUserAdmin, deleteUserAdmin, fetchUserDivisionIds, fetchUserTaskAssigneeDivisionIds } from '@/lib/db/users'
+import { updateUserName, fetchAllUsers, createUserAdmin, updateUserAdmin, deleteUserAdmin, fetchUserDivisionIds, fetchUserTaskAssigneeDivisionIds, fetchDivisionUsers } from '@/lib/db/users'
 import {
   fetchPipelineStages, upsertPipelineStages,
   fetchPipelineTabs, createPipelineTab, updatePipelineTab, deletePipelineTab, upsertPipelineStagesForTab,
@@ -23,6 +23,7 @@ import {
   createDivisionCustomField, updateDivisionCustomField, deleteDivisionCustomField,
   fetchDivisions, createDivision, updateDivision, deleteDivision, checkDivisionReferences,
   fetchDivisionTaskStagesDb, saveDivisionTaskStages,
+  fetchTaskStageVisibility, saveTaskStageVisibility,
 } from '@/lib/db/divisions'
 import {
   fetchDivisionProductsData, addDivisionProduct, removeDivisionProduct, saveDivisionProductsEnabled,
@@ -287,14 +288,18 @@ export default function SettingsPage() {
           <KnowledgeCategoriesPanel key={`knowledge-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <MemoCategoriesPanel key={`memo-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <TaskStagesPanel key={`tasks-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+          <TaskStageVisibilityPanel key={`task-visibility-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <NotificationSettingsPanel key={`notif-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
         </>
       )}
 
-      {/* ─── マネージャー設定（Slack通知のみ。修正6） ───
+      {/* ─── マネージャー設定 ───
           division_notification_settings_manage RLSはsuper_adminと当該事業部のmanagerの
           両方を許可しているが、以前はUIがsuper_admin専用ブロックの中にしかなく
-          managerが到達できなかった。managerは自分の所属事業部のみ設定できるようにする */}
+          managerが到達できなかった（修正6）。managerは自分の所属事業部のみ設定できるようにする。
+          task_stage_user_visibility_manage（037）も同じくsuper_admin/managerの両方を許可する
+          RLSなので、同じ理由でここにも配置する（/code-reviewで発覚: managerがUIから
+          到達できず、RLSが許可している操作をUIから一切実行できていなかった） */}
       {isManager && !isSuperAdmin && managerDivisions.length > 0 && (
         <>
           <div className="flex items-center gap-2 pt-2">
@@ -330,11 +335,18 @@ export default function SettingsPage() {
           )}
 
           {managerNotifDivId && (
-            <NotificationSettingsPanel
-              key={`notif-mgr-${managerNotifDivId}`}
-              divisionId={managerNotifDivId}
-              divisionName={managerNotifDivName}
-            />
+            <>
+              <TaskStageVisibilityPanel
+                key={`task-visibility-mgr-${managerNotifDivId}`}
+                divisionId={managerNotifDivId}
+                divisionName={managerNotifDivName}
+              />
+              <NotificationSettingsPanel
+                key={`notif-mgr-${managerNotifDivId}`}
+                divisionId={managerNotifDivId}
+                divisionName={managerNotifDivName}
+              />
+            </>
           )}
         </>
       )}
@@ -2165,6 +2177,151 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
             <Plus size={13} />追加
           </button>
         </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+// 「個人」ビューで担当者ごとに表示する列を絞り込む設定（037_task_stage_user_visibility.sql）。
+// 設定を1つも外していないユーザーはfail-open（全列表示）のまま。この絞り込みはUIの
+// 利便機能でありセキュリティ境界ではない（タスク自体のRLSは不変）
+function TaskStageVisibilityPanel({ divisionId, divisionName }: MasterPanelProps) {
+  const divisionTaskStages = useAppStore((s) => s.divisionTaskStages)
+  const stages: TaskKanbanStage[] = divisionTaskStages[divisionId] ?? DEFAULT_DIVISION_TASK_STAGES[divisionId] ?? []
+  const [members, setMembers] = useState<UserType[]>([])
+  // userId -> 表示を許可する列ID配列。空配列/未登録は「制限なし＝全列表示」
+  const [visibility, setVisibility] = useState<Record<string, string[]>>({})
+  const [loading, setLoading] = useState(true)
+  // 取得失敗（例: マイグレーション037未適用）を「メンバー0人」と区別するためのフラグ。
+  // 区別しないと、DB未接続が原因でも「この事業部にメンバーがいません」という
+  // 事実と異なる文言が出てしまう（/code-reviewで発覚）
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [savingUserId, setSavingUserId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isSupabaseConfigured()) { setLoading(false); return }
+    let cancelled = false
+    setLoading(true)
+    setLoadError(null)
+    // 2つの取得を個別にcatchする（layout.tsx・TaskStagesPanelと同じ方針）。
+    // 素のPromise.allだと片方の失敗（例: 037未適用）で全体がrejectし、
+    // membersが空のまま「メンバーがいません」という誤った表示になってしまう
+    Promise.all([
+      fetchDivisionUsers(divisionId),
+      fetchTaskStageVisibility(divisionId),
+    ])
+      .then(([users, vis]) => {
+        if (cancelled) return
+        setMembers(users)
+        setVisibility(vis)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        const msg = e instanceof Error ? e.message : String(e)
+        setLoadError(msg)
+        toast.error(`表示列設定の取得に失敗しました: ${msg}`, { duration: 6000 })
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [divisionId])
+
+  // あるユーザー×列のチェックを切り替える。トグル前が未設定（全列表示）の場合は
+  // まず全列を選択済みとして展開してから対象列だけを外す（＝最初の1手で
+  // 「その列だけ隠す」という直感的な操作になるようにする）。
+  // 全列を選択し直した場合はallowlist行を残さずfail-open（制限なし）に戻す
+  const toggle = async (userId: string, stageId: string) => {
+    if (savingUserId) return
+    const current = visibility[userId]
+    const base = current && current.length > 0 ? current : stages.map((s) => s.id)
+    const next = base.includes(stageId) ? base.filter((id) => id !== stageId) : [...base, stageId]
+    const toSave = next.length >= stages.length ? [] : next
+
+    const prevVisibility = visibility
+    setVisibility((v) => ({ ...v, [userId]: toSave }))
+    setSavingUserId(userId)
+    try {
+      await saveTaskStageVisibility(divisionId, userId, toSave)
+    } catch (e) {
+      setVisibility(prevVisibility)
+      const msg = e instanceof Error ? e.message : String(e)
+      toast.error(`表示列の保存に失敗しました: ${msg}`, { duration: 6000 })
+    } finally {
+      setSavingUserId(null)
+    }
+  }
+
+  if (stages.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader><div className="flex items-center gap-2"><Eye size={16} /><span className="font-bold text-gray-800">個人ビューの表示列設定（{divisionName}）</span></div></CardHeader>
+      <CardBody>
+        <div className="mb-4 p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs text-gray-500 space-y-1">
+          <p>
+            タスク管理ページで「個人」を選んだときに、担当者ごとに表示する列を絞り込めます。
+            チェックを外した列は、そのユーザーの個人ビューで完全に非表示になります（「チーム」ビューでは常に全列表示されます）。
+          </p>
+          <p className="text-gray-400">1つもチェックを外していないユーザーは、これまでどおり全列が表示されます。</p>
+        </div>
+
+        {!isSupabaseConfigured() ? (
+          <p className="text-xs text-gray-400 py-2 text-center">この機能はSupabase接続時のみ利用できます</p>
+        ) : loading ? (
+          <p className="text-xs text-gray-400 py-4 text-center">読み込み中...</p>
+        ) : loadError ? (
+          <p className="text-xs text-red-500 py-4 text-center">
+            表示列設定を取得できませんでした（{loadError}）。SQLマイグレーション 037_task_stage_user_visibility.sql の適用状況を確認してください。
+          </p>
+        ) : members.length === 0 ? (
+          <p className="text-xs text-gray-400 py-4 text-center">この事業部にメンバーがいません</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr>
+                  <th className="text-left font-medium text-gray-500 pb-2 pr-3">メンバー</th>
+                  {stages.map((s) => (
+                    <th key={s.id} className="text-center font-medium text-gray-500 pb-2 px-2 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1">
+                        <span className={cn('w-2 h-2 rounded-full', COLOR_DOT[s.color] ?? 'bg-gray-400')} />
+                        {s.name}
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((m) => {
+                  const restricted = visibility[m.id]
+                  const isAllVisible = !restricted || restricted.length === 0
+                  return (
+                    <tr key={m.id} className="border-t border-gray-100">
+                      <td className="py-2 pr-3 text-gray-700 font-medium whitespace-nowrap">{m.name}</td>
+                      {stages.map((s) => {
+                        const checked = isAllVisible || restricted!.includes(s.id)
+                        return (
+                          <td key={s.id} className="text-center px-2">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              // toggle()自体はコンポーネント全体で1つのsavingUserIdによる
+                              // 排他制御（他ユーザーの保存中は無視してreturnする）なので、
+                              // disabledも該当行だけでなく全体をロックし、クリックしたのに
+                              // 無反応に見える不整合を防ぐ（/code-reviewで発覚）
+                              disabled={!!savingUserId}
+                              onChange={() => toggle(m.id, s.id)}
+                              aria-label={`${m.name}の個人ビューで「${s.name}」列を表示`}
+                            />
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </CardBody>
     </Card>
   )

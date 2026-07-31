@@ -172,6 +172,15 @@ export async function upsertTaskOrders(
   return { failedIds, firstError: firstRejected?.reason }
 }
 
+// 列内のsort_order（fractional indexing）の隙間が枯渇してきたときの復旧用。
+// DBに現存する行だけを見て列全体を等間隔に振り直すSECURITY DEFINER関数（036）を呼ぶ。
+// ローカルキャッシュは一切参照しないため、他ユーザーの同時編集を巻き添えにしない
+export async function normalizeTaskKanbanSortOrder(stageId: string, divisionId: string): Promise<void> {
+  const { error } = await getSupabase()
+    .rpc('normalize_task_kanban_sort_order', { p_stage_id: stageId, p_division_id: divisionId })
+  if (error) throw error
+}
+
 export async function fetchActivitiesByDivision(divisionId: string): Promise<Activity[]> {
   const { data: contacts } = await getSupabase()
     .from('contacts').select('id').eq('division_id', divisionId)
