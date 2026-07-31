@@ -17,7 +17,7 @@ import {
 import { cn, formatDate, formatErrorDetail } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { updateTaskKanbanStage, upsertTaskOrders } from '@/lib/db/activities'
+import { updateTaskKanbanStage, upsertTaskOrders, normalizeTaskKanbanSortOrder } from '@/lib/db/activities'
 import toast from 'react-hot-toast'
 import type { TaskKanbanStage } from '@/store/appStore'
 import type { Activity, User } from '@/types/database'
@@ -349,11 +349,15 @@ interface TaskKanbanBoardProps {
   stages: TaskKanbanStage[]
   divisionMembers?: User[]
   showCompleted?: boolean
+  // 事業部ID。並び順の正規化RPC（normalizeTaskKanbanSortOrder）の呼び出しに必要
+  divisionId?: string | null
   // 列内の並び替え（保存）を許可するか。「個人」スコープでは tasks に自分の
   // タスクしか含まれず、列の一部だけを見て並び順を採番すると他メンバーの
   // タスクのsort_orderと衝突するため、「チーム」スコープ（列の全件が見えている
   // とき）のみ true にする。false のときはステージ移動のみ行い並び順には触れない
   canReorder?: boolean
+  // サーバーから最新の列・並び順を再取得する（pull専用。ローカルキャッシュは書き込まない）
+  onRefresh?: () => void
   onAddTask?: (stageId: string) => void
   onComplete?: (task: Activity) => void
   onDelete?: (task: Activity) => void
@@ -364,16 +368,18 @@ interface TaskKanbanBoardProps {
 }
 
 export function TaskKanbanBoard({
-  tasks, completedTasks = [], stages, divisionMembers = [], canReorder = false,
-  showCompleted, onAddTask, onComplete, onDelete, onSave, onReassign, onReopen, onToggleCompleted,
+  tasks, completedTasks = [], stages, divisionMembers = [], canReorder = false, divisionId,
+  showCompleted, onRefresh, onAddTask, onComplete, onDelete, onSave, onReassign, onReopen, onToggleCompleted,
 }: TaskKanbanBoardProps) {
   const setTaskStage = useAppStore((s) => s.setTaskStage)
   const taskStageMap = useAppStore((s) => s.taskStageMap)
   const taskOrderMap = useAppStore((s) => s.taskOrderMap)
   const setTaskOrders = useAppStore((s) => s.setTaskOrders)
+  const clearTaskOrder = useAppStore((s) => s.clearTaskOrder)
 
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [syncing, setSyncing] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [normalizing, setNormalizing] = useState(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -470,118 +476,128 @@ export function TaskKanbanBoard({
       ]
     }
 
-    // ロールバック用に、影響を受ける列全体の変更前の状態を保存しておく。
-    // 通信失敗時に見た目だけ変わったままDBと食い違い続けるのを防ぐため
+    // fractional indexing: 移動したカード1枚分のsort_orderだけを、前後2枚の中間値として
+    // 計算する。列全体を連番で振り直さないことで、他ユーザーが同じ列を同時に操作しても
+    // 互いのDB書き込みが競合・巻き添えにならない（複数人の同時編集でカードが消えたように
+    // 見える不具合の直接対策）。隣接カードにまだsort_orderが無い場合は、newTargetOrder内の
+    // 自分の位置を仮の値（index × GAP）として使い、旧データとも自然に馴染ませる
+    const GAP = 1024
+    const movedIndex = newTargetOrder.findIndex((t) => t.id === taskId)
+    const prevNeighbor = newTargetOrder[movedIndex - 1]
+    const nextNeighbor = newTargetOrder[movedIndex + 1]
+    const prevOrder = prevNeighbor
+      ? (taskOrderMap[prevNeighbor.id] ?? (movedIndex - 1) * GAP)
+      : undefined
+    const nextOrder = nextNeighbor
+      ? (taskOrderMap[nextNeighbor.id] ?? (movedIndex + 1) * GAP)
+      : undefined
+    const newOrder =
+      prevOrder !== undefined && nextOrder !== undefined ? (prevOrder + nextOrder) / 2 :
+      prevOrder !== undefined ? prevOrder + GAP :
+      nextOrder !== undefined ? nextOrder - GAP :
+      GAP
+
+    // ロールバック用に、移動したタスク自身の変更前の状態だけ保存しておく
+    // （他のカードのsort_orderには一切触れていないため戻す必要もない）
     const prevStageId = sourceStageId
-    const prevOrderEntries = newTargetOrder.map((t) => [t.id, taskOrderMap[t.id]] as const)
+    const prevOwnOrder = taskOrderMap[taskId]
 
     // ローカル即時反映
     if (sourceStageId !== targetStage.id) setTaskStage(taskId, targetStage.id)
-    const orderUpdates: Record<string, number> = {}
-    newTargetOrder.forEach((t, i) => { orderUpdates[t.id] = i })
-    setTaskOrders(orderUpdates)
+    setTaskOrders({ [taskId]: newOrder })
+
+    // 失敗時のロールバック。移動前に並び順が未設定（prevOwnOrderがundefined）だった
+    // タスクは、setTaskOrdersでnewOrderに丸めてしまうと「今回失敗した値」がそのまま
+    // 残って実質ロールバックされない（/code-reviewで発覚）ため、clearTaskOrderで
+    // キー自体を削除し「未設定」の状態に戻す
+    const rollbackOrder = () => {
+      if (prevOwnOrder === undefined) clearTaskOrder(taskId)
+      else setTaskOrders({ [taskId]: prevOwnOrder })
+    }
 
     // DBに保存して全ユーザーに同期（ローカル専用の未保存タスクは対象外）
-    const persistable = newTargetOrder
-      .map((t, i) => ({ activityId: t.id, stageId: targetStage.id, sortOrder: i }))
-      .filter((o) => !o.activityId.startsWith('act-local-'))
-    if (isSupabaseConfigured() && persistable.length > 0) {
-      upsertTaskOrders(persistable)
+    if (isSupabaseConfigured() && !taskId.startsWith('act-local-')) {
+      upsertTaskOrders([{ activityId: taskId, stageId: targetStage.id, sortOrder: newOrder }])
         .then(({ failedIds, firstError }) => {
           if (failedIds.length === 0) return
-          // 一部の行だけ失敗（他ブラウザで既に削除されたタスク等）。失敗した
-          // タスクだけをロールバックし、成功した行はそのまま残す（列全体を
-          // 巻き戻すと正常に保存できた分まで無駄に失われるため）
-          const failedSet = new Set(failedIds)
           toast.error(
-            `並び順の同期に一部失敗しました（${failedIds.length}件。削除済みの可能性があります。画面を更新してください）` +
+            `並び順の同期に失敗しました（削除済みの可能性があります。画面を更新してください）` +
               (firstError ? ` [詳細: ${formatErrorDetail(firstError)}]` : ''),
             { duration: 8000 }
           )
-          if (failedSet.has(taskId) && sourceStageId !== targetStage.id) {
-            setTaskStage(taskId, prevStageId)
-          }
-          const revertedOrders: Record<string, number> = {}
-          prevOrderEntries.forEach(([id, order]) => {
-            if (failedSet.has(id) && order !== undefined) revertedOrders[id] = order
-          })
-          setTaskOrders(revertedOrders)
+          if (sourceStageId !== targetStage.id) setTaskStage(taskId, prevStageId)
+          rollbackOrder()
         })
         .catch((e) => {
           toast.error(`並び順の同期に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
-          // ロールバック: 移動したタスクはステージも戻し、列内の並び順は変更前の値に戻す。
-          // 変更前に並び順が未設定だったタスクは戻しようがないため、その値のまま残る
-          // （実害は小さい。次に誰かがこの列を操作すれば全体が振り直されて解消する）
           if (sourceStageId !== targetStage.id) setTaskStage(taskId, prevStageId)
-          const revertedOrders: Record<string, number> = {}
-          prevOrderEntries.forEach(([id, order]) => {
-            if (order !== undefined) revertedOrders[id] = order
-          })
-          setTaskOrders(revertedOrders)
+          rollbackOrder()
         })
     }
   }
 
-  // ボード全体を今見えている並び（＝このブラウザのローカルなtaskStageMap/taskOrderMapを
-  // 反映した状態）でまとめてDBに保存し直す。タスク作成時にDBへ書き込まれず
-  // ローカルのみに列情報が残ってしまっていたタスク（2026-07-24 修正済みの不具合）を、
-  // カードを1枚ずつドラッグし直さなくても一括で直せるようにするための復旧用ボタン
-  const handleSyncAllToDb = async () => {
-    if (!isSupabaseConfigured() || syncing) return
-    setSyncing(true)
+  // サーバーから最新の列・並び順を取得し直す（pull専用）。ローカルキャッシュをDBへ
+  // 書き込む処理は一切行わない。以前あった「今見えているローカルの状態をまとめて
+  // DBへ書き戻す」復旧ボタン（handleSyncAllToDb）は、他ユーザーが直前に加えた変更を
+  // 古いローカルキャッシュで上書きしてしまう事故の直接原因だったため撤去した
+  const handleRefresh = async () => {
+    if (refreshing) return
+    setRefreshing(true)
     try {
-      let totalFailed = 0
-      let lastFailedError: unknown
-      for (const stage of stages) {
-        const persistable = byStage(stage.id)
-          .map((t, i) => ({ activityId: t.id, stageId: stage.id, sortOrder: i }))
-          .filter((o) => !o.activityId.startsWith('act-local-'))
-        if (persistable.length > 0) {
-          try {
-            // 1件ずつ独立してupsertするため、他ブラウザで既に削除されたタスクが
-            // このブラウザのローカルキャッシュに残っていても、その1件だけが
-            // 失敗し、同じ列の他の正常な行は保存される（列全体は巻き添えにしない）
-            const { failedIds, firstError } = await upsertTaskOrders(persistable)
-            totalFailed += failedIds.length
-            if (firstError) lastFailedError = firstError
-          } catch (e) {
-            // どの列で・どんなエラーで失敗したかをそのままトーストに出す。
-            // DevToolsを開けない/開き慣れていないユーザーからもスクリーンショット
-            // だけで原因（RLS拒否・カラム不在等）を特定できるようにするため
-            toast.error(`「${stage.name}」列の同期に失敗しました: ${formatErrorDetail(e)}`, { duration: 10000 })
-            throw e
-          }
-        }
-      }
-      if (totalFailed > 0) {
-        toast.error(
-          `列・並び順を同期しましたが、${totalFailed}件は保存できませんでした（削除済みの可能性があります。画面を更新してください）` +
-            (lastFailedError ? ` [詳細: ${formatErrorDetail(lastFailedError)}]` : ''),
-          { duration: 10000 }
-        )
-      } else {
-        toast.success('列・並び順をサーバーに同期しました')
-      }
+      // onRefresh（tasks/page.tsxのloadTasks）はasync関数のため、必ずawaitする。
+      // awaitを忘れると読み込み完了より先にrefreshingが解除され、「更新中」表示が
+      // 実態を反映しなくなり連打で重複リクエストも起こる（/code-reviewで発覚）
+      await onRefresh?.()
     } finally {
-      setSyncing(false)
+      setRefreshing(false)
+    }
+  }
+
+  // 列内でfractional indexingの隙間が枯渇してきた場合の復旧用。DBの現在値だけを
+  // 見て列全体を再採番するRPC（normalizeTaskKanbanSortOrder）を呼ぶだけで、
+  // ローカルキャッシュは一切参照しない（＝旧handleSyncAllToDbの危険性を持ち込まない）
+  const handleNormalize = async () => {
+    if (!isSupabaseConfigured() || normalizing || !divisionId) return
+    setNormalizing(true)
+    try {
+      for (const stage of stages) {
+        await normalizeTaskKanbanSortOrder(stage.id, divisionId)
+      }
+      toast.success('並び順を整理しました')
+      onRefresh?.()
+    } catch (e) {
+      toast.error(`並び順の整理に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
+    } finally {
+      setNormalizing(false)
     }
   }
 
   return (
     <div className="space-y-4">
-      {/* 復旧用: 列・並び順をまとめてDBに同期し直す（個人スコープでは一部のタスクしか
-          見えておらず、他メンバーの列情報を巻き込んで壊しかねないためチームスコープのみ表示） */}
+      {/* 個人スコープでは一部のタスクしか見えておらず、他メンバーの列情報を巻き込んで
+          壊しかねないためチームスコープのみ表示。「更新」はDBから読み直すだけの安全な
+          操作、「並び順を整理」は列の隙間が枯渇したときの復旧用（DBの現在値のみ参照） */}
       {canReorder && (
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-3">
           <button
             type="button"
-            onClick={handleSyncAllToDb}
-            disabled={syncing}
+            onClick={handleRefresh}
+            disabled={refreshing}
             className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-orange-500 disabled:opacity-50 transition-colors"
-            title="このブラウザに表示されている列・並び順の状態をサーバーに保存し直します"
+            title="サーバーから最新の列・並び順を読み込み直します"
           >
-            <RefreshCw size={12} className={cn(syncing && 'animate-spin')} />
-            {syncing ? '同期中...' : '列・並び順をサーバーに同期'}
+            <RefreshCw size={12} className={cn(refreshing && 'animate-spin')} />
+            {refreshing ? '更新中...' : '更新'}
+          </button>
+          <button
+            type="button"
+            onClick={handleNormalize}
+            disabled={normalizing || !divisionId}
+            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-orange-500 disabled:opacity-50 transition-colors"
+            title="サーバー側の現在の並び順から列を整理し直します（他の人の同時編集を壊しません）"
+          >
+            <RefreshCw size={12} className={cn(normalizing && 'animate-spin')} />
+            {normalizing ? '整理中...' : '並び順を整理'}
           </button>
         </div>
       )}

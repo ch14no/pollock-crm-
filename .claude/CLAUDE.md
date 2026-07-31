@@ -9,8 +9,9 @@
 - **DBマイグレーションは自動適用されない**。`supabase/migrations/NNN_*.sql` を書いても、Supabaseダッシュボード → SQL Editor に手動で貼って実行する運用。frontendのpushとSQL適用は別手順（コード先行 or SQL先行かは変更内容による）。
 - service_roleキーはPostgREST/Auth用でDDL（CREATE POLICY/FUNCTION等）は実行不可。ポリシー/関数変更は必ずSQL Editorでユーザーに実行してもらう。
 
-## マイグレーション適用状況（2026-07-24時点）
-- **001〜035まで全て本番適用済み**。
+## マイグレーション適用状況（2026-07-31時点）
+- **001〜035までは本番適用済み**。**036・037は未適用（コード側は実装済み・ブランチ`realtime-task-sync`）**。
+- **⚠️デプロイ順序が重要**: 036は`task_meta.sort_order`をINTEGER→NUMERICに変更する。新しいフロントコード（fractional indexing）は常に小数値をこの列へ書き込むため、**036を先にSQL Editorで適用してからでないとpush（デプロイ）してはいけない**。順序を誤ると、pushした瞬間に全ユーザーのカンバンのドラッグ操作がDB型エラーで即座に失敗する（INTEGER列に小数を書き込もうとして拒否される）。036→037の順で適用後にpushすること。
 - 主要な近年分:
   - 025 タスクカンバン列のDB共有化（`task_kanban_stages` + RPC `replace_task_kanban_stages`）
   - 026 activities_delete ポリシー新設（削除がRLSで無音0行だった不具合）
@@ -22,6 +23,26 @@
   - 033 task_meta.updated_at + BEFOREトリガ（DBタイムスタンプ再同期用）
   - 034 未担当（user_id IS NULL）タスクのRLS修正（`shares_division_with_activity_target`）
   - 035 `replace_pipeline_stages`（パイプラインステージ保存のトランザクション化）
+  - **036（未適用）** `task_meta.sort_order` INTEGER→NUMERIC化、正規化RPC `normalize_task_kanban_sort_order`、`task_meta`/`task_kanban_stages`のRealtime publication追加
+  - **037（未適用）** `task_stage_user_visibility`（個人ビューでの担当外列非表示設定）＋RPC `replace_task_stage_visibility`、Realtime publication追加
+
+## 2026-07-31セッションの変更（要点・PRブランチ`realtime-task-sync`、未マージ・未SQL適用）
+
+財務支援事業部（松木紅さん・齋藤香奈さん）からの要望2件に対応。設計はFable 5に壁打ち、実装はPlanモード承認後に実施、`/code-review`（8観点finder→1-vote verify）で8件CONFIRMED・1件PLAUSIBLE・1件REFUTEDのうち高重要度分をすべて修正済み。
+
+1. **リアルタイム同期**: 手動一括push同期ボタン（`handleSyncAllToDb`、ローカルキャッシュ全体を列ごと連番upsertし直す方式）が「2人が同時に編集すると片方が消える」の直接原因だったため撤去。「更新」（pull専用の再読込）＋「並び順を整理」（DBの現在値のみで正規化するRPC呼び出し）の2ボタンに置換。カード移動もfractional indexing（前後カードのsort_orderの中間値を1行だけ書き込む）に変更し、Realtime購読（`src/hooks/useTaskRealtime.ts`）で他ユーザーの変更を手動リロードなしに反映する。
+2. **個人ビューの列絞り込み**: 「個人」選択時に担当者ごとの表示列allowlistを管理者（super_admin/manager）が設定できる機能（`task_stage_user_visibility`）。設定行が無いユーザーはfail-open（全列表示）。設定画面は`isSuperAdmin`ブロックとmanagerブロックの両方に配置（RLSはmanagerも許可しているため、UIもそれに合わせた。旧`TaskStagesPanel`は`isSuperAdmin`のみで、`/code-review`でこの不一致に気づいた）。
+
+**/code-reviewで修正した主な指摘**:
+- fractional indexing失敗時のロールバックが「初回ドラッグ（並び順未設定）」のケースで無効化されていた（`newOrder`にフォールバックし実質ロールバックされない）→ `clearTaskOrder`（appStore新設）でキー自体を削除する方式に修正
+- 個人ビューの列フィルタが`TaskKanbanBoard`の「列削除時は先頭列にフォールバック」ロジックと衝突し、非表示のはずの列のタスクが可視列に紛れ込んでいた → `tasks/page.tsx`で`TaskKanbanBoard`に渡すtasks自体から該当タスクを除外する`kanbanTasks`を新設
+- 「並び順を整理」RPCは`task_meta`行が無い/`kanban_stage_id`がNULLのタスクを対象にできず、旧`handleSyncAllToDb`が兼ねていた「未着地タスクの救済」機能が失われていた → `loadTasks`で該当タスクに限り先頭列を1行だけ追加専用で書き込むバックフィルを追加
+- `handleRefresh`が非同期の`onRefresh`をawaitしておらず「更新中」表示が実態と無関係だった → async/await化
+- 037がRealtime publicationに追加されているのに`useTaskRealtime`が購読しておらず「即時反映」の約束が未実装だった → 購読を追加
+- 設定画面の`TaskStageVisibilityPanel`の排他ロック（`savingUserId`）とチェックボックスのdisabled表示が食い違いサイレント無反応になっていた → 全体ロックに統一
+- 同パネルの`Promise.all`が個別エラーハンドリングを持たず、DB未接続時に「メンバーがいません」という誤った文言が出ていた → エラー状態を区別して表示
+
+**既知のリスク（要実機検証、対応は見送り）**: `useTaskRealtime.ts`の`task_meta`購読には事業部フィルタが無い（`task_meta`テーブル自体に`division_id`列が無いため）。Supabase RealtimeがRLSを正しく尊重する設定であれば実害はないはずだが、この前提はSupabaseプロジェクトの設定・プラン次第で変わりうるため、本番適用後に2アカウントで①同事業部の他人のイベントが届く②他事業部のイベントは届かない③未担当タスクのイベントが届く④担当変更直後のイベントが届く、の4ケースを必ず確認すること。
 
 ## 2026-07-24セッションの変更（要点）
 タスクカンバン同期の連続不具合を根本修正。
@@ -41,6 +62,7 @@
 - 副次的な発見: `task_kanban_stages`（025）は`GRANT ... TO authenticated`のみで`service_role`へのGRANTが無く、service_roleキーでの直接SELECTが`42501`になる。本番ユーザーには影響しないが、将来service_role経由でこのテーブルを触る処理を書くときは要注意。
 
 ## 残タスク・待ち
+- **最優先（新規）**: `realtime-task-sync`ブランチのマージ前に、Supabase SQL Editorで036・037を**この順で**適用する（036を先に適用しないとpush後に全ユーザーのドラッグ操作が壊れる。上記マイグレーション適用状況の注意書き参照）。適用後、2アカウントで①同時ドラッグでの消失が起きないか②他ブラウザの変更がリロードなしで反映されるか③未担当・担当変更直後のタスクのRealtime反映④個人ビューの列絞り込み（設定→表示列設定で担当外列を外し、個人ビューで完全非表示になるか）を実機確認し、松木紅さん・齋藤香奈さんに使用感を確認してもらう。
 - **実機確認待ち（新規・優先）**: 石川紅さん・齋藤香奈さんに、未担当タスクの削除・並び替えが直ったか再テストしてもらう（PR #1マージ後）。
 - 実機確認: 石川/香奈で「削除→別の人が同期」がエラーにならないか。管理者でステージ保存・ユーザー事業部編集が正常か。
 - 齋藤PCで山﨑アカウント→設定→タスクカンバン設定「列構成を全メンバーに共有」を押す（他PCが先に列編集すると齋藤PCのローカル構成が失われるため順番厳守。継続中）。

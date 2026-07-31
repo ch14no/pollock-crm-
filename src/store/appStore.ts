@@ -274,6 +274,11 @@ interface AppState {
   divisionTaskStages: Record<string, TaskKanbanStage[]>
   setDivisionTaskStages: (divisionId: string, stages: TaskKanbanStage[]) => void
 
+  // 個人ビューでの担当外列の非表示設定（037）。divisionId -> userId -> 表示を許可する
+  // stageIdの配列。あるユーザーのエントリが無ければfail-open（全列表示）
+  taskStageVisibility: Record<string, Record<string, string[]>>
+  setTaskStageVisibility: (divisionId: string, visibilityByUser: Record<string, string[]>) => void
+
   // タスクのカンバン列（activityId -> stageId）
   taskStageMap: Record<string, string>
   setTaskStage: (activityId: string, stageId: string) => void
@@ -281,6 +286,9 @@ interface AppState {
   // タスクの列内の並び順（activityId -> sortOrder。小さいほど上）
   taskOrderMap: Record<string, number>
   setTaskOrders: (updates: Record<string, number>) => void
+  // 保存前の状態が「並び順未設定」だったタスクのロールバック用。setTaskOrdersでは
+  // 値を消せない（数値で上書きするしかない）ため、キー自体を削除する専用の操作を分ける
+  clearTaskOrder: (activityId: string) => void
 
   // taskStageMap/taskOrderMapの各値が「いつ時点のものか」（activityId -> ISO日時）。
   // setTaskStage/setTaskOrdersは自分の操作なので常に「今」を記録し、
@@ -494,6 +502,14 @@ export const useAppStore = create<AppState>()(
       setDivisionTaskStages: (divisionId, stages) =>
         set((state) => ({ divisionTaskStages: { ...state.divisionTaskStages, [divisionId]: stages } })),
 
+      // 個人ビューでの担当外列の非表示設定（037）。divisionId -> userId -> 表示を許可する
+      // stageIdの配列。エントリが無いユーザーはfail-open（全列表示）
+      taskStageVisibility: {},
+      setTaskStageVisibility: (divisionId, visibilityByUser) =>
+        set((state) => ({
+          taskStageVisibility: { ...state.taskStageVisibility, [divisionId]: visibilityByUser },
+        })),
+
       taskStageMap: {},
       setTaskStage: (activityId, stageId) =>
         set((state) => ({
@@ -511,6 +527,12 @@ export const useAppStore = create<AppState>()(
             taskOrderMap: { ...state.taskOrderMap, ...updates },
             taskMetaUpdatedAt: { ...state.taskMetaUpdatedAt, ...stamps },
           }
+        }),
+      clearTaskOrder: (activityId) =>
+        set((state) => {
+          const nextOrderMap = { ...state.taskOrderMap }
+          delete nextOrderMap[activityId]
+          return { taskOrderMap: nextOrderMap }
         }),
 
       taskMetaUpdatedAt: {},
@@ -597,6 +619,7 @@ export const useAppStore = create<AppState>()(
         divisionProductsEnabled: state.divisionProductsEnabled,
         dealProducts: state.dealProducts,
         divisionTaskStages: state.divisionTaskStages,
+        taskStageVisibility: state.taskStageVisibility,
         taskStageMap: state.taskStageMap,
         taskOrderMap: state.taskOrderMap,
         contactCustomValues: state.contactCustomValues,

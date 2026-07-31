@@ -244,6 +244,38 @@ export async function saveDivisionTaskStages(divisionId: string, stages: TaskKan
   if (error) throw error
 }
 
+// ─── 個人ビューでの担当外列の表示制御（037_task_stage_user_visibility.sql） ──
+// 設定行が1件も無いユーザーはfail-open（全列表示）。管理者が明示的に登録した
+// ユーザーのみ、登録された列以外が個人ビューで非表示になる。
+
+export async function fetchTaskStageVisibility(divisionId: string): Promise<Record<string, string[]>> {
+  const { data, error } = await getSupabase()
+    .from('task_stage_user_visibility')
+    .select('user_id, stage_id')
+    .eq('division_id', divisionId)
+  if (error) throw error
+  const result: Record<string, string[]> = {}
+  for (const row of data ?? []) {
+    const userId = row.user_id as string
+    ;(result[userId] ??= []).push(row.stage_id as string)
+  }
+  return result
+}
+
+// あるユーザーの表示列allowlistを丸ごと置換する。RPC（replace_task_stage_visibility）
+// が1トランザクションで置換するため、delete→insertの一括処理が片方だけ失敗して
+// 設定が中途半端に残ることはない
+export async function saveTaskStageVisibility(
+  divisionId: string, userId: string, stageIds: string[]
+): Promise<void> {
+  const { error } = await getSupabase().rpc('replace_task_stage_visibility', {
+    p_division_id: divisionId,
+    p_user_id: userId,
+    p_stage_ids: stageIds,
+  })
+  if (error) throw error
+}
+
 export async function createDivisionCustomField(input: {
   divisionId: string; name: string; label: string
   fieldType: string; options?: string[]; sortOrder: number
