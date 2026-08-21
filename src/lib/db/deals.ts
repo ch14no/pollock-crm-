@@ -144,16 +144,28 @@ export async function createDeal(input: {
   return { id: data.id, strippedFields }
 }
 
-export async function updateDealStage(id: string, stageId: string): Promise<void> {
-  const { error } = await getSupabase()
-    .from('deals').update({ stage_id: stageId }).eq('id', id)
-  if (error) throw error
-}
-
 export class DealAlreadyDeletedError extends Error {
   constructor() {
     super('この商談は既に削除されています')
     this.name = 'DealAlreadyDeletedError'
+  }
+}
+
+export async function updateDealStage(id: string, stageId: string): Promise<void> {
+  // .select()を付けないと、RLSに拒否された0件更新でもエラーにならず
+  // 「ドラッグでステージが変わったつもり」のまま実際は元のステージに残り続ける
+  // （deleteDealの040対応と同根の不具合。カンバンのドラッグ＆ドロップ・
+  // DealModalの失注/復活処理が本関数を経由するため影響範囲が広い）
+  const { data, error } = await getSupabase()
+    .from('deals').update({ stage_id: stageId }).eq('id', id).select('id')
+  if (error) throw error
+  if (!data || data.length === 0) {
+    // 0件の理由が「他端末等で既に削除済み」か「権限が無い」かを区別する。
+    // 区別しないと、削除で直したのと同じ幽霊モーダル/幽霊カードが
+    // 失注・復活の操作でも再発する（/code-reviewで指摘）
+    const { data: existing } = await getSupabase().from('deals').select('id').eq('id', id).maybeSingle()
+    if (!existing) throw new DealAlreadyDeletedError()
+    throw new Error('ステージを更新できませんでした（編集権限がありません）')
   }
 }
 

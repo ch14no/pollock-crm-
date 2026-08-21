@@ -232,17 +232,39 @@ export async function fetchContactsCustomValues(contactIds: string[]): Promise<R
 }
 
 export async function deleteContact(id: string): Promise<void> {
-  const { error } = await getSupabase().from('contacts').delete().eq('id', id)
+  // .select()を付けないと、RLSに拒否された0件削除でもエラーにならず
+  // 「削除できたつもり」のまま実際は残り続ける（deals.deleteDealの040対応と同根）
+  const { data, error } = await getSupabase().from('contacts').delete().eq('id', id).select('id')
   if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('削除できませんでした（削除権限がないか、対象が存在しません）')
+  }
 }
 
-export async function deleteContacts(ids: string[]): Promise<void> {
+// 実際に削除できたIDだけを返す。`.in()`はRLSで一部の行だけ無音でフィルタされうるため、
+// `error`が無くても要求件数どおり削除されたとは限らない（1件版のdeleteContactと同じ理由）。
+// 例外を投げず常に{deletedIds, failedIds}を返す設計にしている点に注意: チャンク単位で
+// 例外を投げて全体を中断すると、それより前のチャンクで既に削除済みのIDが呼び出し元に
+// 一切伝わらず、成功済み分までUI上に残り続ける「幽霊」になる（/code-reviewで指摘）。
+// 1チャンクだけ失敗（ネットワークエラー等）しても、行単位のRLS拒否と区別せず
+// そのチャンク全件をfailedIdsに計上し、後続チャンクの処理は継続する
+export async function deleteContacts(ids: string[]): Promise<{ deletedIds: string[]; failedIds: string[] }> {
   // Supabase の URL 長制限を避けるため 50 件ずつ分割して削除
   const CHUNK = 50
+  const deletedIds: string[] = []
+  const failedIds: string[] = []
   for (let i = 0; i < ids.length; i += CHUNK) {
-    const { error } = await getSupabase().from('contacts').delete().in('id', ids.slice(i, i + CHUNK))
-    if (error) throw error
+    const chunk = ids.slice(i, i + CHUNK)
+    try {
+      const { data, error } = await getSupabase().from('contacts').delete().in('id', chunk).select('id')
+      if (error) throw error
+      const deletedSet = new Set((data ?? []).map((d) => d.id as string))
+      chunk.forEach((id) => (deletedSet.has(id) ? deletedIds.push(id) : failedIds.push(id)))
+    } catch {
+      failedIds.push(...chunk)
+    }
   }
+  return { deletedIds, failedIds }
 }
 
 // カスタムフィールド値

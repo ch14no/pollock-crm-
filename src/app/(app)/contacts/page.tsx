@@ -297,12 +297,22 @@ export default function ContactsPage() {
     if (!ok) return
     setDeleting(true)
     try {
-      await deleteContacts([...selectedIds])
-      setDbContacts((prev) => prev.filter((c) => !selectedIds.has(c.id)))
-      toast.success(`${selectedIds.size}件削除しました`)
-      setSelectedIds(new Set())
-    } catch {
-      toast.error('削除に失敗しました')
+      // 一部の行だけRLSで無音フィルタされうるため、実際に削除できたIDだけを
+      // ローカル一覧から取り除く（成功した分まで巻き添えで表示し続けない・
+      // 失敗した分を消えたことにもしない）
+      const { deletedIds, failedIds } = await deleteContacts([...selectedIds])
+      if (deletedIds.length > 0) {
+        const deletedSet = new Set(deletedIds)
+        setDbContacts((prev) => prev.filter((c) => !deletedSet.has(c.id)))
+      }
+      if (failedIds.length === 0) {
+        toast.success(`${deletedIds.length}件削除しました`)
+      } else {
+        toast.error(`${deletedIds.length}件削除しましたが、${failedIds.length}件は削除できませんでした（削除権限がない可能性があります）`, { duration: 8000 })
+      }
+      setSelectedIds(new Set(failedIds))
+    } catch (e) {
+      toast.error(`削除に失敗しました: ${e instanceof Error ? e.message : String(e)}`, { duration: 8000 })
     } finally {
       setDeleting(false)
     }

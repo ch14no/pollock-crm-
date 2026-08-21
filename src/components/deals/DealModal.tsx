@@ -282,8 +282,18 @@ export function DealModal() {
       updateLocalDeal(dealModal.deal.id, { stage_id: lostStageId, updated_at: new Date().toISOString() })
       closeDealModal()
       toast.success(`「${form.title}」を失注として記録しました`)
-    } catch {
-      toast.error('失敗しました。もう一度お試しください。')
+    } catch (e) {
+      if (e instanceof DealAlreadyDeletedError) {
+        // handleDeleteDealと同じ理由: 既にDBから消えているのにここで画面を
+        // 片付けないと、実体の無い商談を編集し続けられる幽霊モーダルになる
+        removeLocalDeal(dealModal.deal.id)
+        closeDealModal()
+        toast(`「${form.title}」は既に削除されていました（画面を更新しました）`, { duration: 6000 })
+      } else {
+        // updateDealStageは0件更新（RLS拒否）でも例外を投げるようになったため、
+        // ここに到達する＝実際に未反映。原因不明の固定文言ではなく実エラーを見せる
+        toast.error(`失注の記録に失敗しました: ${e instanceof Error ? e.message : String(e)}`, { duration: 8000 })
+      }
     } finally { setLoading(false) }
   }
 
@@ -331,8 +341,14 @@ export function DealModal() {
       updateLocalDeal(dealModal.deal.id, { stage_id: firstActiveStage.id, updated_at: new Date().toISOString() })
       closeDealModal()
       toast.success(`「${form.title}」を復活させました`)
-    } catch {
-      toast.error('失敗しました。もう一度お試しください。')
+    } catch (e) {
+      if (e instanceof DealAlreadyDeletedError) {
+        removeLocalDeal(dealModal.deal.id)
+        closeDealModal()
+        toast(`「${form.title}」は既に削除されていました（画面を更新しました）`, { duration: 6000 })
+      } else {
+        toast.error(`復活に失敗しました: ${e instanceof Error ? e.message : String(e)}`, { duration: 8000 })
+      }
     } finally { setLoading(false) }
   }
 

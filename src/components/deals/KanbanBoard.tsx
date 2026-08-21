@@ -12,7 +12,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Plus, AlertCircle, AlertTriangle, Lock, ChevronDown } from 'lucide-react'
-import { formatCurrency, getStaleDays, getInitials, cn, truncateMiddle } from '@/lib/utils'
+import { formatCurrency, getStaleDays, getInitials, cn, truncateMiddle, formatErrorDetail } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import { hasTabs, stagesForTab, tabIdForStage } from '@/lib/pipeline-tabs'
@@ -540,8 +540,26 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
     // 反映されず、事業部切替やモーダル開閉でloadDeals()が走るまで古いステージのまま
     // 集計されてしまい、画面内の数字が食い違って見える不具合があった
     if (isSupabaseConfigured() && !deal.id.startsWith('deal-local-')) {
-      updateDealStage(deal.id, toStage).catch(() => {
-        toast.error('ステージの更新に失敗しました')
+      updateDealStage(deal.id, toStage).catch((e) => {
+        // DB書き込みが失敗（RLS拒否・対象消失等）したのに見た目だけ移動したままだと、
+        // 以後リロードするまで実際のDBの状態とローカル表示がズレたままになる
+        // （TaskKanbanBoard.tsxの同種処理では既にロールバック済みだったのに、
+        // 商談版だけ長らく未対応だった）。見た目・ヘッダー集計の両方を元へ戻す。
+        // ただし、この失敗より後に同じカードが別のドラッグで正常に移動済みかも
+        // しれない（例: 素早く連続でドラッグした場合）。その場合は今のtoStageに
+        // 居るとは限らないので、実際にtoStageに居るときだけロールバックする
+        // （古い失敗の後始末で新しい移動を上書きしない。/code-reviewで指摘）
+        toast.error(`ステージの更新に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
+        setDealsByStage((prev) => {
+          if (!prev[toStage]?.some((d) => d.id === deal.id)) return prev
+          const next = { ...prev }
+          next[toStage] = next[toStage].filter((d) => d.id !== deal.id)
+          next[fromStage] = sortByPriority([...next[fromStage], deal])
+          return next
+        })
+        if (useAppStore.getState().localDeals.find((d) => d.id === deal.id)?.stage_id === toStage) {
+          updateLocalDeal(deal.id, { stage_id: fromStage, updated_at: deal.updated_at })
+        }
       })
     }
     updateLocalDeal(deal.id, { stage_id: toStage, updated_at: updatedAt })
