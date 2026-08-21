@@ -298,8 +298,11 @@ export function DealModal() {
       removeLocalDeal(dealModal.deal.id)
       closeDealModal()
       toast.success(`「${form.title}」を削除しました`)
-    } catch {
-      toast.error('削除に失敗しました')
+    } catch (e) {
+      // 原因を問わず同じ文言だと、RLS拒否・ネットワークエラー・対象消失のどれかが
+      // 分からず調査のたびに画面録画等で再現を追うことになる（本件で実際に発生）。
+      // deleteDeal側で投げる具体的なメッセージ（040適用前の権限エラー等）をそのまま見せる
+      toast.error(`削除に失敗しました: ${e instanceof Error ? e.message : String(e)}`, { duration: 8000 })
     } finally { setLoading(false) }
   }
 
