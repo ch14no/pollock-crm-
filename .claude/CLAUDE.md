@@ -9,8 +9,20 @@
 - **DBマイグレーションは自動適用されない**。`supabase/migrations/NNN_*.sql` を書いても、Supabaseダッシュボード → SQL Editor に手動で貼って実行する運用。frontendのpushとSQL適用は別手順（コード先行 or SQL先行かは変更内容による）。
 - service_roleキーはPostgREST/Auth用でDDL（CREATE POLICY/FUNCTION等）は実行不可。ポリシー/関数変更は必ずSQL Editorでユーザーに実行してもらう。
 
+## 2026-08-21: タスクカンバンにタブ切り替え機能を追加（`31efb28`、039_task_kanban_tabs.sql、本番適用・デプロイ済み）
+
+齋藤香奈さんから「商談カンバンの『補助金』『融資』タブのように、タスク管理もタブで切り替えたい」と要望。設計はFable 5に壁打ち→実装→`/code-review`（8観点finder）で実害バグ3件を修正済み。
+
+- 新テーブル`task_kanban_tabs`＋`task_kanban_stages.tab_id`列（商談の`pipeline_tabs`と同じ考え方。ただし複合FK1本のみに簡素化——`pipeline_stages`のような単一列FK+複合FKの2本構成はPGRST201の危険な構造なので踏襲しなかった）
+- `create_task_kanban_tab`RPCで初回タブ作成時の既存列移行を原子化（商談側の`createPipelineTab→migrateUntabbedStagesToTab`2段書き込みより安全な設計に改善）
+- **既存バグ修正が同梱**: `replace_task_kanban_stages`の改修に合わせて、037（`task_stage_user_visibility`）がON DELETE CASCADEで`task_kanban_stages`に紐づいているせいで、列を1つ追加・並び替えするだけで**その事業部の個人ビュー表示列設定が全ユーザー分サイレントに全消えしていた**既存不具合を解消（置換前にスナップショット→置換後に復元）
+- `/code-review`で見つかった実害バグ: ①先頭タブの列を全部削除すると迷子タスクの受け皿が消える（`resolveFallbackTaskTabId`で「列を1つ以上持つ先頭タブ」に解決するよう修正）②タブ削除失敗時のエラーメッセージが原因を問わず決め打ち（23503のみ専用文言、それ以外は実エラー表示に変更）③タブ追加ボタンの初期ロード中の競合状態
+- **実データで発覚した事実**: 財務支援事業部は既にDB上で22列（補助金系11列＋「【融資】」接頭辞の融資系11列）を1つの横並びで運用しており、まさにタブ機能が解決すべき状況そのものだった。ユーザーには「補助金」タブ作成→既存列の自動移行、「融資」タブ作成→【融資】系列を作り直す、という移行手順を提示済み
+- **デプロイでの実地インシデント**: SQL適用時、ユーザーが誤って別プロジェクトのSQL Editorで実行し`relation "public.divisions" does not exist`で失敗→pollock-crmプロジェクトで再実行して解消。**教訓: 複数Supabaseプロジェクトを日常的に扱う運用では、SQL適用前に対象プロジェクトの確認を促す一言を必ず添えること**
+- 実機確認待ち: ユーザーによるタブ作成・列移行・ドラッグ動作の確認（本レス時点で未実施）
+
 ## マイグレーション適用状況（2026-08-21確認・訂正）
-- **001〜038まで本番適用済み**（038は齋藤香奈さん報告対応で2026-08-20にREST経由で直接データ修正・SQL化して記録）。**036・037も適用済みであることを2026-08-21にservice_roleキーで直接確認・訂正**（`task_meta.sort_order`への小数書き込みがエラーにならない＝NUMERIC化済み、`task_stage_user_visibility`テーブルが実在＝037適用済み。以前「未適用」と記載していたのは古い情報で、`realtime-task-sync`ブランチのmasterマージ（`39b3959`）と同時期に本番SQLも適用されていた）。
+- **001〜039まで本番適用済み**（038は齋藤香奈さん報告対応で2026-08-20にREST経由で直接データ修正・SQL化して記録）。**036・037も適用済みであることを2026-08-21にservice_roleキーで直接確認・訂正**（`task_meta.sort_order`への小数書き込みがエラーにならない＝NUMERIC化済み、`task_stage_user_visibility`テーブルが実在＝037適用済み。以前「未適用」と記載していたのは古い情報で、`realtime-task-sync`ブランチのmasterマージ（`39b3959`）と同時期に本番SQLも適用されていた）。
 - （参考・解消済みの過去の注意点）036は`task_meta.sort_order`をINTEGER→NUMERICに変更する変更で、新フロントコード（fractional indexing）は常に小数値を書き込むため、SQL先行適用が必須だった。036→037の順で適用済み。
 - 主要な近年分:
   - 025 タスクカンバン列のDB共有化（`task_kanban_stages` + RPC `replace_task_kanban_stages`）
