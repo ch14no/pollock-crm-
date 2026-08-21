@@ -48,6 +48,21 @@
 
 **教訓**: 「操作者の画面で再現するが開発者のDB直接調査では再現しない」不具合は、DB側の状態は正しいのにクライアント側の楽観更新/エラーハンドリングが実態に追従していないケースを疑う。特に成功パスにしか状態クリーンアップ処理が無いcatch節は要注意。
 
+## 2026-08-21(6): エラーハンドリング監査＋トップ3修正（`4f118bc`、041_contacts_delete_division_scope.sql）
+
+商談削除で連続発覚した3パターン（①書き込み系DB関数の`.select()`件数確認漏れ ②失敗時のローカル状態未クリーンアップ＝幽霊カード ③決め打ちエラーメッセージ）を、コードベース全体で横展開監査した。**30箇所前後**で同種のパターンが見つかっている（詳細はこのセッションの調査結果、次回参照時は再監査推奨）。今回はユーザー判断で上位3件のみ着手・修正:
+
+1. **商談カンバンのドラッグ＆ドロップ（`KanbanBoard.tsx`）**: `updateDealStage`に件数確認追加、失敗時のロールバック追加（`TaskKanbanBoard.tsx`には既にあった対応が商談版だけ未実装だった）。`/code-review`で「ロールバックが後発の別ドラッグの結果を上書きしうる」競合を指摘され、現在の状態を確認してから戻すガードを追加。
+2. **`DealModal`の失注/復活**: `updateDealStage`強化の副作用でRLS拒否時に偽の成功が出なくなった。対象が既に削除済みの場合は`DealAlreadyDeletedError`で区別し削除処理と同じ後始末をするよう統一。
+3. **顧客の一括削除**: `deleteContact`/`deleteContacts`に件数確認追加。`deleteContacts`は`/code-review`指摘を受け「チャンク単位で例外を投げず常に`{deletedIds, failedIds}`を返す」設計に変更（後続チャンク失敗で先行チャンクの成功分がUIに残る幽霊を防止）。**`contacts_delete`RLSが事業部を問わずmanager/super_adminなら削除可能だった不具合も発見・修正**（041、`deals_delete`と同じ権限モデルに統一）。
+
+**未着手の残り（優先度中〜低、次回以降の対応候補）**:
+- `activities.ts`の`updateActivityStatus`/`updateActivityFields`（タスク完了トグル・インライン編集全箇所が使用、件数確認なし）
+- `contacts/[id]/page.tsx`・`tasks/page.tsx`のインライン編集保存（楽観更新後、失敗時のロールバックなし）
+- 設定画面（`settings/page.tsx`）の各種マスタCRUD（資料カテゴリ・商品・カスタム項目・ナレッジカテゴリ・Slack通知設定等）の決め打ちエラーメッセージ
+- `deal_payments`/`deal_documents`/`deal_milestones`系の削除関数の件数確認
+- `tossups`テーブルにDELETEポリシーが無い（現状`deleteTossup`関数が無く到達不能だが、将来削除機能を足す際は要注意）
+
 ## マイグレーション適用状況（2026-08-21確認・訂正）
 - **001〜039まで本番適用済み**（038は齋藤香奈さん報告対応で2026-08-20にREST経由で直接データ修正・SQL化して記録）。**036・037も適用済みであることを2026-08-21にservice_roleキーで直接確認・訂正**（`task_meta.sort_order`への小数書き込みがエラーにならない＝NUMERIC化済み、`task_stage_user_visibility`テーブルが実在＝037適用済み。以前「未適用」と記載していたのは古い情報で、`realtime-task-sync`ブランチのmasterマージ（`39b3959`）と同時期に本番SQLも適用されていた）。
 - （参考・解消済みの過去の注意点）036は`task_meta.sort_order`をINTEGER→NUMERICに変更する変更で、新フロントコード（fractional indexing）は常に小数値を書き込むため、SQL先行適用が必須だった。036→037の順で適用済み。
