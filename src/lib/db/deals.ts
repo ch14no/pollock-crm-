@@ -2,15 +2,23 @@ import { getSupabase } from './client'
 import type { Deal, ReferrerType } from '@/types/database'
 
 // 021マイグレーション（紹介者）が未適用の環境でも一覧取得が壊れないよう、
-// join込みで失敗したら紹介者なしの従来selectにフォールバックする
-const DEAL_BASE_SELECT = '*, contacts(id,name,company_id,companies(id,name)), users:assigned_user_id(id,name,email,role,created_at)'
+// join込みで失敗したら紹介者なしの従来selectにフォールバックする。
+// contactsへのFKはdeals.contact_id（本来の商談相手）とdeals.referrer_contact_id（紹介者）の
+// 2本あるため、bareな`contacts(...)`のままだとPostgRESTが埋め込み先を一意に決められず
+// PGRST201（Could not embed because more than one relationship was found）で全件取得が
+// 失敗する。制約名を明示して常にcontact_id側を指すようにする
+const DEAL_BASE_SELECT = '*, contacts!deals_contact_id_fkey(id,name,company_id,companies(id,name)), users:assigned_user_id(id,name,email,role,created_at)'
 const DEAL_SELECT_WITH_REFERRER = `${DEAL_BASE_SELECT},
   referrer_user:referrer_user_id(id,name,email,role,created_at),
   referrer_contact:referrer_contact_id(id,name,department,position,email,phone,company_id,companies(id,name))`
 
 function isMissingReferrerColumn(error: { message?: string } | null): boolean {
   const msg = error?.message ?? ''
-  return msg.includes('referrer') && (msg.includes('column') || msg.includes('schema cache') || msg.includes('relationship'))
+  if (msg.includes('referrer') && (msg.includes('column') || msg.includes('schema cache') || msg.includes('relationship'))) return true
+  // PGRST201: referrer_contact_id の追加でcontactsへのFKが2本になったことによる
+  // 埋め込み先の一意性エラー。DEAL_BASE_SELECT側は明示的にFK指定済みで再発しないはずだが、
+  // 万一発生した場合も紹介者なしの従来selectへ落として全件取得の失敗を防ぐ
+  return msg.includes('more than one relationship') && msg.includes('contacts')
 }
 
 // Supabaseのjoin結果（referrer込み/なし両対応の緩い形）をDeal型へ変換
