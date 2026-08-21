@@ -150,6 +150,13 @@ export async function updateDealStage(id: string, stageId: string): Promise<void
   if (error) throw error
 }
 
+export class DealAlreadyDeletedError extends Error {
+  constructor() {
+    super('この商談は既に削除されています')
+    this.name = 'DealAlreadyDeletedError'
+  }
+}
+
 export async function deleteDeal(id: string): Promise<void> {
   // .select()を付けないと、RLSに拒否された0件削除でもエラーにならず
   // 「削除できたつもり」のまま実際は残り続ける（040適用のきっかけになった
@@ -157,7 +164,14 @@ export async function deleteDeal(id: string): Promise<void> {
   const { data, error } = await getSupabase().from('deals').delete().eq('id', id).select('id')
   if (error) throw error
   if (!data || data.length === 0) {
-    throw new Error('削除できませんでした（削除権限がないか、対象が存在しません）')
+    // 0件だった理由が「権限が無い」か「（他端末・二重クリック等で）既に削除済み」かを
+    // 区別する。区別せず一律エラーにすると、既に消えている商談を開いたままの
+    // モーダル・幽霊カードが画面に残り続け（DealModal側がエラー時は
+    // removeLocalDeal/closeDealModalを呼ばないため）、実際にはDBから消えているのに
+    // 「削除できない」ように見え続ける不具合になっていた
+    const { data: existing } = await getSupabase().from('deals').select('id').eq('id', id).maybeSingle()
+    if (!existing) throw new DealAlreadyDeletedError()
+    throw new Error('削除できませんでした（削除権限がありません）')
   }
 }
 

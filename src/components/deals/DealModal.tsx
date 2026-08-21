@@ -15,7 +15,7 @@ import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS } from '@/lib/mock-data'
 import { hasTabs, stagesForTab, tabIdForStage } from '@/lib/pipeline-tabs'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { createDeal, updateDeal, updateDealStage, deleteDeal } from '@/lib/db/deals'
+import { createDeal, updateDeal, updateDealStage, deleteDeal, DealAlreadyDeletedError } from '@/lib/db/deals'
 import { cn, formatCurrencyJa } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -299,10 +299,20 @@ export function DealModal() {
       closeDealModal()
       toast.success(`「${form.title}」を削除しました`)
     } catch (e) {
-      // 原因を問わず同じ文言だと、RLS拒否・ネットワークエラー・対象消失のどれかが
-      // 分からず調査のたびに画面録画等で再現を追うことになる（本件で実際に発生）。
-      // deleteDeal側で投げる具体的なメッセージ（040適用前の権限エラー等）をそのまま見せる
-      toast.error(`削除に失敗しました: ${e instanceof Error ? e.message : String(e)}`, { duration: 8000 })
+      if (e instanceof DealAlreadyDeletedError) {
+        // 既にDBから消えている（二重クリック・他端末での先行削除等）のに、ここで
+        // removeLocalDeal/closeDealModalを呼ばず単にエラー表示だけで終えると、
+        // モーダルと背後のカードが「実体は無いのに画面には残る幽霊」のまま固定される
+        // （齋藤香奈さんの「削除しても消えない」報告の実体はこれだった）。
+        // 実態（DB上は既に無い）に画面を合わせて片付ける
+        removeLocalDeal(dealModal.deal.id)
+        closeDealModal()
+        toast(`「${form.title}」は既に削除されていました（画面を更新しました）`, { duration: 6000 })
+      } else {
+        // それ以外（権限拒否・ネットワークエラー等）は対象がまだ存在する可能性があるため
+        // モーダルを閉じずに実際のエラー内容を見せ、再試行できるようにする
+        toast.error(`削除に失敗しました: ${e instanceof Error ? e.message : String(e)}`, { duration: 8000 })
+      }
     } finally { setLoading(false) }
   }
 
