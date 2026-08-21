@@ -532,15 +532,19 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
       next[toStage] = sortByPriority([...next[toStage], { ...deal, stage_id: toStage, updated_at: updatedAt }])
       return next
     })
-    // DB 商談はSupabaseへ反映、ローカル商談はストアへ反映
+    // DB 商談はSupabaseへ反映。ローカルストア（localDeals）はDB/ローカル問わず
+    // 常に更新する。ここを「ローカル商談のみ」に絞っていたため、DB商談をドラッグした
+    // 直後は本コンポーネント内のdealsByStage（見た目）だけが即時更新され、
+    // 呼び出し元（deals/page.tsx）のdivisionDeals/pipelineTotal（ヘッダーの
+    // 「進行中件数・見込み額合計」）はdbDeals+localDealsのマージから計算しているため
+    // 反映されず、事業部切替やモーダル開閉でloadDeals()が走るまで古いステージのまま
+    // 集計されてしまい、画面内の数字が食い違って見える不具合があった
     if (isSupabaseConfigured() && !deal.id.startsWith('deal-local-')) {
       updateDealStage(deal.id, toStage).catch(() => {
         toast.error('ステージの更新に失敗しました')
       })
     }
-    if (deal.id.startsWith('deal-local-')) {
-      updateLocalDeal(deal.id, { stage_id: toStage, updated_at: updatedAt })
-    }
+    updateLocalDeal(deal.id, { stage_id: toStage, updated_at: updatedAt })
 
     const targetStage = stages.find((s) => s.id === toStage)
     if (targetStage?.won) {

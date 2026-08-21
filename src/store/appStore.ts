@@ -411,10 +411,23 @@ export const useAppStore = create<AppState>()(
       localDeals: [],
       addDeal: (deal) =>
         set((state) => ({ localDeals: [deal, ...state.localDeals] })),
+      // 既存エントリがあれば部分マージ、無ければ新規追加（upsert）。
+      // .mapだけの更新だと、まだlocalDealsに一度も入っていないDB商談（大半の商談が該当）
+      // へのパッチが無言で捨てられ、呼び出し元（KanbanBoardのドラッグ等）が
+      // 「ローカル反映した」つもりのまま実際には何も変わらない不具合になっていた。
+      // ここで追加される部分オブジェクトはDeal型として不完全な場合があるが、
+      // divisionDeals側のマージ処理はdbDeals由来の完全なレコードに対してのみ
+      // このpartialを上書き適用する設計（該当idがdbDealsに実在する前提）のため、
+      // 単独でDeal扱いされて画面に出ることはない
       updateLocalDeal: (id, updates) =>
-        set((state) => ({
-          localDeals: state.localDeals.map((d) => d.id === id ? { ...d, ...updates } : d),
-        })),
+        set((state) => {
+          const exists = state.localDeals.some((d) => d.id === id)
+          return {
+            localDeals: exists
+              ? state.localDeals.map((d) => d.id === id ? { ...d, ...updates } : d)
+              : [...state.localDeals, { id, ...updates } as Deal],
+          }
+        }),
       removeLocalDeal: (id) =>
         set((state) => ({ localDeals: state.localDeals.filter((d) => d.id !== id) })),
 
