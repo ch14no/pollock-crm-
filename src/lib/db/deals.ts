@@ -151,8 +151,14 @@ export async function updateDealStage(id: string, stageId: string): Promise<void
 }
 
 export async function deleteDeal(id: string): Promise<void> {
-  const { error } = await getSupabase().from('deals').delete().eq('id', id)
+  // .select()を付けないと、RLSに拒否された0件削除でもエラーにならず
+  // 「削除できたつもり」のまま実際は残り続ける（040適用のきっかけになった
+  // 不具合そのもの。updateDeal/updateContactの修正3と同じパターン）
+  const { data, error } = await getSupabase().from('deals').delete().eq('id', id).select('id')
   if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('削除できませんでした（削除権限がないか、対象が存在しません）')
+  }
 }
 
 export async function updateDeal(id: string, updates: {
