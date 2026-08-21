@@ -17,6 +17,7 @@ import { fetchContactsByDivision } from '@/lib/db/contacts'
 import { fetchDivisionUsers } from '@/lib/db/users'
 import { fetchChallenges, createChallenge, updateChallengeStatus, deleteChallenge } from '@/lib/db/challenges'
 import { DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
+import { hasTaskTabs, taskStagesForTab, taskTabIdForStage, resolveFallbackTaskTabId } from '@/lib/task-kanban-tabs'
 import { TaskKanbanBoard } from '@/components/tasks/TaskKanbanBoard'
 import { useTaskRealtime } from '@/hooks/useTaskRealtime'
 import type { Activity, Contact, User as UserType } from '@/types/database'
@@ -61,6 +62,10 @@ export default function TasksPage() {
   const taskStageVisibility = useAppStore((s) => s.taskStageVisibility)
   // 非表示列に割り当て済みのタスクをkanbanTasksから除外するために参照する
   const taskStageMap = useAppStore((s) => s.taskStageMap)
+  // タスクカンバンタブ（039、任意）。商談カンバンのdivisionTabs/activeTabIdと対称
+  const divisionTaskTabs   = useAppStore((s) => s.divisionTaskTabs)
+  const activeTaskTabId    = useAppStore((s) => s.activeTaskTabId)
+  const setActiveTaskTabId = useAppStore((s) => s.setActiveTaskTabId)
 
   const [tab, setTab]     = useState<'kanban' | 'tasks' | 'challenges'>('kanban')
   const [scope, setScope] = useState<'personal' | 'team'>('team')
@@ -69,14 +74,27 @@ export default function TasksPage() {
     ? (divisionTaskStages[activeDivisionId] ?? DEFAULT_DIVISION_TASK_STAGES[activeDivisionId] ?? DEFAULT_DIVISION_TASK_STAGES['div-1'])
     : []
 
+  // タブ解決（KanbanBoard.tsxの商談タブと同一パターン）。選択中タブIDが現在のタブ
+  // 一覧に存在しない（タブ削除・別データの残骸）場合は先頭タブへフォールバックする
+  const taskTabs = activeDivisionId ? (divisionTaskTabs[activeDivisionId] ?? []) : []
+  const storedTaskTabId = activeDivisionId ? (activeTaskTabId[activeDivisionId] ?? null) : null
+  const currentTaskTabId = storedTaskTabId && taskTabs.some((t) => t.id === storedTaskTabId)
+    ? storedTaskTabId
+    : (taskTabs[0]?.id ?? null)
+
+  // タブがある事業部では、現在のタブに属する列だけを対象にする
+  const tabScopedStages = taskTabs.length > 0
+    ? taskStagesForTab(allKanbanStages, currentTaskTabId)
+    : allKanbanStages
+
   // チームスコープは常に全列。個人スコープのみ、管理者が登録した表示列allowlistで絞り込む
   // （この絞り込みはUIの利便機能でありセキュリティ境界ではない。タスク自体のRLSは不変）
   const allowedStageIds = scope === 'personal' && activeDivisionId && currentUser
     ? taskStageVisibility[activeDivisionId]?.[currentUser.id]
     : undefined
   const kanbanStages = allowedStageIds && allowedStageIds.length > 0
-    ? allKanbanStages.filter((s) => allowedStageIds.includes(s.id))
-    : allKanbanStages
+    ? tabScopedStages.filter((s) => allowedStageIds.includes(s.id))
+    : tabScopedStages
   const [expandedQ, setExpandedQ] = useState<Set<number>>(new Set([1, 2, 3, 4]))
   const [deleteConfirmId,   setDeleteConfirmId]   = useState<string | null>(null)
   const [completeConfirmId, setCompleteConfirmId] = useState<string | null>(null)
@@ -159,9 +177,18 @@ export default function TasksPage() {
       // 救済」機能が失われていた（/code-reviewで発覚）。表示中の先頭列をこの機会に
       // 1行だけ書き込む（他人の値を上書きしない追加専用の操作なので、Stage 1で撤去した
       // ローカルキャッシュ一括push方式の危険性は持ち込まない。書き込み後は次回以降
-      // metaMapに載るため自然と収束する）
-      if (allKanbanStages.length > 0) {
-        const firstStageId = allKanbanStages[0].id
+      // metaMapに載るため自然と収束する）。
+      // タブ導入後（039）は「迷子タスクの受け皿タブの先頭列」に一意化する。閲覧中タブの
+      // 先頭列にすると書き込み先がタブ選択に依存して非決定的になり、同じタスクが別のタブを
+      // 開いたときに二重に「先頭列フォールバック」対象として見えてしまうため。
+      // 受け皿タブは「列を1つ以上持つ先頭タブ」（resolveFallbackTaskTabId）で、
+      // tabScopedTasksの絞り込み基準と必ず一致させる（ここがズレるとタスクが
+      // 書き込み先のタブでは見えず、閲覧側が期待する別タブでも見えない迷子になる）
+      const fallbackTabId = taskTabs.length > 0 ? resolveFallbackTaskTabId(taskTabs, allKanbanStages) : null
+      const firstStageId = fallbackTabId
+        ? (taskStagesForTab(allKanbanStages, fallbackTabId)[0] ?? allKanbanStages[0])?.id
+        : allKanbanStages[0]?.id
+      if (firstStageId) {
         taskIds
           .filter((id) => !metaMap[id]?.stageId && !id.startsWith('act-local-'))
           .forEach((id) => {
@@ -220,6 +247,17 @@ export default function TasksPage() {
     return pendingTasks.filter((t) => t.user_id === currentUser?.id)
   }, [pendingTasks, scope, currentUser?.id])
 
+  // カンバン専用: タブが有効な事業部では、現在のタブに属さないタスクをまず除外する
+  // （表示列＝タブで絞ったstages ∩ 個人ビューallowlist、の順で適用）。
+  // 所属タブはtaskTabIdForStageで解決し、列削除・タブ未割当など不明な場合は
+  // 「先頭タブ」に寄せる（先頭タブを見ている間だけ表示され、二重表示にならない）
+  const tabScopedTasks = useMemo(() => {
+    if (taskTabs.length === 0) return filteredTasks
+    const fallbackTabId = resolveFallbackTaskTabId(taskTabs, allKanbanStages)
+    if (!fallbackTabId) return filteredTasks
+    return filteredTasks.filter((t) => taskTabIdForStage(allKanbanStages, taskStageMap[t.id], fallbackTabId) === currentTaskTabId)
+  }, [filteredTasks, taskTabs, allKanbanStages, taskStageMap, currentTaskTabId])
+
   // カンバン専用: 個人ビューで非表示に設定された列に割り当て済みのタスクを除外する。
   // TaskKanbanBoardのbyStage/resolveStageIdは「列が存在しない（削除された）」場合に
   // 未割当として先頭列へフォールバックする設計だが、これは「列は実在するが個人ビューで
@@ -229,14 +267,14 @@ export default function TasksPage() {
   // 「削除された列」のタスクは引き続き先頭列フォールバックで表示させたいので、
   // allKanbanStagesに実在する列だけを除外対象にする（存在しない列は除外しない）
   const kanbanTasks = useMemo(() => {
-    if (!allowedStageIds || allowedStageIds.length === 0) return filteredTasks
-    return filteredTasks.filter((t) => {
+    if (!allowedStageIds || allowedStageIds.length === 0) return tabScopedTasks
+    return tabScopedTasks.filter((t) => {
       const mapped = taskStageMap[t.id]
       const existsInDivision = mapped && allKanbanStages.some((s) => s.id === mapped)
       if (!existsInDivision) return true
       return allowedStageIds.includes(mapped)
     })
-  }, [filteredTasks, allowedStageIds, taskStageMap, allKanbanStages])
+  }, [tabScopedTasks, allowedStageIds, taskStageMap, allKanbanStages])
 
   const byQuadrant = useMemo(() => {
     const map: Record<number, typeof filteredTasks> = { 1: [], 2: [], 3: [], 4: [] }
@@ -451,6 +489,27 @@ export default function TasksPage() {
           ))}
         </div>
       </div>
+
+      {/* ─── カンバンタブ（039、任意） ─── */}
+      {tab === 'kanban' && hasTaskTabs(divisionTaskTabs, activeDivisionId) && (
+        <div className="flex items-center gap-1.5 mb-3">
+          {taskTabs.map((t) => (
+            <button
+              key={t.id}
+              aria-pressed={t.id === currentTaskTabId}
+              onClick={() => activeDivisionId && setActiveTaskTabId(activeDivisionId, t.id)}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                t.id === currentTaskTabId
+                  ? 'bg-orange-500 text-white'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              )}
+            >
+              {t.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ─── カンバンビュー ─── */}
       {tab === 'kanban' && (

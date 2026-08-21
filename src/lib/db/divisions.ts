@@ -1,7 +1,7 @@
 import { getSupabase } from './client'
 import { createClient } from '@/lib/supabase/client'
 import type { Division } from '@/types/database'
-import type { DivisionCustomField, DivisionStage, PipelineTab, TaskKanbanStage } from '@/store/appStore'
+import type { DivisionCustomField, DivisionStage, PipelineTab, TaskKanbanStage, TaskKanbanTab } from '@/store/appStore'
 
 async function getAuthToken(): Promise<string | null> {
   try {
@@ -220,7 +220,7 @@ export async function upsertPipelineStagesForTab(
 export async function fetchDivisionTaskStagesDb(divisionId: string): Promise<TaskKanbanStage[]> {
   const { data, error } = await getSupabase()
     .from('task_kanban_stages')
-    .select('id, name, color')
+    .select('id, name, color, tab_id')
     .eq('division_id', divisionId)
     .order('sort_order')
   if (error) throw error
@@ -228,6 +228,7 @@ export async function fetchDivisionTaskStagesDb(divisionId: string): Promise<Tas
     id: r.id as string,
     name: r.name as string,
     color: r.color as string,
+    tabId: (r.tab_id as string | null) ?? null,
   }))
 }
 
@@ -236,11 +237,59 @@ export async function fetchDivisionTaskStagesDb(divisionId: string): Promise<Tas
 // RPC（replace_task_kanban_stages・権限不足時は例外）を使う。
 // idはクライアント生成のTEXT（'todo'/'stage-<ts>'等）をそのまま保存し、
 // task_meta.kanban_stage_id との紐付けを維持する。
-export async function saveDivisionTaskStages(divisionId: string, stages: TaskKanbanStage[]): Promise<void> {
+// tabIdを渡すと、そのタブ配下の列だけを対象に置換する（039）。省略時（null）は
+// 従来通り未タブ化（division直下）の列のみを対象にする
+export async function saveDivisionTaskStages(divisionId: string, stages: TaskKanbanStage[], tabId: string | null = null): Promise<void> {
   const { error } = await getSupabase().rpc('replace_task_kanban_stages', {
     p_division_id: divisionId,
     p_stages: stages.map((s, i) => ({ id: s.id, name: s.name, color: s.color, sort_order: i })),
+    p_tab_id: tabId,
   })
+  if (error) throw error
+}
+
+// ─── タスクカンバンタブ（039、任意） ────────────────────────────
+
+export async function fetchDivisionTaskTabsMapped(divisionId: string): Promise<TaskKanbanTab[]> {
+  const { data, error } = await getSupabase()
+    .from('task_kanban_tabs')
+    .select('id, division_id, name, sort_order')
+    .eq('division_id', divisionId)
+    .order('sort_order')
+  if (error) throw error
+  return (data ?? []).map((r) => ({
+    id: r.id as string, divisionId: r.division_id as string, name: r.name as string, sortOrder: r.sort_order as number,
+  }))
+}
+
+// タブ作成＋（最初のタブの場合）既存列の移行を1トランザクションのRPCで行う。
+// initialStagesは、その事業部にDB上の列行が1つも無い（DEFAULT_DIVISION_TASK_STAGES
+// フォールバックで動いている）場合にのみ渡す。行が既にある場合はRPC側が
+// tab_id=NULLの既存列を新タブへ一括付け替えるため無視してよい
+export async function createTaskKanbanTab(
+  divisionId: string, name: string, initialStages: TaskKanbanStage[] | null
+): Promise<string> {
+  const { data, error } = await getSupabase().rpc('create_task_kanban_tab', {
+    p_division_id: divisionId,
+    p_name: name,
+    p_initial_stages: initialStages
+      ? initialStages.map((s, i) => ({ id: s.id, name: s.name, color: s.color, sort_order: i }))
+      : null,
+  })
+  if (error) throw error
+  return data as string
+}
+
+export async function updateTaskKanbanTab(id: string, updates: { name?: string; sortOrder?: number }): Promise<void> {
+  const patch: Record<string, unknown> = {}
+  if (updates.name !== undefined) patch.name = updates.name
+  if (updates.sortOrder !== undefined) patch.sort_order = updates.sortOrder
+  const { error } = await getSupabase().from('task_kanban_tabs').update(patch).eq('id', id)
+  if (error) throw error
+}
+
+export async function deleteTaskKanbanTab(id: string): Promise<void> {
+  const { error } = await getSupabase().from('task_kanban_tabs').delete().eq('id', id)
   if (error) throw error
 }
 

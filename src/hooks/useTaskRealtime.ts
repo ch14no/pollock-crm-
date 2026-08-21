@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { getSupabase, isSupabaseConfigured } from '@/lib/db/client'
 import { useAppStore } from '@/store/appStore'
-import { fetchDivisionTaskStagesDb, fetchTaskStageVisibility } from '@/lib/db/divisions'
+import { fetchDivisionTaskStagesDb, fetchTaskStageVisibility, fetchDivisionTaskTabsMapped } from '@/lib/db/divisions'
 
 // タスクカンバンの列・並び順（036でRealtime対象化したtask_meta / task_kanban_stages）を
 // 購読し、他ユーザーの変更を手動リロードなしで反映する。
@@ -18,6 +18,7 @@ export function useTaskRealtime(divisionId: string | null, onRefresh: () => void
   const hydrateTaskMeta = useAppStore((s) => s.hydrateTaskMeta)
   const setDivisionTaskStages = useAppStore((s) => s.setDivisionTaskStages)
   const setTaskStageVisibility = useAppStore((s) => s.setTaskStageVisibility)
+  const setDivisionTaskTabs = useAppStore((s) => s.setDivisionTaskTabs)
 
   // onRefreshは呼び出し元（tasks/page.tsxのloadTasks）が毎レンダー新しい関数
   // 参照になりうるため、購読エフェクトの依存配列には入れずrefで最新値を参照する
@@ -68,6 +69,17 @@ export function useTaskRealtime(divisionId: string | null, onRefresh: () => void
             .catch(() => { /* 取得失敗時は既存表示を維持（画面を壊さない） */ })
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'task_kanban_tabs', filter: `division_id=eq.${divisionId}` },
+        () => {
+          // タブの追加・名称変更・並び替え・削除（039）。他端末で閲覧中のタブが
+          // 削除された場合もこの再取得を経由して先頭タブへの自動フォールバックが効く
+          fetchDivisionTaskTabsMapped(divisionId)
+            .then((tabs) => setDivisionTaskTabs(divisionId, tabs))
+            .catch(() => { /* 取得失敗時は既存表示を維持（画面を壊さない） */ })
+        }
+      )
       .subscribe((status: string) => {
         // 再接続時（初回接続・切断からの復帰いずれも含む）は、購読が途切れていた間の
         // イベントを取りこぼしている可能性があるため、pull型の再読込で必ず一度揃え直す
@@ -87,5 +99,5 @@ export function useTaskRealtime(divisionId: string | null, onRefresh: () => void
       window.removeEventListener('focus', handleFocus)
       supabase.removeChannel(channel)
     }
-  }, [divisionId, hydrateTaskMeta, setDivisionTaskStages, setTaskStageVisibility])
+  }, [divisionId, hydrateTaskMeta, setDivisionTaskStages, setTaskStageVisibility, setDivisionTaskTabs])
 }

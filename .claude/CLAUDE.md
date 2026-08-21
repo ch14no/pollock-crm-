@@ -9,9 +9,9 @@
 - **DBマイグレーションは自動適用されない**。`supabase/migrations/NNN_*.sql` を書いても、Supabaseダッシュボード → SQL Editor に手動で貼って実行する運用。frontendのpushとSQL適用は別手順（コード先行 or SQL先行かは変更内容による）。
 - service_roleキーはPostgREST/Auth用でDDL（CREATE POLICY/FUNCTION等）は実行不可。ポリシー/関数変更は必ずSQL Editorでユーザーに実行してもらう。
 
-## マイグレーション適用状況（2026-07-31時点）
-- **001〜035までは本番適用済み**。**036・037は未適用（コード側は実装済み・ブランチ`realtime-task-sync`）**。
-- **⚠️デプロイ順序が重要**: 036は`task_meta.sort_order`をINTEGER→NUMERICに変更する。新しいフロントコード（fractional indexing）は常に小数値をこの列へ書き込むため、**036を先にSQL Editorで適用してからでないとpush（デプロイ）してはいけない**。順序を誤ると、pushした瞬間に全ユーザーのカンバンのドラッグ操作がDB型エラーで即座に失敗する（INTEGER列に小数を書き込もうとして拒否される）。036→037の順で適用後にpushすること。
+## マイグレーション適用状況（2026-08-21確認・訂正）
+- **001〜038まで本番適用済み**（038は齋藤香奈さん報告対応で2026-08-20にREST経由で直接データ修正・SQL化して記録）。**036・037も適用済みであることを2026-08-21にservice_roleキーで直接確認・訂正**（`task_meta.sort_order`への小数書き込みがエラーにならない＝NUMERIC化済み、`task_stage_user_visibility`テーブルが実在＝037適用済み。以前「未適用」と記載していたのは古い情報で、`realtime-task-sync`ブランチのmasterマージ（`39b3959`）と同時期に本番SQLも適用されていた）。
+- （参考・解消済みの過去の注意点）036は`task_meta.sort_order`をINTEGER→NUMERICに変更する変更で、新フロントコード（fractional indexing）は常に小数値を書き込むため、SQL先行適用が必須だった。036→037の順で適用済み。
 - 主要な近年分:
   - 025 タスクカンバン列のDB共有化（`task_kanban_stages` + RPC `replace_task_kanban_stages`）
   - 026 activities_delete ポリシー新設（削除がRLSで無音0行だった不具合）
@@ -59,7 +59,7 @@
 - 対応（`TaskKanbanBoard.tsx`、SQL不要・PR #1 draft）: `canDelete`に`task.user_id === null`を追加し、UIをDBの権限モデルに合わせた。
 - ついでに: `upsertTaskOrders`が部分失敗の原因を「削除済みの可能性があります」と決め打ちしていた点を直し、実際のエラー詳細（`firstError`）をトーストに出すようにした（次回同種の報告が来た際にRLS拒否 vs 削除済みFK違反を即座に切り分けられるように）。
 - **service_roleキーで本番DBを直接確認済み**: 報告にあった「株式会社BOOTH」のタスクは調査時点で既にDBから消えていた（super_adminが削除した可能性）。現存する未担当タスクは全社で5件のみで、いずれも財務事業部の顧客に正しく紐づき、task_metaも正常同期済み——恒久的に失敗する未担当タスクは他に残っていない。「6件/1件保存できませんでした」は複数人が同時にドラッグ・削除していたことによる一時的なキャッシュ不整合の可能性が高い。
-- 副次的な発見: `task_kanban_stages`（025）は`GRANT ... TO authenticated`のみで`service_role`へのGRANTが無く、service_roleキーでの直接SELECTが`42501`になる。本番ユーザーには影響しないが、将来service_role経由でこのテーブルを触る処理を書くときは要注意。
+- 副次的な発見: `task_kanban_stages`（025）・`task_stage_user_visibility`（037、2026-08-21に同様の欠落を確認）は`GRANT ... TO authenticated`のみで`service_role`へのGRANTが無く、service_roleキーでの直接SELECTが`42501`になる。本番ユーザーには影響しないが、将来service_role経由でこれらのテーブルを触る処理を書くときは要注意。新規テーブルを作るときは`GRANT SELECT ON <table> TO service_role;`も併せて付与すると本番調査が楽になる（039以降で徹底）。
 
 ## 2026-08-20セッションの変更（要点）
 

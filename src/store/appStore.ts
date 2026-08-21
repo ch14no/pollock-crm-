@@ -121,6 +121,19 @@ export interface TaskKanbanStage {
   id: string
   name: string
   color: string  // 'blue' | 'green' | 'yellow' | 'red' | 'gray' | 'purple' | 'orange'
+  // タスクカンバンタブ（039、任意機能）所属先。タブ未使用の事業部・移行前に
+  // localStorageへ永続化された古いデータではundefinedになりうるため、
+  // 比較する側は必ず (s.tabId ?? null) で扱うこと
+  tabId?: string | null
+}
+
+// タスクカンバンタブ定義（事業部内でタスクカンバンを複数系統に分ける、任意機能。
+// 商談のPipelineTabと対称だが別型として持つ）
+export interface TaskKanbanTab {
+  id: string
+  divisionId: string
+  name: string
+  sortOrder: number
 }
 // ─────────────────────────────────────────────────────────────────
 
@@ -273,6 +286,14 @@ interface AppState {
   // タスクカンバンステージ（事業部別）
   divisionTaskStages: Record<string, TaskKanbanStage[]>
   setDivisionTaskStages: (divisionId: string, stages: TaskKanbanStage[]) => void
+
+  // タスクカンバンタブ（事業部別、任意。039）
+  divisionTaskTabs: Record<string, TaskKanbanTab[]>
+  setDivisionTaskTabs: (divisionId: string, tabs: TaskKanbanTab[]) => void
+
+  // 選択中のタスクタブ（事業部別、セッション限定・永続化しない。商談のactiveTabIdと対称）
+  activeTaskTabId: Record<string, string | null>
+  setActiveTaskTabId: (divisionId: string, tabId: string | null) => void
 
   // 個人ビューでの担当外列の非表示設定（037）。divisionId -> userId -> 表示を許可する
   // stageIdの配列。あるユーザーのエントリが無ければfail-open（全列表示）
@@ -502,6 +523,14 @@ export const useAppStore = create<AppState>()(
       setDivisionTaskStages: (divisionId, stages) =>
         set((state) => ({ divisionTaskStages: { ...state.divisionTaskStages, [divisionId]: stages } })),
 
+      divisionTaskTabs: {},
+      setDivisionTaskTabs: (divisionId, tabs) =>
+        set((state) => ({ divisionTaskTabs: { ...state.divisionTaskTabs, [divisionId]: tabs } })),
+
+      activeTaskTabId: {},
+      setActiveTaskTabId: (divisionId, tabId) =>
+        set((state) => ({ activeTaskTabId: { ...state.activeTaskTabId, [divisionId]: tabId } })),
+
       // 個人ビューでの担当外列の非表示設定（037）。divisionId -> userId -> 表示を許可する
       // stageIdの配列。エントリが無いユーザーはfail-open（全列表示）
       taskStageVisibility: {},
@@ -619,6 +648,7 @@ export const useAppStore = create<AppState>()(
         divisionProductsEnabled: state.divisionProductsEnabled,
         dealProducts: state.dealProducts,
         divisionTaskStages: state.divisionTaskStages,
+        divisionTaskTabs: state.divisionTaskTabs,
         taskStageVisibility: state.taskStageVisibility,
         taskStageMap: state.taskStageMap,
         taskOrderMap: state.taskOrderMap,

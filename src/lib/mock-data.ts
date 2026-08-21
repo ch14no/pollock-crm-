@@ -286,32 +286,32 @@ export const DEFAULT_DIVISION_STAGES: Record<string, DivisionStage[]> = {
 // ─── 事業部別デフォルトタスクカンバンステージ ───────────────────────
 export const DEFAULT_DIVISION_TASK_STAGES: Record<string, TaskKanbanStage[]> = {
   'div-1': [ // ITソリューション
-    { id: 'todo',       name: '未着手',   color: 'gray'   },
-    { id: 'inprogress', name: '進行中',   color: 'blue'   },
-    { id: 'review',     name: 'レビュー', color: 'yellow' },
-    { id: 'done',       name: '完了',     color: 'green'  },
+    { id: 'todo',       name: '未着手',   color: 'gray',   tabId: null },
+    { id: 'inprogress', name: '進行中',   color: 'blue',   tabId: null },
+    { id: 'review',     name: 'レビュー', color: 'yellow', tabId: null },
+    { id: 'done',       name: '完了',     color: 'green',  tabId: null },
   ],
   'div-2': [ // 人材
-    { id: 'todo',       name: '未着手',   color: 'gray'   },
-    { id: 'inprogress', name: '進行中',   color: 'blue'   },
-    { id: 'done',       name: '完了',     color: 'green'  },
+    { id: 'todo',       name: '未着手',   color: 'gray',  tabId: null },
+    { id: 'inprogress', name: '進行中',   color: 'blue',  tabId: null },
+    { id: 'done',       name: '完了',     color: 'green', tabId: null },
   ],
   'div-3': [ // 財務支援（補助金フロー）
-    { id: 'making',     name: '資料作成中',     color: 'blue'   },
-    { id: 'sharing',    name: '共有中',         color: 'yellow' },
-    { id: 'applying',   name: '申請中（審査中）', color: 'orange' },
-    { id: 'adopted',    name: '採択',           color: 'green'  },
-    { id: 'rejected',   name: '不採択',         color: 'red'    },
+    { id: 'making',     name: '資料作成中',     color: 'blue',   tabId: null },
+    { id: 'sharing',    name: '共有中',         color: 'yellow', tabId: null },
+    { id: 'applying',   name: '申請中（審査中）', color: 'orange', tabId: null },
+    { id: 'adopted',    name: '採択',           color: 'green',  tabId: null },
+    { id: 'rejected',   name: '不採択',         color: 'red',    tabId: null },
   ],
   'div-4': [ // Bowers
-    { id: 'todo',       name: '未着手',   color: 'gray'   },
-    { id: 'inprogress', name: '進行中',   color: 'blue'   },
-    { id: 'done',       name: '完了',     color: 'green'  },
+    { id: 'todo',       name: '未着手',   color: 'gray',  tabId: null },
+    { id: 'inprogress', name: '進行中',   color: 'blue',  tabId: null },
+    { id: 'done',       name: '完了',     color: 'green', tabId: null },
   ],
   'div-5': [ // メディケア
-    { id: 'todo',       name: '未着手',   color: 'gray'   },
-    { id: 'inprogress', name: '進行中',   color: 'blue'   },
-    { id: 'done',       name: '完了',     color: 'green'  },
+    { id: 'todo',       name: '未着手',   color: 'gray',  tabId: null },
+    { id: 'inprogress', name: '進行中',   color: 'blue',  tabId: null },
+    { id: 'done',       name: '完了',     color: 'green', tabId: null },
   ],
 }
 

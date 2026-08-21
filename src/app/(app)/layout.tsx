@@ -13,7 +13,7 @@ import { getSupabase, isSupabaseConfigured } from '@/lib/db/client'
 import {
   fetchDivisions, fetchUserDivisions,
   fetchDivisionStagesMapped, fetchDivisionTabsMapped, fetchDivisionCustomFields,
-  fetchDivisionTaskStagesDb, fetchTaskStageVisibility,
+  fetchDivisionTaskStagesDb, fetchTaskStageVisibility, fetchDivisionTaskTabsMapped,
 } from '@/lib/db/divisions'
 import { fetchDivisionProductsData } from '@/lib/db/products'
 import { MOCK_DIVISIONS, MOCK_USER, MOCK_USER_DIVISIONS } from '@/lib/mock-data'
@@ -28,6 +28,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const setDivisionProductsEnabled = useAppStore((s) => s.setDivisionProductsEnabled)
   const setDivisionTaskStages = useAppStore((s) => s.setDivisionTaskStages)
   const setTaskStageVisibility = useAppStore((s) => s.setTaskStageVisibility)
+  const setDivisionTaskTabs = useAppStore((s) => s.setDivisionTaskTabs)
 
   // 閲覧中の事業部が変わるたびに、その事業部のマスタ（ステージ・タブ・カスタム項目・商品）を
   // DBからストアへ同期する。従来は設定画面を開いた端末のlocalStorageにしか入らず、
@@ -38,7 +39,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     let cancelled = false
     const load = async () => {
       try {
-        const [stages, tabs, fields, productsData, taskStages, stageVisibility] = await Promise.all([
+        const [stages, tabs, fields, productsData, taskStages, stageVisibility, taskTabs] = await Promise.all([
           fetchDivisionStagesMapped(activeDivisionId),
           fetchDivisionTabsMapped(activeDivisionId),
           fetchDivisionCustomFields(activeDivisionId),
@@ -48,6 +49,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           fetchDivisionTaskStagesDb(activeDivisionId).catch(() => null),
           // 個人ビューの列表示制御（037）。同様に未適用環境でも他マスタを巻き込まない
           fetchTaskStageVisibility(activeDivisionId).catch(() => null),
+          // タスクカンバンタブ（039）。同様に未適用環境でも他マスタを巻き込まない
+          fetchDivisionTaskTabsMapped(activeDivisionId).catch(() => null),
         ])
         if (cancelled) return
         setDivisionStages(activeDivisionId, stages)
@@ -65,13 +68,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         if (stageVisibility) {
           setTaskStageVisibility(activeDivisionId, stageVisibility)
         }
+        // タブはstagesと異なり「0件」も正しい状態（タブ削除が他端末に伝播しないと
+        // 消したはずのタブが残り続ける）。取得失敗（未適用環境）時のみ既存キャッシュを維持する
+        if (taskTabs !== null) {
+          setDivisionTaskTabs(activeDivisionId, taskTabs)
+        }
       } catch {
         // 取得失敗時は既存のローカルキャッシュ表示を維持する（画面を壊さない）
       }
     }
     load()
     return () => { cancelled = true }
-  }, [activeDivisionId, setDivisionStages, setDivisionTabs, setDivisionCustomFields, setDivisionProducts, setDivisionProductsEnabled, setDivisionTaskStages, setTaskStageVisibility])
+  }, [activeDivisionId, setDivisionStages, setDivisionTabs, setDivisionCustomFields, setDivisionProducts, setDivisionProductsEnabled, setDivisionTaskStages, setTaskStageVisibility, setDivisionTaskTabs])
 
   useEffect(() => {
     const supabase = getSupabase()

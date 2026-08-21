@@ -608,6 +608,11 @@ export function TaskKanbanBoard({
         onDragEnd={handleDragEnd}
       >
         <div className="flex gap-4 overflow-x-auto pb-4">
+          {/* タブ機能（039）でタブの列を全て削除した直後など、stagesが空になりうる。
+              空のまま何も表示しないと「壊れた」ように見えるため一言添える */}
+          {stages.length === 0 && (
+            <p className="text-xs text-gray-400 py-6 px-2">このタブには列がありません。設定画面から列を追加してください。</p>
+          )}
           {stages.map((stage) => {
             const stageTasks = byStage(stage.id)
             const colors = STAGE_COLORS[stage.color] ?? STAGE_COLORS.gray

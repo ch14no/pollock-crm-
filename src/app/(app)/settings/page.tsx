@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useAppStore } from '@/store/appStore'
-import type { DivisionCustomField, DivisionStage, PipelineTab, TaskKanbanStage } from '@/store/appStore'
+import type { DivisionCustomField, DivisionStage, PipelineTab, TaskKanbanStage, TaskKanbanTab } from '@/store/appStore'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import {
@@ -24,7 +24,9 @@ import {
   fetchDivisions, createDivision, updateDivision, deleteDivision, checkDivisionReferences,
   fetchDivisionTaskStagesDb, saveDivisionTaskStages,
   fetchTaskStageVisibility, saveTaskStageVisibility,
+  fetchDivisionTaskTabsMapped, createTaskKanbanTab, updateTaskKanbanTab, deleteTaskKanbanTab,
 } from '@/lib/db/divisions'
+import { taskStagesForTab } from '@/lib/task-kanban-tabs'
 import {
   fetchDivisionProductsData, addDivisionProduct, removeDivisionProduct, saveDivisionProductsEnabled,
 } from '@/lib/db/products'
@@ -336,6 +338,15 @@ export default function SettingsPage() {
 
           {managerNotifDivId && (
             <>
+              {/* task_kanban_stages_manage（025）・task_kanban_tabs_manage（039）とも
+                  super_admin/managerの両方を許可しているが、以前はUIがsuper_admin専用
+                  ブロックの中にしかなくmanagerが到達できなかった（既存の不一致、
+                  task_stage_user_visibility_manageで踏んだのと同種のため同時に解消する） */}
+              <TaskStagesPanel
+                key={`tasks-mgr-${managerNotifDivId}`}
+                divisionId={managerNotifDivId}
+                divisionName={managerNotifDivName}
+              />
               <TaskStageVisibilityPanel
                 key={`task-visibility-mgr-${managerNotifDivId}`}
                 divisionId={managerNotifDivId}
@@ -2002,7 +2013,7 @@ const COLOR_DOT: Record<string, string> = {
 }
 
 function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
-  const { divisionTaskStages, setDivisionTaskStages } = useAppStore()
+  const { divisionTaskStages, setDivisionTaskStages, divisionTaskTabs, setDivisionTaskTabs } = useAppStore()
   const divId = divisionId
   const stages: TaskKanbanStage[] = divisionTaskStages[divId] ?? DEFAULT_DIVISION_TASK_STAGES[divId] ?? []
   const [newName, setNewName]   = useState('')
@@ -2015,6 +2026,17 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
   const [syncState, setSyncState] = useState<'loading' | 'synced' | 'local' | 'unavailable'>(
     () => (isSupabaseConfigured() ? 'loading' : 'unavailable')
   )
+
+  // タスクカンバンタブ（039、任意。商談のDivisionStagesPanelと同じ考え方）
+  const [tabs, setTabs] = useState<TaskKanbanTab[]>([])
+  const [selectedTabId, setSelectedTabId] = useState<string | null>(null)
+  const [showTabForm, setShowTabForm] = useState(false)
+  const [newTabName, setNewTabName] = useState('')
+  const [editingTabId, setEditingTabId] = useState<string | null>(null)
+  const [editTabName, setEditTabName] = useState('')
+  const [tabSaving, setTabSaving] = useState(false)
+
+  const visibleStages = tabs.length > 0 ? taskStagesForTab(stages, selectedTabId) : stages
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return
@@ -2033,18 +2055,45 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
     return () => { cancelled = true }
   }, [divId, setDivisionTaskStages])
 
+  // 選択事業部が変わったらタブを読み込む
+  useEffect(() => {
+    if (!isSupabaseConfigured()) { setTabs([]); setSelectedTabId(null); return }
+    let cancelled = false
+    fetchDivisionTaskTabsMapped(divId)
+      .then((rows) => {
+        if (cancelled) return
+        setTabs(rows)
+        setDivisionTaskTabs(divId, rows)
+        setSelectedTabId(rows[0]?.id ?? null)
+      })
+      .catch(() => { /* 未適用環境ではタブUIを出さないだけで既存の列編集機能は生かす */ })
+    setShowTabForm(false)
+    setEditingTabId(null)
+    return () => { cancelled = true }
+  }, [divId, setDivisionTaskTabs])
+
+  const reloadTabs = async () => {
+    const rows = await fetchDivisionTaskTabsMapped(divId)
+    setTabs(rows)
+    setDivisionTaskTabs(divId, rows)
+    return rows
+  }
+
   // 初回読み込み中と保存中は全操作を無効化（連打による保存の交錯も防ぐ）
   const controlsDisabled = saving || syncState === 'loading'
 
   // ストアに即時反映しつつDBへ保存して全端末に共有する。
   // DB保存に失敗したらストアを巻き戻し、「保存されたつもり」の端末ローカル状態を残さない。
+  // nextはvisibleStages（現在のタブ配下、タブ無しなら全部）のみ。他タブの列は
+  // storeへの反映時にマージして残す（そうしないと他タブの列がstoreから消える）
   const applyStages = async (next: TaskKanbanStage[]): Promise<boolean> => {
     const prev = stages
-    setDivisionTaskStages(divId, next)
+    const otherTabStages = tabs.length > 0 ? stages.filter((s) => (s.tabId ?? null) !== selectedTabId) : []
+    setDivisionTaskStages(divId, [...otherTabStages, ...next])
     if (!isSupabaseConfigured()) return true // ローカルモードではストア保存のみで完結
     setSaving(true)
     try {
-      await saveDivisionTaskStages(divId, next)
+      await saveDivisionTaskStages(divId, next, tabs.length > 0 ? selectedTabId : null)
       setSyncState('synced')
       return true
     } catch (e) {
@@ -2060,15 +2109,19 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
   const handleAdd = async () => {
     const trimmed = newName.trim()
     if (!trimmed) return
-    if (stages.some((s) => s.name === trimmed)) { toast.error('同じ名前の列がすでに存在します'); return }
-    if (await applyStages([...stages, { id: `stage-${Date.now()}`, name: trimmed, color: newColor }])) {
+    if (visibleStages.some((s) => s.name === trimmed)) { toast.error('同じ名前の列がすでに存在します'); return }
+    const newStage: TaskKanbanStage = {
+      id: `stage-${Date.now()}`, name: trimmed, color: newColor,
+      tabId: tabs.length > 0 ? selectedTabId : null,
+    }
+    if (await applyStages([...visibleStages, newStage])) {
       setNewName('')
       toast.success(`列「${trimmed}」を追加しました`)
     }
   }
 
   const move = (idx: number, dir: -1 | 1) => {
-    const next = [...stages]
+    const next = [...visibleStages]
     const target = idx + dir
     if (target < 0 || target >= next.length) return
     ;[next[idx], next[target]] = [next[target], next[idx]]
@@ -2076,12 +2129,96 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
   }
 
   const handleDelete = (stage: TaskKanbanStage) => {
-    // 空の列リストはDB上「未設定」と区別できず他端末に伝播しないため、最後の1列は削除不可
+    // 空の列リストはDB上「未設定」と区別できず他端末に伝播しないため、
+    // 事業部全体で最後の1列は削除不可（タブを空にする操作自体は許可する）
     if (stages.length <= 1) {
       toast.error('最後の列は削除できません（カンバンには最低1列必要です）')
       return
     }
-    void applyStages(stages.filter((x) => x.id !== stage.id))
+    void applyStages(visibleStages.filter((x) => x.id !== stage.id))
+  }
+
+  // ─── タブCRUD（039） ─────────────────────────────────────────
+  const handleAddTab = async () => {
+    if (!newTabName.trim()) { toast.error('タブ名を入力してください'); return }
+    // 列の初回取得が完了する前に押されると、DBに列行が実在するのに
+    // syncStateがまだ'loading'のまま＝initialStagesの要否判定を誤り、
+    // 「事業部にまだ列が無い」ケース向けのRPCエラーを踏む（列は実在するのに
+    // p_initial_stages省略で呼んでしまい得る）。ボタンのdisabled制御だけに
+    // 頼らず関数側でも明示的にガードする
+    if (syncState === 'loading') { toast.error('列構成を読み込み中です。少し待ってから再度お試しください'); return }
+    setTabSaving(true)
+    try {
+      // DBに列行が1つも無い事業部（デフォルト列フォールバックで動いている）では、
+      // 現在表示中の列をタブ作成と同時にDB化してタブ配下に置く。
+      // syncState==='loading'（初回取得未完了）の間はボタン自体をdisabledにしている
+      // （controlsDisabled参照）ため、ここに来る時点でsyncStateは確定している
+      const initialStages = syncState === 'local' ? stages : null
+      const newTabId = await createTaskKanbanTab(divId, newTabName.trim(), initialStages)
+      // 既存列の付け替え／初期列の作成はRPC内で行われるため、最新状態を取り直す。
+      // 列とタブは互いに独立したテーブルで書き込み後の依存関係が無いため並行取得する
+      const [refreshed] = await Promise.all([fetchDivisionTaskStagesDb(divId), reloadTabs()])
+      setDivisionTaskStages(divId, refreshed)
+      setSyncState('synced')
+      setSelectedTabId(newTabId)
+      toast.success(`タブ「${newTabName.trim()}」を追加しました`)
+      setNewTabName('')
+      setShowTabForm(false)
+    } catch (e) {
+      toast.error((e as Error)?.message || 'タブの追加に失敗しました')
+    } finally {
+      setTabSaving(false)
+    }
+  }
+
+  const handleEditTab = async (id: string) => {
+    if (!editTabName.trim()) { toast.error('タブ名を入力してください'); return }
+    setTabSaving(true)
+    try {
+      await updateTaskKanbanTab(id, { name: editTabName.trim() })
+      await reloadTabs()
+      setEditingTabId(null)
+      toast.success('タブを更新しました')
+    } catch (e) {
+      toast.error((e as Error)?.message || 'タブの更新に失敗しました')
+    } finally {
+      setTabSaving(false)
+    }
+  }
+
+  const handleDeleteTab = async (id: string, name: string) => {
+    if (!window.confirm(`「${name}」タブを削除しますか？`)) return
+    setTabSaving(true)
+    try {
+      await deleteTaskKanbanTab(id)
+      const mapped = await reloadTabs()
+      if (selectedTabId === id) setSelectedTabId(mapped[0]?.id ?? null)
+      toast.success('タブを削除しました')
+    } catch (e) {
+      // 23503 = 外国キー違反（配下に列が残っている、複合FKのRESTRICTで拒否された場合）。
+      // それ以外（権限拒否・ネットワークエラー等）は実際のエラーを見せる。
+      // 原因を問わず同じ文言を出すと、権限/通信エラーなのに「先に列を削除して」という
+      // 見当違いの案内になり調査が遠回りになる（既存プロジェクトで繰り返し踏んだ教訓と同種）
+      const code = (e as { code?: string } | null)?.code
+      if (code === '23503') {
+        toast.error('このタブには列が設定されているため削除できません。先に列を削除してください。')
+      } else {
+        toast.error((e as Error)?.message || 'タブの削除に失敗しました')
+      }
+    } finally {
+      setTabSaving(false)
+    }
+  }
+
+  const handleMoveTab = (idx: number, dir: -1 | 1) => {
+    const reordered = moveItem(tabs, idx, dir).map((t, i) => ({ ...t, sortOrder: i }))
+    setTabs(reordered)
+    setDivisionTaskTabs(divId, reordered)
+    if (isSupabaseConfigured()) {
+      for (const t of reordered) {
+        updateTaskKanbanTab(t.id, { sortOrder: t.sortOrder }).catch(() => {})
+      }
+    }
   }
 
   // この端末のlocalStorageにだけ残っているカスタム列構成（DB導入前に編集されたもの）
@@ -2141,19 +2278,101 @@ function TaskStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
           </div>
         )}
 
+        {/* ─── タスクカンバンタブ（任意） ─── */}
+        {syncState !== 'unavailable' && (
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-gray-500 mb-1">カンバンタブ（任意）</label>
+            {tabs.length === 0 ? (
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                <p className="text-xs text-gray-400 mb-2">このアイテムにタブは設定されていません。タブを使うとタスクカンバンを複数の系統（例: 補助金／融資）に分けて表示できます。</p>
+                {!showTabForm ? (
+                  <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={() => setShowTabForm(true)}>タブを追加</Button>
+                ) : (
+                  <div className="flex gap-2 items-center">
+                    <input type="text" value={newTabName} onChange={(e) => setNewTabName(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddTab()}
+                      placeholder="タブ名（例: 補助金）" aria-label="新しいタブ名"
+                      className="flex-1 px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+                    <button onClick={() => setShowTabForm(false)} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-white"><X size={13} /></button>
+                    <button onClick={handleAddTab} disabled={tabSaving}
+                      className="flex items-center gap-1 text-xs text-white bg-orange-500 px-3 py-1.5 rounded-lg hover:bg-orange-600 font-medium disabled:opacity-50">
+                      <Check size={12} />追加
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2 items-center">
+                  {tabs.map((t, i) => (
+                    <div key={t.id} className="flex items-center gap-1 bg-gray-50 border border-gray-100 rounded-full pl-2 pr-1 py-1">
+                      {editingTabId === t.id ? (
+                        <>
+                          <input type="text" value={editTabName} onChange={(e) => setEditTabName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleEditTab(t.id)}
+                            aria-label={`${t.name}のタブ名を編集`}
+                            className="w-24 px-1.5 py-0.5 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-orange-500 bg-white" />
+                          <button onClick={() => setEditingTabId(null)} aria-label="編集をキャンセル" className="p-1 text-gray-300 hover:text-gray-500"><X size={11} /></button>
+                          <button onClick={() => handleEditTab(t.id)} aria-label={`${t.name}を保存`} className="p-1 text-orange-500 hover:text-orange-600"><Check size={11} /></button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => handleMoveTab(i, -1)} disabled={i === 0} aria-label={`${t.name}タブを前へ`}
+                            className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowUp size={11} /></button>
+                          <button onClick={() => handleMoveTab(i, 1)} disabled={i === tabs.length - 1} aria-label={`${t.name}タブを後ろへ`}
+                            className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowDown size={11} /></button>
+                          <span className="text-xs font-medium text-gray-700 px-0.5">{t.name}</span>
+                          <button onClick={() => { setEditingTabId(t.id); setEditTabName(t.name) }} aria-label={`${t.name}タブ名を編集`} className="p-1 text-gray-300 hover:text-orange-500"><Edit2 size={11} /></button>
+                          <button onClick={() => handleDeleteTab(t.id, t.name)} aria-label={`${t.name}タブを削除`} className="p-1 text-gray-300 hover:text-red-500"><Trash2 size={11} /></button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                  {!showTabForm ? (
+                    <button onClick={() => setShowTabForm(true)}
+                      className="flex items-center gap-1 text-xs text-gray-500 border border-dashed border-gray-300 rounded-full px-3 py-1.5 hover:border-orange-400 hover:text-orange-500">
+                      <Plus size={12} />タブを追加
+                    </button>
+                  ) : (
+                    <div className="flex gap-2 items-center">
+                      <input type="text" value={newTabName} onChange={(e) => setNewTabName(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddTab()}
+                        placeholder="タブ名" aria-label="新しいタブ名"
+                        className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white" />
+                      <button onClick={() => setShowTabForm(false)} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-white"><X size={13} /></button>
+                      <button onClick={handleAddTab} disabled={tabSaving}
+                        className="flex items-center gap-1 text-xs text-white bg-orange-500 px-3 py-1.5 rounded-lg hover:bg-orange-600 font-medium disabled:opacity-50">
+                        <Check size={12} />追加
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">表示するタブ（下の列一覧の対象）</label>
+                  <select value={selectedTabId ?? ''} onChange={(e) => setSelectedTabId(e.target.value || null)}
+                    aria-label="表示するタブ（下の列一覧の対象）"
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50">
+                    {tabs.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <p className="text-xs font-medium text-gray-500 mb-1.5">現在の列（上から順にカンバンの左→右に並びます）</p>
         <div className="space-y-1.5 mb-3">
-          {stages.length === 0 && (
+          {visibleStages.length === 0 && (
             <p className="text-xs text-gray-400 py-2 text-center">列が未設定です。下から追加してください</p>
           )}
-          {stages.map((s, idx) => (
+          {visibleStages.map((s, idx) => (
             <div key={s.id} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
               <span className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', COLOR_DOT[s.color] ?? 'bg-gray-400')} />
               <span className="flex-1 text-sm text-gray-700">{s.name}</span>
               <div className="flex gap-0.5">
                 <button onClick={() => move(idx, -1)} disabled={idx === 0 || controlsDisabled} aria-label={`${s.name}を上へ`}
                   className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowUp size={12} /></button>
-                <button onClick={() => move(idx, 1)} disabled={idx === stages.length - 1 || controlsDisabled} aria-label={`${s.name}を下へ`}
+                <button onClick={() => move(idx, 1)} disabled={idx === visibleStages.length - 1 || controlsDisabled} aria-label={`${s.name}を下へ`}
                   className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-20"><ArrowDown size={12} /></button>
               </div>
               <button onClick={() => handleDelete(s)} disabled={controlsDisabled}
