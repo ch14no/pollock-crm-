@@ -54,7 +54,7 @@
 
 1. **商談カンバンのドラッグ＆ドロップ（`KanbanBoard.tsx`）**: `updateDealStage`に件数確認追加、失敗時のロールバック追加（`TaskKanbanBoard.tsx`には既にあった対応が商談版だけ未実装だった）。`/code-review`で「ロールバックが後発の別ドラッグの結果を上書きしうる」競合を指摘され、現在の状態を確認してから戻すガードを追加。
 2. **`DealModal`の失注/復活**: `updateDealStage`強化の副作用でRLS拒否時に偽の成功が出なくなった。対象が既に削除済みの場合は`DealAlreadyDeletedError`で区別し削除処理と同じ後始末をするよう統一。
-3. **顧客の一括削除**: `deleteContact`/`deleteContacts`に件数確認追加。`deleteContacts`は`/code-review`指摘を受け「チャンク単位で例外を投げず常に`{deletedIds, failedIds}`を返す」設計に変更（後続チャンク失敗で先行チャンクの成功分がUIに残る幽霊を防止）。**`contacts_delete`RLSが事業部を問わずmanager/super_adminなら削除可能だった不具合も発見・修正**（041、`deals_delete`と同じ権限モデルに統一）。
+3. **顧客の一括削除**: `deleteContact`/`deleteContacts`に件数確認追加。`deleteContacts`は`/code-review`指摘を受け「チャンク単位で例外を投げず常に`{deletedIds, failedIds}`を返す」設計に変更（後続チャンク失敗で先行チャンクの成功分がUIに残る幽霊を防止）。**`contacts_delete`RLSが事業部を問わずmanager/super_adminなら削除可能だった不具合も発見・修正**（041、`deals_delete`と同じ権限モデルに統一。**2026-08-21本番SQL適用済み**）。
 
 **未着手の残り（優先度中〜低、次回以降の対応候補）**:
 - `activities.ts`の`updateActivityStatus`/`updateActivityFields`（タスク完了トグル・インライン編集全箇所が使用、件数確認なし）
