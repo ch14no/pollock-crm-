@@ -9,6 +9,18 @@
 - **DBマイグレーションは自動適用されない**。`supabase/migrations/NNN_*.sql` を書いても、Supabaseダッシュボード → SQL Editor に手動で貼って実行する運用。frontendのpushとSQL適用は別手順（コード先行 or SQL先行かは変更内容による）。
 - service_roleキーはPostgREST/Auth用でDDL（CREATE POLICY/FUNCTION等）は実行不可。ポリシー/関数変更は必ずSQL Editorでユーザーに実行してもらう。
 
+## 2026-08-24: Google Docsバグ報告（8/24分）を確認・修正（`683fcc5`、042、本番適用済み・SQLのみでコード変更なし）
+
+Google Docsのバグ・要望管理ドキュメント（画像添付あり、`read_file_content`ではテキスト抽出に画像が乗らないため`download_file_content`でPDFエクスポート→PyMuPDF (`pymupdf`) でページを画像化して目視確認する手法を使用。今後も同ドキュメントで画像付き報告が来たら同じ手順が使える）から、「石川さんの画面と齋藤さんの画面で顧客詳細ページの表示内容が違う」報告を確認。
+
+**原因**: 石川紅さん（一般ユーザー）の顧客詳細ページ（個別contact page）で、齋藤香奈さん（super_admin）が記録した活動履歴（8件）が一切表示されず、自分の記録分（5件）のみ表示されていた。`activities_select`の同一事業部閲覧判定（`shares_division_with(user_id)`）が記録者側にも`user_divisions`行の存在を要求するが、super_adminは所属登録を省略できる設計（2026-07-23の教訓）のため、super_adminが記録した活動は一般ユーザーから不可視になっていた——**2026-07-22に一度直したはずの「同僚の活動が見えない」バグの、super_admin絡みでの再発**。
+
+034で未担当タスク向けに作った`shares_division_with_activity_target`（活動の対象＝顧客/商談のdivision_idで判定、記録者のuser_divisionsに依存しない）を無条件OR分岐として`activities_select`/`activities_update`・`task_meta_select`/`task_meta_update`に追加して解消（`activities_delete`は意図的に対象外、既存の別欠陥があり今回のスコープに含めない）。
+
+**教訓**: 「同一事業部メンバーなら見える」系のRLS判定を書く時は、記録者（owner）側がuser_divisionsに行を持たないケース（super_admin等）を必ず想定する。owner基準の判定だけでなく、対象（ターゲットレコード自体のdivision_id）基準の判定も用意しておくと、この種の「権限を持つはずの人の行動が原因で他の人が見えなくなる」逆説的な穴を塞げる。
+
+**残タスク**: 同ドキュメントには8/24時点で他にも未着手の要望（活動履歴→入力履歴への改称、複数activity_type選択、締切日順ソート、日付の絶対表示、補助金/融資タブでの絞り込み等）が残っている。次回セッションで対応候補。
+
 ## 2026-08-21: タスクカンバンにタブ切り替え機能を追加（`31efb28`、039_task_kanban_tabs.sql、本番適用・デプロイ済み）
 
 齋藤香奈さんから「商談カンバンの『補助金』『融資』タブのように、タスク管理もタブで切り替えたい」と要望。設計はFable 5に壁打ち→実装→`/code-review`（8観点finder）で実害バグ3件を修正済み。
