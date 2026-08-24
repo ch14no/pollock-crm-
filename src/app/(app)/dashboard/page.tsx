@@ -464,7 +464,7 @@ export default function DashboardPage() {
           {/* 個人アラート */}
           {(myOverdue.length > 0) && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button onClick={() => router.push('/tasks')}
+              <button onClick={() => router.push('/tasks?scope=personal')}
                 className="flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-left hover:bg-red-100 transition-colors">
                 <AlertCircle size={18} className="text-red-500 flex-shrink-0" />
                 <div className="flex-1">
@@ -499,7 +499,7 @@ export default function DashboardPage() {
                   <CheckSquare size={16} className="text-orange-500" />
                   自分のタスク
                 </h2>
-                <button onClick={() => router.push('/tasks')} className="text-xs text-orange-600 hover:underline">すべて見る</button>
+                <button onClick={() => router.push('/tasks?scope=personal')} className="text-xs text-orange-600 hover:underline">すべて見る</button>
               </div>
               {myTasks.length === 0 ? (
                 <div className="text-center py-6">
@@ -514,7 +514,7 @@ export default function DashboardPage() {
                   ))}
                   {myTasks.length > 5 && (
                     <button
-                      onClick={() => router.push('/tasks')}
+                      onClick={() => router.push('/tasks?scope=personal')}
                       className="w-full text-xs text-orange-600 hover:underline pt-1 text-center"
                     >
                       他 {myTasks.length - 5}件のタスクを見る →

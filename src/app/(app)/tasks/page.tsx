@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Users, User, Plus, Check, X, Trash2,
   AlertCircle, ChevronDown, CheckSquare, Layers, Kanban,
@@ -42,6 +42,7 @@ function getQuadrant(meta: TaskMeta | undefined): 1 | 2 | 3 | 4 {
 // ─── メインページ ─────────────────────────────────────────────────
 export default function TasksPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const currentUser       = useAppStore((s) => s.currentUser)
   const activeDivisionId  = useAppStore((s) => s.activeDivisionId)
   const localActivities   = useAppStore((s) => s.localActivities)
@@ -68,7 +69,20 @@ export default function TasksPage() {
   const setActiveTaskTabId = useAppStore((s) => s.setActiveTaskTabId)
 
   const [tab, setTab]     = useState<'kanban' | 'tasks' | 'challenges'>('kanban')
-  const [scope, setScope] = useState<'personal' | 'team'>('team')
+  // ダッシュボードの「自分のタスク」等から「?scope=personal」付きで遷移してきた場合は
+  // 個人ビューを初期表示にする。以前は常に「チーム」固定で開き、ダッシュボードの
+  // 「すべて見る」から来ても手動でトグルし直す必要があった（2026-05-22報告の残課題）
+  const [scope, setScope] = useState<'personal' | 'team'>(
+    () => (searchParams.get('scope') === 'personal' ? 'personal' : 'team')
+  )
+  // App Routerは同一ルート（/tasks）内の遷移ではコンポーネントを再マウントしない
+  // ため、上のuseStateの初期化だけでは「一度personalで開いた後、サイドバー等の
+  // クエリ無しの/tasksリンクで戻っても状態がpersonalのまま固定される」不具合になる
+  // （/code-reviewで指摘）。ナビゲーションでURLが変わるたびにこの効果で同期し直す。
+  // 手動でのトグル操作はURLを変えないため、この効果で上書きされることはない
+  useEffect(() => {
+    setScope(searchParams.get('scope') === 'personal' ? 'personal' : 'team')
+  }, [searchParams])
 
   const allKanbanStages = activeDivisionId
     ? (divisionTaskStages[activeDivisionId] ?? DEFAULT_DIVISION_TASK_STAGES[activeDivisionId] ?? DEFAULT_DIVISION_TASK_STAGES['div-1'])

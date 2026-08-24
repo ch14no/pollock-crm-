@@ -149,7 +149,9 @@ function TaskCard({
               {task.title ?? 'タスク'}
             </p>
             {task.memo && (
-              <p className="text-xs text-gray-400 mt-1 truncate">{task.memo}</p>
+              // truncate（1行省略）だと長いメモが折り返されず「…」で切れて内容が
+              // 読めない報告（2026-07-24）があったため、2行までは折り返して表示する
+              <p className="text-xs text-gray-400 mt-1 line-clamp-2 whitespace-pre-wrap">{task.memo}</p>
             )}
             <div className="flex items-center justify-between mt-1.5 gap-2">
               {task.due_date && !isDone && (
