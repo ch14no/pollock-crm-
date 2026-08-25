@@ -349,6 +349,11 @@ interface AppState {
   removedContactIds: string[]
   removeContactLocally: (id: string) => void
 
+  // デモモードでの会社削除。同じ考え方（companiesはON DELETE SET NULLのため実際は
+  // 「会社未設定」になるだけ）をMOCK_CONTACTS上でも再現する
+  removedCompanyIds: string[]
+  removeCompanyLocally: (id: string) => void
+
   // 顧客一覧の検索・並び順・表示形式（タブ切替や個別ページ遷移をまたいで維持する。
   // 2026-08-25報告「他のタブに行って戻ると一覧が初期状態に戻ってしまう」対策。
   // 値の型は呼び出し元（contacts/page.tsxのSortKey/ViewMode）に委ねるため広めのstring型にする
@@ -654,6 +659,10 @@ export const useAppStore = create<AppState>()(
       removedContactIds: [],
       removeContactLocally: (id) =>
         set((state) => ({ removedContactIds: [...state.removedContactIds, id] })),
+
+      removedCompanyIds: [],
+      removeCompanyLocally: (id) =>
+        set((state) => ({ removedCompanyIds: [...state.removedCompanyIds, id] })),
     }),
     {
       name: 'pollock-crm',
@@ -691,6 +700,7 @@ export const useAppStore = create<AppState>()(
         localContactEdits: state.localContactEdits,
         contactsListView: state.contactsListView,
         removedContactIds: state.removedContactIds,
+        removedCompanyIds: state.removedCompanyIds,
         taskMeta: state.taskMeta,
         localChallenges: state.localChallenges,
       }),

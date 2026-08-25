@@ -59,6 +59,17 @@ export async function updateCompany(id: string, updates: {
   return toCompany(data)
 }
 
+// 会社の削除（043）。全社共有マスタのためmanager/super_adminのみ実行可能
+// （RLS側で判定・件数確認込み）。contacts.company_id/tossups.company_idは
+// ON DELETE SET NULLのため、紐づく担当者・トスアップは削除されず「会社未設定」になる
+export async function deleteCompany(id: string): Promise<void> {
+  const { data, error } = await getSupabase().from('companies').delete().eq('id', id).select('id')
+  if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('削除できませんでした（削除権限がないか、対象が存在しません）')
+  }
+}
+
 export async function fetchContactsByCompany(companyId: string, opts?: { divisionId?: string }): Promise<Contact[]> {
   let query = getSupabase()
     .from('contacts')

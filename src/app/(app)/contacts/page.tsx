@@ -108,6 +108,7 @@ export default function ContactsPage() {
   const divisionCustomFields = useAppStore((s) => s.divisionCustomFields)
   const localDeals        = useAppStore((s) => s.localDeals)
   const removedContactIds = useAppStore((s) => s.removedContactIds)
+  const removedCompanyIds = useAppStore((s) => s.removedCompanyIds)
   // 検索語・ソート順・表示形式はグローバルストアに永続化し、タスク管理など
   // 他ページへ一旦移動して顧客一覧に戻ってきても初期状態にリセットされない
   // ようにする（2026-08-25報告「他のタブに行って戻ると初期画面に戻ってしまう」）
@@ -226,11 +227,18 @@ export default function ContactsPage() {
     // 既に消えているため実質no-opだが、削除直後の再取得が終わるまでの一瞬も
     // 二重に安全側に倒せる
     const removedSet = new Set(removedContactIds)
+    const removedCompanySet = new Set(removedCompanyIds)
     return base.filter((c) => !removedSet.has(c.id)).map((c) => {
       const edit = localContactEdits[c.id]
-      return edit ? { ...c, ...edit } : c
+      const merged = edit ? { ...c, ...edit } : c
+      // デモモードでの会社削除（removeCompanyLocally）を反映する。実DBの
+      // ON DELETE SET NULLと同じく、担当者自体は消えず「会社未設定」になるだけにする
+      if (merged.company_id && removedCompanySet.has(merged.company_id)) {
+        return { ...merged, company_id: undefined, companies: undefined }
+      }
+      return merged
     })
-  }, [dbContacts, activeDivisionId, localContactEdits, removedContactIds])
+  }, [dbContacts, activeDivisionId, localContactEdits, removedContactIds, removedCompanyIds])
 
   // select型カスタムフィールドのみフィルター対象
   const selectCustomFields = useMemo(() => {

@@ -5,10 +5,10 @@ import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Building2, Phone, Mail, Rocket,
   CheckSquare, Users, FileText, ChevronDown, ExternalLink, Hash,
-  Landmark, Edit2, MapPin, Factory, User as UserIcon, Banknote, Calendar,
+  Landmark, Edit2, MapPin, Factory, User as UserIcon, Banknote, Calendar, Trash2,
 } from 'lucide-react'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchCompanyById, fetchContactsByCompany } from '@/lib/db/companies'
+import { fetchCompanyById, fetchContactsByCompany, deleteCompany } from '@/lib/db/companies'
 import { CompanyEditModal } from '@/components/contacts/CompanyEditModal'
 import { fetchActivitiesByCompany } from '@/lib/db/activities'
 import type { Company, Contact, Activity } from '@/types/database'
@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/Button'
 import { cn, formatRelativeTime, formatDate, formatCurrency, getInitials } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import type { ActivityType } from '@/types/database'
+import toast from 'react-hot-toast'
 
 const ACT_ICON: Record<ActivityType, React.ElementType> = {
   call: Phone, email: Mail, meeting: Users,
@@ -50,6 +51,7 @@ export default function CompanyDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const currentUser = useAppStore((s) => s.currentUser)
+  const removeCompanyLocally = useAppStore((s) => s.removeCompanyLocally)
 
   const [company, setCompany] = useState<Company | null>(null)
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -59,9 +61,35 @@ export default function CompanyDetailPage() {
   const [reloadKey, setReloadKey] = useState(0)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [editOpen, setEditOpen] = useState(false)
+  const [deletingCompany, setDeletingCompany] = useState(false)
 
   // 019適用後はログイン済みの全ユーザーが編集可能（companies_updateポリシーと同期）
   const canEditCompany = !!currentUser
+
+  const handleDeleteCompany = async () => {
+    if (!company) return
+    const warning = contacts.length > 0
+      ? `\n※この会社には担当者が${contacts.length}名登録されています。削除すると「会社未設定」の扱いになります（担当者自体は削除されません）。`
+      : ''
+    if (!window.confirm(`「${company.name}」を完全に削除しますか？\nこの操作は取り消せません。${warning}`)) return
+    setDeletingCompany(true)
+    try {
+      if (isSupabaseConfigured()) {
+        await deleteCompany(company.id)
+      } else {
+        // デモモードではDBに書き込めないため、MOCK_CONTACTSの会社紐付けを
+        // ローカルに無効化して見た目上の削除を再現する（deleteContactと同じ
+        // /code-review指摘・修正パターン）
+        removeCompanyLocally(company.id)
+      }
+      toast.success(`「${company.name}」を削除しました`)
+      router.push('/contacts')
+    } catch (e) {
+      toast.error(`削除に失敗しました: ${e instanceof Error ? e.message : String(e)}`, { duration: 8000 })
+    } finally {
+      setDeletingCompany(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -253,6 +281,27 @@ export default function CompanyDetailPage() {
             <p className="text-xs text-gray-400 mt-4 pt-4 border-t border-gray-100">
               最終更新: {formatRelativeTime(company.updated_at)}
             </p>
+
+            {/* 会社の削除（043）。companiesは全事業部共有マスタのため更新より一段厳しく
+                manager/super_adminのみに限定（RLS側の判定に委ねる）。contacts/tossupsの
+                company_idはON DELETE SET NULLのため、削除しても担当者・トスアップ自体は
+                消えず「会社未設定」になるだけ（2026-08-25報告「顧客ページで削除ができる
+                ようにしてほしい」。個人詳細ページには先に追加済みで、会社詳細ページに
+                無いのを見て「削除ボタンが見当たらない」と再報告された） */}
+            {(currentUser?.role === 'super_admin' || currentUser?.role === 'manager') && (
+              <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+                <span className="text-xs text-gray-400">会社を完全に削除する</span>
+                <button
+                  type="button"
+                  onClick={handleDeleteCompany}
+                  disabled={deletingCompany}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 font-medium px-2 py-1 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                >
+                  <Trash2 size={12} />
+                  {deletingCompany ? '削除中...' : '削除する'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
