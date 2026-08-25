@@ -6,11 +6,11 @@ import {
   ArrowLeft, Building2, Building, Phone, Mail, Rocket,
   MessageSquare, CheckSquare, Clock, Plus, Tag, Lock,
   Users, FileText, ChevronDown, ExternalLink, UserCircle,
-  Edit2, Check, X, MapPin,
+  Edit2, Check, X, MapPin, Trash2,
 } from 'lucide-react'
 import { MOCK_DEALS, DEFAULT_DIVISION_CUSTOM_FIELDS } from '@/lib/mock-data'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { fetchContactById, updateContact, fetchContactCustomValues, upsertContactCustomValue } from '@/lib/db/contacts'
+import { fetchContactById, updateContact, deleteContact, fetchContactCustomValues, upsertContactCustomValue } from '@/lib/db/contacts'
 import { fetchActivitiesByTarget, updateActivityStatus, updateActivityFields } from '@/lib/db/activities'
 import { fetchDealsByContact } from '@/lib/db/deals'
 import type { Contact, Activity, Deal } from '@/types/database'
@@ -83,6 +83,7 @@ export default function ContactDetailPage() {
   const currentUser = useAppStore((s) => s.currentUser)
   const localActivities = useAppStore((s) => s.localActivities)
   const localDeals = useAppStore((s) => s.localDeals)
+  const removeContactLocally = useAppStore((s) => s.removeContactLocally)
   const taskStatuses = useAppStore((s) => s.taskStatuses)
   const setTaskStatus = useAppStore((s) => s.setTaskStatus)
   const updateLocalActivity = useAppStore((s) => s.updateLocalActivity)
@@ -184,6 +185,33 @@ export default function ContactDetailPage() {
   // 選択中の紹介者の表示用フルオブジェクト（修正9: loadContactData()の完了を待たずに
   // 保存直後から表示名を反映するため、ReferrerPickerが選択時に渡す実体をそのまま保持する）
   const [referrerDetail, setReferrerDetail] = useState<ReferrerSelectDetail>({})
+  // 顧客ページからの削除（2026-08-25報告「顧客ページで削除ができるようにしてほしい」。
+  // 従来は顧客一覧のチェックボックス一括削除にしか無かった）
+  const [deletingContact, setDeletingContact] = useState(false)
+
+  const handleDeleteContact = async () => {
+    if (!contact) return
+    if (!window.confirm(`「${contact.name}」を完全に削除しますか？\nこの操作は取り消せません。`)) return
+    setDeletingContact(true)
+    try {
+      if (isSupabaseConfigured()) {
+        await deleteContact(contact.id)
+      } else {
+        // デモモード（Supabase未接続）ではDBに書き込めないため、MOCK_CONTACTSからの
+        // 除外リストに追加して見た目上の削除を再現する（/code-reviewで、デモモードで
+        // 削除ボタンを押しても実際には消えないのに成功トーストが出る不具合を指摘され修正）
+        removeContactLocally(contact.id)
+      }
+      toast.success(`「${contact.name}」を削除しました`)
+      router.push('/contacts')
+    } catch (e) {
+      // deleteContact側で削除件数を確認しているため、RLS拒否（権限がない）・
+      // 対象が既に存在しない場合も無言の偽成功にはならず、原因が具体的に見える
+      toast.error(`削除に失敗しました: ${e instanceof Error ? e.message : String(e)}`, { duration: 8000 })
+    } finally {
+      setDeletingContact(false)
+    }
+  }
 
   if (contactLoading) {
     return (
@@ -534,6 +562,25 @@ export default function ContactDetailPage() {
                     </div>
                   )}
                 </div>
+
+                {/* 顧客の削除（担当事業部のみ。従来は顧客一覧のチェックボックス一括削除にしか
+                    無かった。RLS(041)上は同一事業部manager/super_adminのみ実際に削除できるが、
+                    一覧側の一括削除ボタンと同様に事業部一致のみをUI表示条件にし、権限自体の
+                    可否はdeleteContactのエラーメッセージに委ねる） */}
+                {isOwnDivision && (
+                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+                    <span className="text-xs text-gray-400">顧客を完全に削除する</span>
+                    <button
+                      type="button"
+                      onClick={handleDeleteContact}
+                      disabled={deletingContact}
+                      className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 font-medium px-2 py-1 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 size={12} />
+                      {deletingContact ? '削除中...' : '削除する'}
+                    </button>
+                  </div>
+                )}
               </>
             ) : (
               /* ─── 編集フォーム ─── */
@@ -761,7 +808,11 @@ export default function ContactDetailPage() {
                         const label = ACT_LABEL[act.activity_type]
                         const isExpanded = expandedIds.has(act.id)
                         const isEditingThis = editingActId === act.id
-                        const canEditAct = isOwnDivision && act.user_id === currentUser?.id
+                        // 030でactivities_updateは同一事業部メンバーに開放済み。isOwnDivision
+                        // （他事業部の顧客をトスアップ経由で閲覧している時のreadonlyガード）は
+                        // 維持しつつ、本人限定の制限はRLSと一致させて撤廃する
+                        // （2026-08-25報告「誰が記入したものでも編集できるようにしてほしい」）
+                        const canEditAct = isOwnDivision
 
                         return (
                           <div key={act.id} className="flex gap-3">

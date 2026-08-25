@@ -341,6 +341,19 @@ interface AppState {
   // 顧客情報ローカル編集（名前・役職・タグ等）
   localContactEdits: Record<string, ContactLocalEdit>  // contactId -> edit
   setLocalContactEdit: (contactId: string, edit: ContactLocalEdit) => void
+
+  // デモモード（Supabase未接続）でのMOCK_CONTACTS削除。removedDivisionIds/
+  // removedStageIdsと同じパターンで、実DBに書き込めない代わりに除外リストで
+  // 見た目上の削除を再現する（/code-reviewで、デモモードで削除ボタンを押しても
+  // 実際には消えないのに成功トーストが出る不具合を指摘され追加）
+  removedContactIds: string[]
+  removeContactLocally: (id: string) => void
+
+  // 顧客一覧の検索・並び順・表示形式（タブ切替や個別ページ遷移をまたいで維持する。
+  // 2026-08-25報告「他のタブに行って戻ると一覧が初期状態に戻ってしまう」対策。
+  // 値の型は呼び出し元（contacts/page.tsxのSortKey/ViewMode）に委ねるため広めのstring型にする
+  contactsListView: { query: string; sortKey: string; viewMode: string }
+  setContactsListView: (view: Partial<{ query: string; sortKey: string; viewMode: string }>) => void
   // ─────────────────────────────────────────────────────────────────
 }
 
@@ -633,6 +646,14 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           localContactEdits: { ...state.localContactEdits, [contactId]: edit },
         })),
+
+      contactsListView: { query: '', sortKey: 'updated_desc', viewMode: 'company' },
+      setContactsListView: (view) =>
+        set((state) => ({ contactsListView: { ...state.contactsListView, ...view } })),
+
+      removedContactIds: [],
+      removeContactLocally: (id) =>
+        set((state) => ({ removedContactIds: [...state.removedContactIds, id] })),
     }),
     {
       name: 'pollock-crm',
@@ -668,6 +689,8 @@ export const useAppStore = create<AppState>()(
         contactCustomValues: state.contactCustomValues,
         contactStatuses: state.contactStatuses,
         localContactEdits: state.localContactEdits,
+        contactsListView: state.contactsListView,
+        removedContactIds: state.removedContactIds,
         taskMeta: state.taskMeta,
         localChallenges: state.localChallenges,
       }),

@@ -464,7 +464,12 @@ export default function ActivitiesPage() {
                   const isMyTask         = activity.user_id === currentUser?.id
                   const isMyCreation     = isLocal
                   const canComplete      = !isTask || isMyTask
-                  const canEdit          = isMyTask || isMyCreation
+                  // 030でactivities_update/task_meta_updateは同一事業部メンバーに開放済み。
+                  // このページに表示される活動はfetchActivitiesByContactIds/fetchActivitiesByUser
+                  // で既に自分がアクセスできる範囲（自事業部）に絞られているため、編集ボタンだけ
+                  // 本人限定にする理由が無かった（2026-08-25報告「誰が記入したものでも編集
+                  // できるようにしてほしい」、RLSと一致させる）
+                  const canEdit          = true
                   const isLocked         = isTask && !isMyTask && !isMyCreation
                   const assigneeName     = isTask && activity.user_id !== currentUser?.id
                     ? (activity.users?.name ?? null)

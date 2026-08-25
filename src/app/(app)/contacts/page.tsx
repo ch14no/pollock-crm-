@@ -33,6 +33,17 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'company_asc',  label: '会社名（昇順）' },
   { value: 'company_desc', label: '会社名（降順）' },
 ]
+const VIEW_MODES: ViewMode[] = ['list', 'card', 'company']
+
+// ストア（contactsListView）はappStore側でstring型のまま永続化しているため、
+// 将来ソート種別/表示形式の選択肢が変わった場合に古い値がそのまま読み込まれても
+// 描画が壊れないよう、既知の値か検証してから使う（/code-reviewで指摘）
+function toSortKey(value: string): SortKey {
+  return SORT_OPTIONS.some((o) => o.value === value) ? (value as SortKey) : 'updated_desc'
+}
+function toViewMode(value: string): ViewMode {
+  return (VIEW_MODES as string[]).includes(value) ? (value as ViewMode) : 'company'
+}
 
 function normalize(str: string): string {
   return str
@@ -96,14 +107,30 @@ export default function ContactsPage() {
   const localContactEdits = useAppStore((s) => s.localContactEdits)
   const divisionCustomFields = useAppStore((s) => s.divisionCustomFields)
   const localDeals        = useAppStore((s) => s.localDeals)
+  const removedContactIds = useAppStore((s) => s.removedContactIds)
+  // 検索語・ソート順・表示形式はグローバルストアに永続化し、タスク管理など
+  // 他ページへ一旦移動して顧客一覧に戻ってきても初期状態にリセットされない
+  // ようにする（2026-08-25報告「他のタブに行って戻ると初期画面に戻ってしまう」）
+  const contactsListView    = useAppStore((s) => s.contactsListView)
+  const setContactsListView = useAppStore((s) => s.setContactsListView)
 
   const [dbContacts, setDbContacts] = useState<Contact[]>([])
   const [dbLoading, setDbLoading] = useState(false)
   const [dealCounts, setDealCounts] = useState<Record<string, number>>({})
-  const [query, setQuery]               = useState(() => searchParams.get('q') ?? '')
-  useEffect(() => { setQuery(searchParams.get('q') ?? '') }, [searchParams])
-  const [sortKey, setSortKey]           = useState<SortKey>('updated_desc')
-  const [viewMode, setViewMode]         = useState<ViewMode>('company')
+  const [query, setQuery]               = useState(() => searchParams.get('q') || contactsListView.query)
+  // ヘッダーの検索バー（?q=…付きの外部リンク）から来た場合のみURLの値で上書きする。
+  // qが無いナビゲーション（サイドバー等）では、直前まで一覧で入力していた検索語を
+  // 消さない（従来は毎回空文字にリセットされていた）
+  useEffect(() => {
+    const q = searchParams.get('q')
+    if (q) setQuery(q)
+  }, [searchParams])
+  // 変更のたびにストアへ書き戻す（他ページへ移動する直前の値を常に保持しておくため）
+  useEffect(() => { setContactsListView({ query }) }, [query]) // eslint-disable-line
+  const [sortKey, setSortKeyState]      = useState<SortKey>(() => toSortKey(contactsListView.sortKey))
+  const setSortKey = (key: SortKey) => { setSortKeyState(key); setContactsListView({ sortKey: key }) }
+  const [viewMode, setViewModeState]    = useState<ViewMode>(() => toViewMode(contactsListView.viewMode))
+  const setViewMode = (mode: ViewMode) => { setViewModeState(mode); setContactsListView({ viewMode: mode }) }
   const [locationFilter, setLocationFilter] = useState<string | null>(null)
   const [tagFilter, setTagFilter]           = useState<string | null>(null)
   const [showSortMenu, setShowSortMenu]       = useState(false)
@@ -195,11 +222,15 @@ export default function ContactsPage() {
     const base = isSupabaseConfigured()
       ? dbContacts
       : (MOCK_CONTACTS as Contact[]).filter((c) => c.division_id === activeDivisionId)
-    return base.map((c) => {
+    // デモモードでの削除（removeContactLocally）を反映する。Supabase接続時はDBから
+    // 既に消えているため実質no-opだが、削除直後の再取得が終わるまでの一瞬も
+    // 二重に安全側に倒せる
+    const removedSet = new Set(removedContactIds)
+    return base.filter((c) => !removedSet.has(c.id)).map((c) => {
       const edit = localContactEdits[c.id]
       return edit ? { ...c, ...edit } : c
     })
-  }, [dbContacts, activeDivisionId, localContactEdits])
+  }, [dbContacts, activeDivisionId, localContactEdits, removedContactIds])
 
   // select型カスタムフィールドのみフィルター対象
   const selectCustomFields = useMemo(() => {
@@ -1082,11 +1113,16 @@ function CompanyView({
       if (!map.has(key)) map.set(key, { id: key, name, contacts: [] })
       map.get(key)!.contacts.push(c)
     }
-    return [...map.values()].sort((a, b) => {
-      if (a.id === '__none__') return 1
-      if (b.id === '__none__') return -1
-      return a.name.localeCompare(b.name, 'ja')
-    })
+    // contactsは呼び出し元（一覧画面）で選択中のソート順（sortKey）に既に並んでいるため、
+    // 会社が最初に出現した順（＝Mapが文字列キーの挿入順を保持する性質をそのまま利用）を
+    // グループの並び順として採用する。以前は常に会社名のアルファベット順に固定していたため、
+    // 一覧側でソート順を変えてもデフォルト表示である会社別ビューには一切反映されない
+    // 不具合になっていた（2026-08-25報告「顧客管理のソート機能が動いてない」）。
+    // 「会社未設定」グループのみ従来通り末尾固定にする
+    const order = [...map.keys()]
+    const withoutNone = order.filter((k) => k !== '__none__')
+    const ordered = order.includes('__none__') ? [...withoutNone, '__none__'] : withoutNone
+    return ordered.map((key) => map.get(key)!)
   }, [contacts])
 
   const toggle = (key: string) =>
