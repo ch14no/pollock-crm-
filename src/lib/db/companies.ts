@@ -1,5 +1,5 @@
 import { getSupabase } from './client'
-import type { Company, Contact } from '@/types/database'
+import type { Company, Contact, ListingStatus } from '@/types/database'
 
 // companyGroups.tsからも参照するためexportする（同じ変換ロジックの重複を避ける）
 export function toCompany(data: Record<string, unknown>): Company {
@@ -19,6 +19,8 @@ export function toCompany(data: Record<string, unknown>): Company {
     name_kana: data.name_kana ?? undefined,
     representative_kana: data.representative_kana ?? undefined,
     representative2_kana: data.representative2_kana ?? undefined,
+    listing_status: data.listing_status ?? undefined,
+    prefecture: data.prefecture ?? undefined,
     employee_count: data.employee_count ?? undefined,
     capital: data.capital ?? undefined,
     established_on: data.established_on ?? undefined,
@@ -27,8 +29,9 @@ export function toCompany(data: Record<string, unknown>): Company {
 }
 
 // companiesからindustry_classesへのFKは industry_code の1本のみのため、
-// PGRST201の埋め込み衝突は起きない（bareなembedのままでよい）
-const COMPANY_SELECT = '*, industry_class:industry_classes(code, level, parent_code, name, keywords, sort_order)'
+// PGRST201の埋め込み衝突は起きない（bareなembedのままでよい）。
+// buyerProspects.tsからも参照するためexportする
+export const COMPANY_SELECT = '*, industry_class:industry_classes(code, level, parent_code, name, keywords, sort_order)'
 
 export async function fetchCompanyById(id: string): Promise<Company | null> {
   const { data, error } = await getSupabase()
@@ -69,6 +72,7 @@ export async function updateCompany(id: string, updates: {
   industryCode?: string | null; businessDescription?: string | null
   representative?: string | null; representative2?: string | null
   nameKana?: string | null; representativeKana?: string | null; representative2Kana?: string | null
+  listingStatus?: ListingStatus | null; prefecture?: string | null
   employeeCount?: number | null; capital?: number | null
   establishedOn?: string | null; note?: string | null
 }): Promise<Company> {
@@ -87,6 +91,8 @@ export async function updateCompany(id: string, updates: {
   if (updates.nameKana !== undefined) patch.name_kana = updates.nameKana
   if (updates.representativeKana !== undefined) patch.representative_kana = updates.representativeKana
   if (updates.representative2Kana !== undefined) patch.representative2_kana = updates.representative2Kana
+  if (updates.listingStatus !== undefined) patch.listing_status = updates.listingStatus
+  if (updates.prefecture !== undefined) patch.prefecture = updates.prefecture
   if (updates.employeeCount !== undefined) patch.employee_count = updates.employeeCount
   if (updates.capital !== undefined) patch.capital = updates.capital
   if (updates.establishedOn !== undefined) patch.established_on = updates.establishedOn

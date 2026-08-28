@@ -1,5 +1,23 @@
 # pollock-crm 引継ぎメモ（.claude/CLAUDE.md）
 
+## 2026-08-28: M&A事業部（酒田さん）フェーズ1「会社情報拡張」実装・本番デプロイ済み（`8199d6d`、044〜046適用済み）
+
+M&A事業部の酒田さんから東さん経由で4項目の要望（①会社情報拡張 ②買手打診結果一覧 ③AD契・NDA締結管理 ④商談記録フォーム変更）が届き、設計をFable 5に壁打ちさせた上で**フェーズ1（①会社情報拡張）のみ**着手（フェーズ2〜4はユーザーの指示待ち）。
+
+- **業種の大中小階層選択式**: 新テーブル`industry_classes`（TSR/JSIC準拠、大分類=英字1桁/中分類=数字2桁/小分類=数字3桁、自己参照`parent_code`で1テーブルに階層を収める）＋`companies.industry_code`FK。`IndustryPicker.tsx`（`ContactPicker`と同じ検索ポップアップパターン、階層ドリルダウン＋全階層横断検索の両対応）。既存の自由入力`industry`列はDB上残置し、業種マスタ未投入環境向けのフォールバック（`CompanyEditModal`が`fetchIndustryClasses()`の結果件数で表示を出し分け）。**045は酒田さん提供Excelのサンプル37区分のみ**（大分類20・中分類99・小分類394の完全版は未提供、揃い次第`ON CONFLICT (code) DO UPDATE`で追加投入すればよい設計）。
+- **事業内容欄**（`business_description`、`AutoGrowTextarea`）、**代表者②**（共同代表対応、`representative2`）、**会社名・代表者①②のフリガナ**（`name_kana`/`representative_kana`/`representative2_kana`）を追加。
+- **グループ会社の紐づけ**: 新テーブル`company_group_links`（無向ペア、`LEAST/GREATEST`のUNIQUE INDEXで逆向き重複防止）。`CompanyPicker.tsx`新設（`ContactPicker`同様の検索ポップアップ、ただし選択後は即追加して閉じるだけの単発アクションのため`selectedId`/`onClear`は持たない設計——フェーズ2の買手打診リストでも同じ`CompanyPicker`を再利用する想定）。`CompanyGroupSection.tsx`（会社詳細ページに表示、`DealDocumentsSection`と同じ「セクション自体が例外時は隠れる」フォールバックパターン）。
+
+`/code-review`で4件修正:
+1. `updateCompany`が`.select('*')`のままで、保存直後に返るCompanyオブジェクトから`industry_class`（join結果）が欠落し、画面上の業種表示が保存直後だけ消える → `COMPANY_SELECT`（`industry_classes`のjoin込み）に統一。
+2. `fetchCompanyById`のエラーを一律nullに丸めていたのを、`PGRST116`（本当に0件）以外は例外を再throwするよう変更 → 044等のマイグレーション未適用時にPGRST201的なembed衝突が起きても「会社が見つかりません」ではなく正しく「読み込みに失敗しました」表示に回るようにした（deals側で2026-08-20に起きたPGRST201の教訓を踏まえた予防的対応）。
+3. `CompanyGroupSection`の紐づけ解除が失敗した際（他ユーザーによる同時解除等で0件）、ローカルの`links`一覧が再読込されず「消えたはずのリンクが残ったまま」の幽霊状態になる → catch節でも`loadData()`するよう修正。
+4. `IndustryPicker`が独自に`fetchIndustryClasses()`を再フェッチして0件なら自己非表示する設計だったが、呼び出し元（`CompanyEditModal`）が既に同じ判定（`industryMasterReady`）をしているため、両者のフェッチ結果が食い違うと（一時的なネットワーク瞬断等）欄ごと消える不整合になりうる → `IndustryPicker`の自己非表示ロジックを削除し、表示要否の判断は呼び出し元に一本化。
+
+**マイグレーション適用状況**: 044・045・046を本番適用済み（2026-08-28、ユーザーが044→046→045の順で実行したが、046は`industry_classes`に依存しないため問題なし）。
+
+**残タスク**: フェーズ2（買手打診結果一覧・CSV出力）・フェーズ3（AD契/NDA締結管理）・フェーズ4（商談記録フォーム変更）は酒田さんの要望に含まれるが未着手、ユーザーの指示があり次第着手。着手前に酒田さんへ確認すべき設計上の未決事項（Fable5設計時に洗い出し済み）: フリガナの入力必須範囲、AD契/NDAの「締結可否」欄の値の意味、ネームクリア可否の選択肢、業種分類の完全版データ投入時期、買手打診リストの閲覧範囲（事業部限定か全社か）。
+
 > コーディング規約・検証コマンドはリポジトリ直下の `CLAUDE.md`（＋`AGENTS.md`）が正。
 > システム全体像は `docs/handover-report.md`、M&A要望24項目は `docs/ma-feedback-progress-report.md` が正。
 > 本ファイルは「マイグレーション適用状況・最近の変更・残タスク・デプロイ方法」の引継ぎ用。
@@ -116,8 +134,15 @@ Google Docsのバグ・要望管理ドキュメント（画像添付あり、`re
   - 033 task_meta.updated_at + BEFOREトリガ（DBタイムスタンプ再同期用）
   - 034 未担当（user_id IS NULL）タスクのRLS修正（`shares_division_with_activity_target`）
   - 035 `replace_pipeline_stages`（パイプラインステージ保存のトランザクション化）
-  - **036（未適用）** `task_meta.sort_order` INTEGER→NUMERIC化、正規化RPC `normalize_task_kanban_sort_order`、`task_meta`/`task_kanban_stages`のRealtime publication追加
-  - **037（未適用）** `task_stage_user_visibility`（個人ビューでの担当外列非表示設定）＋RPC `replace_task_stage_visibility`、Realtime publication追加
+  - 036 `task_meta.sort_order` INTEGER→NUMERIC化、正規化RPC `normalize_task_kanban_sort_order`、`task_meta`/`task_kanban_stages`のRealtime publication追加（適用済み、上記参照）
+  - 037 `task_stage_user_visibility`（個人ビューでの担当外列非表示設定）＋RPC `replace_task_stage_visibility`、Realtime publication追加（適用済み、上記参照）
+  - 038 財務支援事業部のステージフラグ・レガシーstage_id修正（REST直接適用）
+  - 039 タスクカンバンのタブ切り替え機能
+  - 040 deals_delete ポリシー新設
+  - 041 contacts_delete の事業部スコープ修正
+  - 042 activities_select/update・task_meta_select/update に`shares_division_with_activity_target`のOR分岐追加
+  - 043 companies_delete ポリシー新設
+  - **044〜046（2026-08-28適用済み）** M&A事業部フェーズ1: `industry_classes`（業種マスタ）＋`companies`列追加（044）、業種マスタのサンプル37区分投入（045）、`company_group_links`（グループ会社紐づけ、046）。詳細は本ファイル冒頭の該当セクション参照
 
 ## 2026-07-31セッションの変更（要点・PRブランチ`realtime-task-sync`、未マージ・未SQL適用）
 

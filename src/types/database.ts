@@ -55,6 +55,9 @@ export interface UserDivision {
   is_primary: boolean
 }
 
+// 上場区分（047、買手打診リストの表示・CSV出力用に会社属性として保持）
+export type ListingStatus = '東証プライム' | '東証スタンダード' | '東証グロース' | 'その他上場' | '非上場'
+
 export interface Company {
   id: string
   name: string
@@ -72,6 +75,8 @@ export interface Company {
   name_kana?: string
   representative_kana?: string
   representative2_kana?: string
+  listing_status?: ListingStatus
+  prefecture?: string
   employee_count?: number
   capital?: number
   established_on?: string
@@ -284,6 +289,9 @@ export type DesiredArea = '全国' | '1都3県' | '関東' | '関西' | '中部'
 export type LossDeficitOk = '可' | '否'
 export type FundingMethod = '手元資金' | '借入' | 'エクイティ'
 
+// AD契・NDA締結可否（048）。023の LossDeficitOk と同型（可/否、未設定=未確認）
+export type ContractSignStatus = '可' | '否'
+
 // 売主の譲渡希望条件（1商談＝1レコード）
 export interface DealSellerConditions {
   deal_id: string
@@ -292,7 +300,32 @@ export interface DealSellerConditions {
   desired_scheme?: string
   desired_price?: string
   other_conditions?: string
+  // AD契・NDA締結管理（048、M&A事業部要望フェーズ3）
+  ad_contract_status?: ContractSignStatus
+  ad_contract_date?: string
+  nda_status?: ContractSignStatus
+  nda_date?: string
   updated_at: string
+}
+
+// ネームクリア可否（047）。未設定=未確認
+export type NameClearStatus = '可' | '否'
+
+// 買手打診リスト（047、M&A事業部要望フェーズ2。1商談＝多行）。
+// 企業名・代表者・業種等の会社情報はcompany_id joinのライブ参照とし、
+// この行が固有に持つのは所感（note）とネームクリア可否（name_clear）のみ
+export interface DealBuyerProspect {
+  id: string
+  deal_id: string
+  division_id: string
+  company_id?: string // 会社削除時はNULL（行自体は残る）
+  note?: string
+  name_clear?: NameClearStatus
+  created_by?: string
+  created_at: string
+  updated_at: string
+  // joined
+  company?: Company
 }
 
 // 買主の買収意向（1商談＝1レコード）

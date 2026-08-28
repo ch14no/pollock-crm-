@@ -10,6 +10,7 @@ import { DealDocumentsSection } from '@/components/deals/DealDocumentsSection'
 import { DealPaymentsSection } from '@/components/deals/DealPaymentsSection'
 import { DealMilestonesSection } from '@/components/deals/DealMilestonesSection'
 import { DealConditionsSection } from '@/components/deals/DealConditionsSection'
+import { DealBuyerProspectsSection } from '@/components/deals/DealBuyerProspectsSection'
 import type { DealPriority } from '@/types/database'
 import { useAppStore } from '@/store/appStore'
 import { DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS } from '@/lib/mock-data'
@@ -620,6 +621,13 @@ export function DealModal() {
           <DealMilestonesSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
           {(isSellerTab || isBuyerTab) && (
             <DealConditionsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} party={isBuyerTab ? 'buyer' : 'seller'} />
+          )}
+          {isSellerTab && (
+            <DealBuyerProspectsSection
+              dealId={dealModal.deal.id}
+              divisionId={dealModal.deal.division_id}
+              dealTitle={dealModal.deal.title}
+            />
           )}
         </div>
       )}

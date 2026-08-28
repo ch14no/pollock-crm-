@@ -7,9 +7,11 @@ import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
 import { IndustryPicker } from '@/components/ui/IndustryPicker'
 import { updateCompany } from '@/lib/db/companies'
 import { fetchIndustryClasses } from '@/lib/db/industries'
-import { isHttpUrl } from '@/lib/utils'
-import type { Company } from '@/types/database'
+import { isHttpUrl, PREFECTURES } from '@/lib/utils'
+import type { Company, ListingStatus } from '@/types/database'
 import toast from 'react-hot-toast'
+
+const LISTING_STATUS_OPTIONS: ListingStatus[] = ['東証プライム', '東証スタンダード', '東証グロース', 'その他上場', '非上場']
 
 interface CompanyEditModalProps {
   onClose: () => void
@@ -33,6 +35,8 @@ export function CompanyEditModal({ onClose, company, onSaved }: CompanyEditModal
   const [representativeKana, setRepresentativeKana] = useState(company.representative_kana ?? '')
   const [representative2, setRepresentative2] = useState(company.representative2 ?? '')
   const [representative2Kana, setRepresentative2Kana] = useState(company.representative2_kana ?? '')
+  const [listingStatus, setListingStatus] = useState<ListingStatus | ''>(company.listing_status ?? '')
+  const [prefecture, setPrefecture] = useState(company.prefecture ?? '')
   const [address, setAddress] = useState(company.address ?? '')
   const [phone, setPhone] = useState(company.phone ?? '')
   const [employeeCount, setEmployeeCount] = useState(company.employee_count?.toString() ?? '')
@@ -82,6 +86,8 @@ export function CompanyEditModal({ onClose, company, onSaved }: CompanyEditModal
     if (representative2Kana.trim() !== (company.representative2_kana ?? '')) {
       updates.representative2Kana = representative2Kana.trim() || null
     }
+    if (listingStatus !== (company.listing_status ?? '')) updates.listingStatus = listingStatus || null
+    if (prefecture !== (company.prefecture ?? '')) updates.prefecture = prefecture || null
     if (address.trim() !== (company.address ?? '')) updates.address = address.trim() || null
     if (phone.trim() !== (company.phone ?? '')) updates.phone = phone.trim() || null
     if (emp !== (company.employee_count?.toString() ?? '')) updates.employeeCount = emp ? Number(emp) : null
@@ -178,10 +184,26 @@ export function CompanyEditModal({ onClose, company, onSaved }: CompanyEditModal
               placeholder="例: スズキ ジロウ" className={inputCls} />
           </div>
         </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1">住所</label>
+            <input type="text" value={address} onChange={(e) => setAddress(e.target.value)}
+              placeholder="例: 大阪府大阪市淀川区西中島4-7-7" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">都道府県</label>
+            <select value={prefecture} onChange={(e) => setPrefecture(e.target.value)} className={inputCls}>
+              <option value="">未選択（住所から自動判定）</option>
+              {PREFECTURES.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+        </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">住所</label>
-          <input type="text" value={address} onChange={(e) => setAddress(e.target.value)}
-            placeholder="例: 大阪府大阪市淀川区西中島4-7-7" className={inputCls} />
+          <label className="block text-sm font-medium text-gray-700 mb-1">上場区分</label>
+          <select value={listingStatus} onChange={(e) => setListingStatus(e.target.value as ListingStatus | '')} className={inputCls}>
+            <option value="">未選択</option>
+            {LISTING_STATUS_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+          </select>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>

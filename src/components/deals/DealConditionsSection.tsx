@@ -6,7 +6,7 @@ import {
   fetchSellerConditions, upsertSellerConditions,
   fetchBuyerConditions, upsertBuyerConditions,
 } from '@/lib/db/conditions'
-import type { DesiredArea, FundingMethod, LossDeficitOk } from '@/types/database'
+import type { ContractSignStatus, DesiredArea, FundingMethod, LossDeficitOk } from '@/types/database'
 import toast from 'react-hot-toast'
 
 interface DealConditionsSectionProps {
@@ -18,14 +18,23 @@ interface DealConditionsSectionProps {
 const DESIRED_AREA_OPTIONS: DesiredArea[] = ['全国', '1都3県', '関東', '関西', '中部', '九州', 'その他']
 const LOSS_DEFICIT_OPTIONS: LossDeficitOk[] = ['可', '否']
 const FUNDING_METHOD_OPTIONS: FundingMethod[] = ['手元資金', '借入', 'エクイティ']
+const CONTRACT_SIGN_OPTIONS: ContractSignStatus[] = ['可', '否']
 
 interface SellerFormState {
   desiredTiming: string
   desiredScheme: string
   desiredPrice: string
   otherConditions: string
+  // AD契・NDA締結管理（048、M&A事業部要望フェーズ3）
+  adContractStatus: ContractSignStatus | ''
+  adContractDate: string
+  ndaStatus: ContractSignStatus | ''
+  ndaDate: string
 }
-const EMPTY_SELLER: SellerFormState = { desiredTiming: '', desiredScheme: '', desiredPrice: '', otherConditions: '' }
+const EMPTY_SELLER: SellerFormState = {
+  desiredTiming: '', desiredScheme: '', desiredPrice: '', otherConditions: '',
+  adContractStatus: '', adContractDate: '', ndaStatus: '', ndaDate: '',
+}
 
 interface BuyerFormState {
   desiredArea: DesiredArea | ''
@@ -71,6 +80,10 @@ export function DealConditionsSection({ dealId, divisionId, party }: DealConditi
           desiredScheme: data.desired_scheme ?? '',
           desiredPrice: data.desired_price ?? '',
           otherConditions: data.other_conditions ?? '',
+          adContractStatus: data.ad_contract_status ?? '',
+          adContractDate: data.ad_contract_date ?? '',
+          ndaStatus: data.nda_status ?? '',
+          ndaDate: data.nda_date ?? '',
         } : EMPTY_SELLER)
       } else {
         const data = await fetchBuyerConditions(dealId)
@@ -109,11 +122,17 @@ export function DealConditionsSection({ dealId, divisionId, party }: DealConditi
     setSaving(true)
     try {
       if (party === 'seller') {
-        await upsertSellerConditions(dealId, divisionId, sellerForm)
+        const { strippedFields } = await upsertSellerConditions(dealId, divisionId, sellerForm)
+        if (strippedFields.length > 0) {
+          // 048（AD契・NDA列）未適用の環境。既存項目は保存されたが、新項目だけ反映されなかった旨を伝える
+          toast.error('AD契・NDA欄はデータベースの準備が未完了のため保存されませんでした（他の項目は保存済みです）', { duration: 6000 })
+        } else {
+          toast.success('条件を保存しました')
+        }
       } else {
         await upsertBuyerConditions(dealId, divisionId, buyerForm)
+        toast.success('条件を保存しました')
       }
-      toast.success('条件を保存しました')
     } catch {
       toast.error('条件の保存に失敗しました')
     } finally {
@@ -157,6 +176,39 @@ export function DealConditionsSection({ dealId, divisionId, party }: DealConditi
             <input type="text" value={sellerForm.otherConditions}
               onChange={(e) => setSellerForm((f) => ({ ...f, otherConditions: e.target.value }))}
               placeholder="自由記述" className={inputCls} />
+          </div>
+          {/* AD契・NDA締結管理（048、M&A事業部要望フェーズ3）。「締結可否」の意味は
+              酒田さん未回答のためNULL=未確認の状態として扱う。締結日は可否と独立して入力可能
+              （締結済みなら日付だけ先に埋める運用も許容する） */}
+          <div>
+            <label className={labelCls}>AD契 締結可否</label>
+            <select value={sellerForm.adContractStatus}
+              onChange={(e) => setSellerForm((f) => ({ ...f, adContractStatus: e.target.value as ContractSignStatus | '' }))}
+              className={inputCls}>
+              <option value="">未確認</option>
+              {CONTRACT_SIGN_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>AD契 締結日</label>
+            <input type="date" value={sellerForm.adContractDate}
+              onChange={(e) => setSellerForm((f) => ({ ...f, adContractDate: e.target.value }))}
+              className={inputCls} />
+          </div>
+          <div>
+            <label className={labelCls}>NDA 締結可否</label>
+            <select value={sellerForm.ndaStatus}
+              onChange={(e) => setSellerForm((f) => ({ ...f, ndaStatus: e.target.value as ContractSignStatus | '' }))}
+              className={inputCls}>
+              <option value="">未確認</option>
+              {CONTRACT_SIGN_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>NDA 締結日</label>
+            <input type="date" value={sellerForm.ndaDate}
+              onChange={(e) => setSellerForm((f) => ({ ...f, ndaDate: e.target.value }))}
+              className={inputCls} />
           </div>
         </div>
       ) : (
