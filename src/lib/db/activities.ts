@@ -1,5 +1,5 @@
 import { getSupabase, chunkIdList } from './client'
-import type { Activity, DivisionMemoCategory } from '@/types/database'
+import type { Activity, DivisionMemoCategory, DivisionCounterpartType } from '@/types/database'
 
 // カテゴリ未設定の事業部向けフォールバック（020適用前・カテゴリ0件でもすぐ使えるように）
 export const DEFAULT_MEMO_CATEGORY_NAMES: string[] = ['顧客', '案件', '面談', '契約']
@@ -34,10 +34,15 @@ export async function fetchActivitiesByTarget(targetType: string, targetId: stri
   return (data ?? []).map(toActivity)
 }
 
+// 任意カラム（020: memo_category、049: end_at・counterpart_type）のキー一覧。
+// 未適用の環境でも通常の活動記録まで巻き添えで失敗させないためのフォールバック対象
+const OPTIONAL_ACTIVITY_COLUMNS = ['memo_category', 'end_at', 'counterpart_type'] as const
+
 export async function createActivity(input: {
   targetType: string; targetId: string; userId?: string; activityType: string
   title?: string; memo?: string; memoCategory?: string; dueDate?: string; status?: string; actionDate?: string
-}): Promise<string> {
+  endAt?: string; counterpartType?: string
+}): Promise<{ id: string; strippedFields: string[] }> {
   const payload: Record<string, unknown> = {
     target_type: input.targetType, target_id: input.targetId,
     user_id: input.userId ?? null, activity_type: input.activityType,
@@ -45,20 +50,32 @@ export async function createActivity(input: {
     due_date: input.dueDate ?? null, status: input.status ?? 'done',
     action_date: input.actionDate ?? new Date().toISOString(),
   }
-  // 値が指定されたときだけ任意カラム（020）を含める
+  // 値が指定されたときだけ任意カラムを含める
   if (input.memoCategory !== undefined) payload.memo_category = input.memoCategory
+  if (input.endAt !== undefined) payload.end_at = input.endAt
+  if (input.counterpartType !== undefined) payload.counterpart_type = input.counterpartType
 
   const insert = (p: Record<string, unknown>) =>
     getSupabase().from('activities').insert(p).select('id').single()
 
   let { data, error } = await insert(payload)
-  if (error && 'memo_category' in payload && isMissingColumnError(error, 'memo_category')) {
-    delete payload.memo_category
+  // for文の1回巡回だと、あるカラムを除去した結果「次のエラーが実は前段で
+  // 既にチェック済みの別カラムを指す」場合に取りこぼす（列不在エラーの報告順が
+  // OPTIONAL_ACTIVITY_COLUMNSの配列順と一致する保証はないため）。
+  // 未試行のカラム集合が尽きるかエラーが消えるまで回すことで対応
+  const strippedFields: string[] = []
+  const remaining = new Set(OPTIONAL_ACTIVITY_COLUMNS)
+  while (error && remaining.size > 0) {
+    const hit = [...remaining].find((col) => col in payload && isMissingColumnError(error, col))
+    if (!hit) break
+    delete payload[hit]
+    remaining.delete(hit)
+    strippedFields.push(hit)
     ;({ data, error } = await insert(payload))
   }
   if (error) throw error
   if (!data) throw new Error('活動の作成結果を取得できませんでした')
-  return data.id
+  return { id: data.id, strippedFields }
 }
 
 export async function updateActivityStatus(id: string, status: string): Promise<void> {
@@ -324,6 +341,8 @@ function toActivity(r: Record<string, unknown>): Activity {
     title: r.title as string | undefined,
     memo: r.memo as string | undefined,
     memo_category: (r.memo_category as string | null) ?? undefined,
+    end_at: (r.end_at as string | null) ?? undefined,
+    counterpart_type: (r.counterpart_type as string | null) ?? undefined,
     due_date: r.due_date as string | undefined,
     status: r.status as Activity['status'],
     action_date: r.action_date as string,
@@ -360,5 +379,39 @@ export async function createDivisionMemoCategory(input: {
 
 export async function deleteDivisionMemoCategory(id: string): Promise<void> {
   const { error } = await getSupabase().from('division_memo_categories').delete().eq('id', id)
+  if (error) throw error
+}
+
+// ─── 事業部別顧客属性（division_counterpart_types・049） ─────────
+// memo_categoryと異なり、汎用的なデフォルト値は用意しない（「売主/買主」等の
+// M&A特有の語彙を他事業部に押し付けないため）。設定0件の事業部では
+// ActivityModal側がセクションごと非表示にする
+
+export async function fetchDivisionCounterpartTypes(divisionId: string): Promise<DivisionCounterpartType[]> {
+  const { data, error } = await getSupabase()
+    .from('division_counterpart_types')
+    .select('*')
+    .eq('division_id', divisionId)
+    .order('sort_order')
+  if (error) throw error
+  return (data ?? []).map((r) => ({
+    id: r.id as string,
+    division_id: r.division_id as string,
+    name: r.name as string,
+    sort_order: (r.sort_order as number) ?? 0,
+  }))
+}
+
+export async function createDivisionCounterpartType(input: {
+  divisionId: string; name: string; sortOrder: number
+}): Promise<void> {
+  const { error } = await getSupabase()
+    .from('division_counterpart_types')
+    .insert({ division_id: input.divisionId, name: input.name, sort_order: input.sortOrder })
+  if (error) throw error
+}
+
+export async function deleteDivisionCounterpartType(id: string): Promise<void> {
+  const { error } = await getSupabase().from('division_counterpart_types').delete().eq('id', id)
   if (error) throw error
 }

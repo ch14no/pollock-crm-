@@ -358,6 +358,12 @@ export interface Activity {
   memo?: string
   // 用途別カテゴリ（顧客/案件/面談/契約等・事業部で設定可能。M&A事業部要望⑰）
   memo_category?: string
+  // 商談記録フォーム拡張（049、M&A事業部要望フェーズ4）。
+  // action_dateを開始日時として扱い、end_atは任意の終了日時
+  end_at?: string
+  // 顧客属性（売主/買主/提携先等・事業部で設定可能）。対象が商談かつタスク以外の
+  // 場合に限り件名の代わりに使う（他事業部・タスク作成には影響させない設計）
+  counterpart_type?: string
   due_date?: string
   status: ActivityStatus
   action_date: string
@@ -368,6 +374,14 @@ export interface Activity {
 
 // 事業部ごとの活動メモカテゴリ
 export interface DivisionMemoCategory {
+  id: string
+  division_id: string
+  name: string
+  sort_order: number
+}
+
+// 事業部ごとの顧客属性マスタ（049、DivisionMemoCategoryと同型）
+export interface DivisionCounterpartType {
   id: string
   division_id: string
   name: string

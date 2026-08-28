@@ -41,6 +41,7 @@ import {
 } from '@/lib/db/knowledge'
 import {
   fetchDivisionMemoCategories, createDivisionMemoCategory, deleteDivisionMemoCategory,
+  fetchDivisionCounterpartTypes, createDivisionCounterpartType, deleteDivisionCounterpartType,
 } from '@/lib/db/activities'
 import type { DivisionDocType } from '@/types/database'
 import type { User as UserType, Division } from '@/types/database'
@@ -289,6 +290,7 @@ export default function SettingsPage() {
           <DocTypesPanel key={`doctypes-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <KnowledgeCategoriesPanel key={`knowledge-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <MemoCategoriesPanel key={`memo-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+          <CounterpartTypesPanel key={`counterpart-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <TaskStagesPanel key={`tasks-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <TaskStageVisibilityPanel key={`task-visibility-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <NotificationSettingsPanel key={`notif-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
@@ -1993,6 +1995,24 @@ function MemoCategoriesPanel(props: MasterPanelProps) {
       fetchCategories={fetchDivisionMemoCategories}
       createCategory={createDivisionMemoCategory}
       deleteCategory={deleteDivisionMemoCategory}
+    />
+  )
+}
+
+// ─── 顧客属性管理（商談記録フォーム拡張・M&A事業部要望フェーズ4） ───────────────
+function CounterpartTypesPanel(props: MasterPanelProps) {
+  return (
+    <DivisionCategoryPanel
+      {...props}
+      title="顧客属性管理"
+      icon={<Activity size={18} />}
+      description="商談に紐づく活動記録（電話・メール・面談・メモ）で、件名の代わりに選べる顧客属性を管理します（例: 売主・買主・提携先）。1件も設定していない事業部ではこの項目自体が表示されず、従来どおり件名を入力します。"
+      migrationHint="顧客属性のDBテーブル（049_deal_activity_recording.sql）が未適用のため利用できません。"
+      emptyText="顧客属性は未設定です（商談の活動記録では従来どおり件名を入力します）"
+      placeholder="属性名を入力（例: 仲介先）"
+      fetchCategories={fetchDivisionCounterpartTypes}
+      createCategory={createDivisionCounterpartType}
+      deleteCategory={deleteDivisionCounterpartType}
     />
   )
 }

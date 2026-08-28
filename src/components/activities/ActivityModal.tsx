@@ -8,7 +8,10 @@ import { ContactPicker } from '@/components/ui/ContactPicker'
 import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
-import { createActivity, upsertTaskMeta, updateTaskKanbanStage, fetchDivisionMemoCategories, DEFAULT_MEMO_CATEGORY_NAMES } from '@/lib/db/activities'
+import {
+  createActivity, upsertTaskMeta, updateTaskKanbanStage,
+  fetchDivisionMemoCategories, DEFAULT_MEMO_CATEGORY_NAMES, fetchDivisionCounterpartTypes,
+} from '@/lib/db/activities'
 import { fetchDivisionUsers } from '@/lib/db/users'
 import { getInitials, cn, formatErrorDetail } from '@/lib/utils'
 import toast from 'react-hot-toast'
@@ -27,9 +30,11 @@ interface ActivityFormState {
   title: string
   memo: string
   memoCategory: string // ''=カテゴリなし
+  counterpartType: string // ''=未選択（商談記録・件名の代わりに使う。M&A事業部要望フェーズ4）
   contactId: string
   assigneeId: string
   actionDate: string
+  endAt: string // 終了日時（省略可。商談記録フォーム拡張・フェーズ4）
   dueDate: string
   status: 'todo' | 'done'
 }
@@ -47,26 +52,38 @@ export function ActivityModal() {
   const [divisionMembers, setDivisionMembers] = useState<User[]>([])
   // 用途別カテゴリの選択肢（事業部設定 or 既定値。M&A事業部要望⑰）
   const [categoryNames, setCategoryNames] = useState<string[]>(DEFAULT_MEMO_CATEGORY_NAMES)
+  // 顧客属性の選択肢（事業部設定のみ。memo_categoryと異なり汎用デフォルトは持たない
+  // ＝設定していない事業部では0件のまま＝この項目自体が表示されない）
+  const [counterpartTypeNames, setCounterpartTypeNames] = useState<string[]>([])
+  // フェッチ完了フラグ。falseの間は件名/顧客属性のどちらを表示するか確定させない
+  // （取得前に確定させると、前回開いた別の事業部・商談の値が一瞬残ったり、
+  // 取得完了と同時に件名欄が顧客属性欄に差し替わって入力中の文字が消えたりする。
+  // /code-reviewで指摘された競合状態）
+  const [counterpartTypesLoaded, setCounterpartTypesLoaded] = useState(false)
 
   const isManager = currentUser?.role === 'manager' || currentUser?.role === 'super_admin'
 
   const [form, setForm] = useState<ActivityFormState>({
-    type: 'call', title: '', memo: '', memoCategory: '', contactId: '',
+    type: 'call', title: '', memo: '', memoCategory: '', counterpartType: '', contactId: '',
     assigneeId: currentUser?.id ?? '',
-    actionDate: todayStr(), dueDate: '', status: 'todo',
+    actionDate: todayStr(), endAt: '', dueDate: '', status: 'todo',
   })
 
   useEffect(() => {
     if (!activityModal.isOpen) return
     setForm({
-      type: activityModal.prefillKanbanStageId ? 'task' : 'call', title: '', memo: '', memoCategory: '',
+      type: activityModal.prefillKanbanStageId ? 'task' : 'call', title: '', memo: '', memoCategory: '', counterpartType: '',
       contactId: activityModal.prefillContactId ?? '',
       assigneeId: currentUser?.id ?? '',
-      actionDate: todayStr(), dueDate: '', status: 'todo',
+      actionDate: todayStr(), endAt: '', dueDate: '', status: 'todo',
     })
     setTaskUrgency(activityModal.prefillTaskUrgency ?? false)
     setTaskImportance(activityModal.prefillTaskImportance ?? false)
     setTaskScope('personal')
+    // 前回開いたとき（別の事業部・商談）の値が一瞬残らないよう、フェッチ開始前に
+    // 同期的に空へリセットする（フェッチ完了までは顧客属性欄を出さない）
+    setCounterpartTypeNames([])
+    setCounterpartTypesLoaded(false)
 
     // 事業部メンバーを取得（マネージャーのタスク割り当て用）。
     // 失敗時は自分のみ割当可能な状態にフォールバック（fetchDivisionUsersがエラーをthrowするようになったため）
@@ -85,12 +102,29 @@ export function ActivityModal() {
           setCategoryNames(cats.length > 0 ? cats.map((c) => c.name) : DEFAULT_MEMO_CATEGORY_NAMES)
         })
         .catch(() => { if (!cancelled) setCategoryNames([]) })
+      // 顧客属性を取得。memo_categoryと異なり既定値へのフォールバックはしない
+      // （未設定＝この事業部では使わない項目、という意味になる）
+      fetchDivisionCounterpartTypes(activeDivisionId)
+        .then((types) => { if (!cancelled) setCounterpartTypeNames(types.map((t) => t.name)) })
+        .catch(() => { if (!cancelled) setCounterpartTypeNames([]) })
+        .finally(() => { if (!cancelled) setCounterpartTypesLoaded(true) })
+    } else {
+      // 未接続（デモモード）等でフェッチ自体を行わないケース。ロード待ちのまま
+      // 固まらないよう即座に完了扱いにする（この場合useCounterpartTypeは常にfalse）
+      setCounterpartTypesLoaded(true)
     }
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activityModal.isOpen])
 
   const isTask = form.type === 'task'
+  // 対象が商談かつタスク以外の場合のみ、件名を顧客属性選択に置き換える
+  // （ユーザー確認済み。タスク作成には一切影響させない。事業部側でcounterpart_typesを
+  // 設定していない限り発動しないため、既定では他事業部にも影響しない）
+  const isDealActivity = !!activityModal.prefillDealId
+  const useCounterpartType = isDealActivity && !isTask && counterpartTypeNames.length > 0
+  // 顧客属性の取得が完了するまでは件名/顧客属性のどちらを出すか未確定として扱う
+  const counterpartTypeDecisionPending = isDealActivity && !isTask && !counterpartTypesLoaded
   const isSelfAssigned = form.assigneeId === currentUser?.id
   const assignee = divisionMembers.find((m) => m.id === form.assigneeId)
     ?? (form.assigneeId === currentUser?.id ? currentUser : null)
@@ -109,26 +143,42 @@ export function ActivityModal() {
       toast.error('タスクのタイトルを入力してください')
       return
     }
+    if (!isTask && form.endAt && new Date(form.endAt).getTime() < new Date(form.actionDate).getTime()) {
+      toast.error('終了日時は開始日時より後にしてください')
+      return
+    }
 
     setLoading(true)
     const now = new Date().toISOString()
     const localId = `act-local-${Date.now()}`
+    // 顧客属性モードでは件名欄自体を使わないため、保存する件名は常にundefined
+    const titleToSave = useCounterpartType ? undefined : (form.title.trim() || undefined)
+    const counterpartTypeToSave = useCounterpartType ? (form.counterpartType || undefined) : undefined
 
+    let strippedFieldLabels: string[] = []
     try {
       let savedId = localId
       if (isSupabaseConfigured()) {
-        savedId = await createActivity({
+        const created = await createActivity({
           targetType:   targetDealId ? 'deal' : 'contact',
           targetId:     targetDealId ?? targetContactId ?? '',
           userId:       form.assigneeId || currentUser?.id,
           activityType: form.type,
-          title:        form.title.trim() || undefined,
+          title:        titleToSave,
           memo:         form.memo.trim() || undefined,
           memoCategory: form.memoCategory || undefined,
+          counterpartType: counterpartTypeToSave,
           dueDate:      isTask && form.dueDate ? new Date(form.dueDate).toISOString() : undefined,
           status:       form.status,
           actionDate:   new Date(form.actionDate).toISOString(),
+          endAt:        !isTask && form.endAt ? new Date(form.endAt).toISOString() : undefined,
         })
+        savedId = created.id
+        // 049（end_at・counterpart_type）未適用の環境で、指定した値が黙って
+        // 保存されずに成功トーストだけ出る（deal_seller_conditionsで一度学んだ教訓と同型）
+        // のを防ぐため、削除された列があれば個別に伝える
+        const FIELD_LABELS: Record<string, string> = { end_at: '終了日時', counterpart_type: '顧客属性', memo_category: 'カテゴリ' }
+        strippedFieldLabels = created.strippedFields.map((f) => FIELD_LABELS[f] ?? f)
         if (isTask) {
           await upsertTaskMeta(savedId, taskUrgency, taskImportance, taskScope).catch((e) => {
             // タスク本体は保存済みなので処理は続行するが、優先度が落ちたことは知らせる
@@ -143,12 +193,14 @@ export function ActivityModal() {
         target_id:     targetDealId ?? targetContactId ?? '',
         user_id:       form.assigneeId || currentUser?.id,
         activity_type: form.type,
-        title:         form.title.trim() || undefined,
+        title:         titleToSave,
         memo:          form.memo.trim() || undefined,
         memo_category: form.memoCategory || undefined,
+        counterpart_type: counterpartTypeToSave,
         due_date:      isTask && form.dueDate ? new Date(form.dueDate).toISOString() : undefined,
         status:        form.status,
         action_date:   new Date(form.actionDate).toISOString(),
+        end_at:        !isTask && form.endAt ? new Date(form.endAt).toISOString() : undefined,
         created_at:    now,
         users:         currentUser ?? undefined,
       }
@@ -187,6 +239,12 @@ export function ActivityModal() {
         toast.success(`タスク「${form.title}」を${assignee?.name ?? ''}さんに割り当てました`, { duration: 4000 })
       } else {
         toast.success(isTask ? `タスク「${form.title}」を作成しました` : `${typeLabel}を記録しました`)
+      }
+      if (strippedFieldLabels.length > 0) {
+        toast.error(
+          `${strippedFieldLabels.join('・')}はデータベースの準備が未完了のため保存されませんでした（他の項目は保存済みです）`,
+          { duration: 6000 }
+        )
       }
     } catch (e) {
       toast.error(`保存に失敗しました: ${formatErrorDetail(e)}`, { duration: 8000 })
@@ -230,24 +288,60 @@ export function ActivityModal() {
           )}
         </div>
 
-        {/* 件名 */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            {isTask ? '件名' : '件名（省略可）'}
-            {isTask && <span className="text-red-500 ml-1">*</span>}
-          </label>
-          <input type="text" value={form.title}
-            onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-            placeholder={
-              isTask ? 'タスクの内容を入力...' :
-              form.type === 'call' ? '例: 初回アプローチ電話' :
-              form.type === 'email' ? '例: 資料送付' :
-              form.type === 'meeting' ? '例: ヒアリング面談' : '件名（省略可）'
-            }
-            required={isTask}
-            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
-          />
-        </div>
+        {/* 件名 or 顧客属性（対象が商談かつタスク以外の場合のみ顧客属性に置き換え。
+            M&A事業部要望フェーズ4。他事業部・タスク作成には影響しない） */}
+        {counterpartTypeDecisionPending ? (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">件名</label>
+            <div className="w-full px-3 py-2 text-sm text-gray-300 border border-gray-200 rounded-lg bg-gray-50">
+              読み込み中...
+            </div>
+          </div>
+        ) : useCounterpartType ? (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">顧客属性（省略可）</label>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button type="button"
+                onClick={() => setForm((f) => ({ ...f, counterpartType: '' }))}
+                aria-pressed={form.counterpartType === ''}
+                className={cn('px-3 py-1 rounded-full text-xs font-medium border transition-all',
+                  form.counterpartType === ''
+                    ? 'bg-gray-700 text-white border-gray-700'
+                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50')}>
+                未選択
+              </button>
+              {counterpartTypeNames.map((name) => (
+                <button key={name} type="button"
+                  onClick={() => setForm((f) => ({ ...f, counterpartType: f.counterpartType === name ? '' : name }))}
+                  aria-pressed={form.counterpartType === name}
+                  className={cn('px-3 py-1 rounded-full text-xs font-medium border transition-all',
+                    form.counterpartType === name
+                      ? 'bg-orange-500 text-white border-orange-500'
+                      : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50')}>
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {isTask ? '件名' : '件名（省略可）'}
+              {isTask && <span className="text-red-500 ml-1">*</span>}
+            </label>
+            <input type="text" value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder={
+                isTask ? 'タスクの内容を入力...' :
+                form.type === 'call' ? '例: 初回アプローチ電話' :
+                form.type === 'email' ? '例: 資料送付' :
+                form.type === 'meeting' ? '例: ヒアリング面談' : '件名（省略可）'
+              }
+              required={isTask}
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
+            />
+          </div>
+        )}
 
         {/* 対象顧客 */}
         {!activityModal.prefillContactId && !activityModal.prefillDealId && (
@@ -314,16 +408,27 @@ export function ActivityModal() {
         {/* 日時 */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{isTask ? '登録日' : '実施日時'}</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {isTask ? '登録日' : '実施日時（開始）'}
+            </label>
             <input type="datetime-local" value={form.actionDate}
               onChange={(e) => setForm((f) => ({ ...f, actionDate: e.target.value }))}
               className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50" />
           </div>
-          {isTask && (
+          {isTask ? (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">期限</label>
               <input type="datetime-local" value={form.dueDate}
                 onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50" />
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">終了日時（省略可）</label>
+              {/* minで開始日時より前を選びにくくする（ネイティブUIの制約のみ・手入力は
+                  すり抜け得るため、handleSubmit側の検証を本チェックとする） */}
+              <input type="datetime-local" value={form.endAt} min={form.actionDate}
+                onChange={(e) => setForm((f) => ({ ...f, endAt: e.target.value }))}
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50" />
             </div>
           )}

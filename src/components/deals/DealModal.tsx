@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { Activity } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { ContactPicker } from '@/components/ui/ContactPicker'
@@ -54,7 +55,7 @@ export function DealModal() {
     dealModal, closeDealModal, activeDivisionId,
     addDeal, updateLocalDeal, removeLocalDeal, currentUser, divisionStages,
     divisionProducts, divisionProductsEnabled, dealProducts, setDealProduct, clearDealProduct,
-    divisionTabs, activeTabId,
+    divisionTabs, activeTabId, openActivityModal,
   } = useAppStore()
 
   const [loading, setLoading] = useState(false)
@@ -616,6 +617,27 @@ export function DealModal() {
           ※ それぞれ内部に独自のformを持つため、上の商談フォームの外に配置する（ネストフォーム防止） */}
       {isEdit && dealModal.deal && isSupabaseConfigured() && !dealModal.deal.id.startsWith('deal-local-') && (
         <div className="mt-4 space-y-3">
+          {/* 商談記録（M&A事業部要望フェーズ4）。この商談に対する活動記録の唯一の入口。
+              openActivityModalにdealIdを渡すことで、ActivityModal側の顧客属性選択
+              （事業部で設定していれば件名の代わりに表示）が機能するようになる。
+              Modalコンポーネントはモーダルの重ね掛けを想定しておらず（Escapeキー・
+              背景スクロールロックの後始末がインスタンスごとに独立している）、
+              開いたまま重ねるとEscapeキー1回で両方閉じてしまう等の不整合が起きるため、
+              先にこのモーダルを閉じてから開く（保存済みの商談を開き直しているだけなので
+              入力内容が失われる心配はない） */}
+          <button
+            type="button"
+            onClick={() => {
+              const deal = dealModal.deal!
+              closeDealModal()
+              openActivityModal({ dealId: deal.id, dealTitle: deal.title })
+            }}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-orange-600
+              border border-orange-200 bg-orange-50 rounded-lg hover:bg-orange-100 transition-colors"
+          >
+            <Activity size={15} />
+            この商談の活動を記録する
+          </button>
           <DealDocumentsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
           <DealPaymentsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
           <DealMilestonesSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />

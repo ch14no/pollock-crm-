@@ -146,6 +146,13 @@ export function RealtimeTimeline() {
                   {activity.title && (
                     <p className="text-sm font-medium text-gray-700 mt-0.5 truncate">{activity.title}</p>
                   )}
+                  {/* 件名の代わりに顧客属性を選んだ活動（商談記録フォーム拡張・フェーズ4）は
+                      titleが常に空のため、ここで表示しないと画面から丸ごと消えてしまう */}
+                  {!activity.title && activity.counterpart_type && (
+                    <span className="inline-block text-xs font-medium px-1.5 py-0.5 mt-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                      {activity.counterpart_type}
+                    </span>
+                  )}
                   {!activity.title && activity.memo && (
                     <p className="text-sm text-gray-600 mt-0.5 truncate">{activity.memo}</p>
                   )}

@@ -725,7 +725,7 @@ function ClosingSoonTable({
 function MyActivityList({
   activities, contactsById, onContactClick,
 }: {
-  activities: { id: string; activity_type: string; title?: string; memo?: string; action_date: string; target_type: string; target_id: string }[]
+  activities: { id: string; activity_type: string; title?: string; memo?: string; counterpart_type?: string; action_date: string; target_type: string; target_id: string }[]
   contactsById: Map<string, Contact>
   onContactClick: (id: string) => void
 }) {
@@ -751,6 +751,13 @@ function MyActivityList({
             </span>
             <div className="flex-1 min-w-0">
               {a.title && <p className="text-sm font-medium text-gray-700 truncate">{a.title}</p>}
+              {/* 件名の代わりに顧客属性を選んだ活動（フェーズ4）はtitleが常に空のため、
+                  ここで表示しないと画面から丸ごと消えてしまう */}
+              {!a.title && a.counterpart_type && (
+                <span className="inline-block text-xs font-medium px-1.5 py-0.5 mt-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                  {a.counterpart_type}
+                </span>
+              )}
               {contact && <p className="text-xs text-gray-400 mt-0.5 truncate">{contact.name}（{contact.companies?.name ?? ''}）</p>}
             </div>
             <span className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap">{formatRelativeTime(a.action_date)}</span>

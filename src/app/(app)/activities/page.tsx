@@ -21,6 +21,24 @@ import type { ActivityType, ActivityStatus, Activity, Deal } from '@/types/datab
 import type { Contact, User } from '@/types/database'
 import toast from 'react-hot-toast'
 
+// 終了日時（049）がある活動は、相対時刻（今日/3日前等）と絶対時刻を混在させると
+// 「3時間前〜09:00」のような意味不明な表示になるため、開始〜終了は常に絶対表記に揃える。
+// 終了日時が無い（従来どおりの）活動、または終了日時が開始日時より前という不正な
+// データ（手動DB編集や過去の不整合データを想定）の場合は、相対時刻のみにフォールバックする
+function formatActivityTime(activity: Pick<Activity, 'action_date' | 'end_at'>): string {
+  if (!activity.end_at) return formatRelativeTime(activity.action_date)
+  const start = new Date(activity.action_date)
+  const end = new Date(activity.end_at)
+  if (end.getTime() < start.getTime()) return formatRelativeTime(activity.action_date)
+  const timeFmt: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' }
+  const sameDay = start.toDateString() === end.toDateString()
+  const startLabel = `${start.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })} ${start.toLocaleTimeString('ja-JP', timeFmt)}`
+  const endLabel = sameDay
+    ? end.toLocaleTimeString('ja-JP', timeFmt)
+    : `${end.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })} ${end.toLocaleTimeString('ja-JP', timeFmt)}`
+  return `${startLabel}〜${endLabel}`
+}
+
 const typeConfig: Record<ActivityType, { label: string; icon: React.ElementType; color: string }> = {
   call:    { label: '電話',       icon: Phone,       color: 'bg-blue-100 text-blue-600' },
   email:   { label: 'メール',     icon: Mail,        color: 'bg-purple-100 text-purple-600' },
@@ -209,7 +227,7 @@ export default function ActivitiesPage() {
       if (!matchType || !matchStatus || !matchContact || !matchCategory) return false
       if (!query) return true
       const target = resolveTarget(a)
-      return a.title?.includes(query) || a.memo?.includes(query) || target.name.includes(query)
+      return a.title?.includes(query) || a.memo?.includes(query) || a.counterpart_type?.includes(query) || target.name.includes(query)
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allActivities, typeFilter, statusFilter, query, taskStatuses, contactsMap, effectiveContactFilter, dealsMap, effectiveCategoryFilter])
@@ -521,6 +539,11 @@ export default function ActivitiesPage() {
                                     {activity.memo_category}
                                   </span>
                                 )}
+                                {activity.counterpart_type && (
+                                  <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                                    {activity.counterpart_type}
+                                  </span>
+                                )}
                                 {activity.title && (
                                   <span className={cn('text-sm font-medium text-gray-800', isDone && 'line-through text-gray-400')}>
                                     {activity.title}
@@ -557,7 +580,7 @@ export default function ActivitiesPage() {
                             </div>
 
                             <div className="flex items-center gap-1.5 flex-shrink-0">
-                              <span className="text-xs text-gray-400">{formatRelativeTime(activity.action_date)}</span>
+                              <span className="text-xs text-gray-400">{formatActivityTime(activity)}</span>
                               {activity.memo && !isEditingThis && (
                                 <button onClick={() => toggleExpand(activity.id)}
                                   className="text-gray-400 hover:text-gray-600 transition-colors">
