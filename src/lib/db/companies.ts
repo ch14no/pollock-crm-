@@ -1,7 +1,8 @@
 import { getSupabase } from './client'
 import type { Company, Contact } from '@/types/database'
 
-function toCompany(data: Record<string, unknown>): Company {
+// companyGroups.tsからも参照するためexportする（同じ変換ロジックの重複を避ける）
+export function toCompany(data: Record<string, unknown>): Company {
   return {
     ...data,
     corporate_number: data.corporate_number ?? undefined,
@@ -10,7 +11,14 @@ function toCompany(data: Record<string, unknown>): Company {
     address: data.address ?? undefined,
     phone: data.phone ?? undefined,
     industry: data.industry ?? undefined,
+    industry_code: data.industry_code ?? undefined,
+    industry_class: data.industry_class ?? undefined,
+    business_description: data.business_description ?? undefined,
     representative: data.representative ?? undefined,
+    representative2: data.representative2 ?? undefined,
+    name_kana: data.name_kana ?? undefined,
+    representative_kana: data.representative_kana ?? undefined,
+    representative2_kana: data.representative2_kana ?? undefined,
     employee_count: data.employee_count ?? undefined,
     capital: data.capital ?? undefined,
     established_on: data.established_on ?? undefined,
@@ -18,14 +26,39 @@ function toCompany(data: Record<string, unknown>): Company {
   } as Company
 }
 
+// companiesからindustry_classesへのFKは industry_code の1本のみのため、
+// PGRST201の埋め込み衝突は起きない（bareなembedのままでよい）
+const COMPANY_SELECT = '*, industry_class:industry_classes(code, level, parent_code, name, keywords, sort_order)'
+
 export async function fetchCompanyById(id: string): Promise<Company | null> {
   const { data, error } = await getSupabase()
     .from('companies')
-    .select('*')
+    .select(COMPANY_SELECT)
     .eq('id', id)
     .single()
-  if (error) return null
+  if (error) {
+    // PGRST116 = single()が0行を返した（本当に存在しない）。それ以外（PGRST201の
+    // embed衝突・ネットワークエラー等）はnullを返さず投げて、呼び出し元
+    // （company/[id]/page.tsx）の「読み込みに失敗しました」表示に回す。
+    // ここでnullに握りつぶすと、044未適用等の一時的な取得失敗が
+    // 「会社が見つかりません」という紛らわしい表示になってしまう
+    if (error.code === 'PGRST116') return null
+    throw error
+  }
   return toCompany(data)
+}
+
+// CompanyPicker（グループ会社・買手候補紐づけ）用に全件取得する。
+// ContactPicker（fetchAllContacts）と同じ「全件ロード→クライアントフィルタ」方式
+// （companiesは全社マスタで数千件規模までこの方式で問題ない）
+export async function fetchAllCompanies(): Promise<Company[]> {
+  const { data, error } = await getSupabase()
+    .from('companies')
+    .select(COMPANY_SELECT)
+    .order('name')
+    .limit(2000)
+  if (error) throw error
+  return (data ?? []).map(toCompany)
 }
 
 // 会社情報の更新。019適用後はログイン済みの全ユーザーが更新可能
@@ -33,7 +66,10 @@ export async function fetchCompanyById(id: string): Promise<Company | null> {
 export async function updateCompany(id: string, updates: {
   name?: string; corporateNumber?: string | null; website?: string | null; irUrl?: string | null
   address?: string | null; phone?: string | null; industry?: string | null
-  representative?: string | null; employeeCount?: number | null; capital?: number | null
+  industryCode?: string | null; businessDescription?: string | null
+  representative?: string | null; representative2?: string | null
+  nameKana?: string | null; representativeKana?: string | null; representative2Kana?: string | null
+  employeeCount?: number | null; capital?: number | null
   establishedOn?: string | null; note?: string | null
 }): Promise<Company> {
   const patch: Record<string, unknown> = {}
@@ -44,7 +80,13 @@ export async function updateCompany(id: string, updates: {
   if (updates.address !== undefined) patch.address = updates.address
   if (updates.phone !== undefined) patch.phone = updates.phone
   if (updates.industry !== undefined) patch.industry = updates.industry
+  if (updates.industryCode !== undefined) patch.industry_code = updates.industryCode
+  if (updates.businessDescription !== undefined) patch.business_description = updates.businessDescription
   if (updates.representative !== undefined) patch.representative = updates.representative
+  if (updates.representative2 !== undefined) patch.representative2 = updates.representative2
+  if (updates.nameKana !== undefined) patch.name_kana = updates.nameKana
+  if (updates.representativeKana !== undefined) patch.representative_kana = updates.representativeKana
+  if (updates.representative2Kana !== undefined) patch.representative2_kana = updates.representative2Kana
   if (updates.employeeCount !== undefined) patch.employee_count = updates.employeeCount
   if (updates.capital !== undefined) patch.capital = updates.capital
   if (updates.establishedOn !== undefined) patch.established_on = updates.establishedOn
@@ -53,7 +95,7 @@ export async function updateCompany(id: string, updates: {
     .from('companies')
     .update(patch)
     .eq('id', id)
-    .select('*')
+    .select(COMPANY_SELECT)
     .single()
   if (error) throw error
   return toCompany(data)

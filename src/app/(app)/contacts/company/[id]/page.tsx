@@ -10,6 +10,7 @@ import {
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchCompanyById, fetchContactsByCompany, deleteCompany } from '@/lib/db/companies'
 import { CompanyEditModal } from '@/components/contacts/CompanyEditModal'
+import { CompanyGroupSection } from '@/components/companies/CompanyGroupSection'
 import { fetchActivitiesByCompany } from '@/lib/db/activities'
 import type { Company, Contact, Activity } from '@/types/database'
 import { Button } from '@/components/ui/Button'
@@ -193,8 +194,11 @@ export default function CompanyDetailPage() {
                 <Building2 size={28} className="text-blue-500" />
               </div>
               <h1 className="text-lg font-bold text-gray-800 text-center">{company.name}</h1>
-              {company.industry && (
-                <p className="text-xs text-gray-500 mt-1">{company.industry}</p>
+              {company.name_kana && (
+                <p className="text-xs text-gray-400 mt-0.5">{company.name_kana}</p>
+              )}
+              {(company.industry_class?.name || company.industry) && (
+                <p className="text-xs text-gray-500 mt-1">{company.industry_class?.name ?? company.industry}</p>
               )}
             </div>
 
@@ -209,7 +213,23 @@ export default function CompanyDetailPage() {
               {company.representative && (
                 <div className="flex items-center gap-2 text-gray-600">
                   <UserIcon size={14} className="flex-shrink-0 text-gray-400" />
-                  <span>{company.representative}</span>
+                  <span>
+                    {company.representative}
+                    {company.representative_kana && (
+                      <span className="text-gray-400 text-xs ml-1">（{company.representative_kana}）</span>
+                    )}
+                  </span>
+                </div>
+              )}
+              {company.representative2 && (
+                <div className="flex items-center gap-2 text-gray-600">
+                  <UserIcon size={14} className="flex-shrink-0 text-gray-400" />
+                  <span>
+                    {company.representative2}
+                    {company.representative2_kana && (
+                      <span className="text-gray-400 text-xs ml-1">（{company.representative2_kana}）</span>
+                    )}
+                  </span>
                 </div>
               )}
               {company.address && (
@@ -272,11 +292,22 @@ export default function CompanyDetailPage() {
               )}
             </div>
 
+            {company.business_description && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">事業内容</p>
+                <p className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">
+                  {company.business_description}
+                </p>
+              </div>
+            )}
+
             {company.note && (
               <p className="text-xs text-gray-500 mt-4 pt-4 border-t border-gray-100 whitespace-pre-wrap leading-relaxed">
                 {company.note}
               </p>
             )}
+
+            <CompanyGroupSection companyId={company.id} />
 
             <p className="text-xs text-gray-400 mt-4 pt-4 border-t border-gray-100">
               最終更新: {formatRelativeTime(company.updated_at)}

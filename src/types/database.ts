@@ -64,13 +64,41 @@ export interface Company {
   address?: string
   phone?: string
   industry?: string
+  industry_code?: string
+  industry_class?: IndustryClass
+  business_description?: string
   representative?: string
+  representative2?: string
+  name_kana?: string
+  representative_kana?: string
+  representative2_kana?: string
   employee_count?: number
   capital?: number
   established_on?: string
   note?: string
   created_at: string
   updated_at: string
+}
+
+// 業種マスタ（044、大中小の階層。TSR/JSIC準拠のコード体系）
+export interface IndustryClass {
+  code: string
+  level: 1 | 2 | 3
+  parent_code?: string
+  name: string
+  keywords?: string
+  sort_order: number
+}
+
+// グループ会社の紐づけ（046、無向のペア。fetchCompanyGroupLinksが
+// 呼び出し元の視点で「相手会社」を正規化して返すため、companiesと
+// related_companiesの2フィールドは持たずrelatedCompany1つで表現する）
+export interface CompanyGroupLink {
+  id: string
+  companyId: string
+  relatedCompany: Company
+  note?: string
+  createdAt: string
 }
 
 export interface Contact {
