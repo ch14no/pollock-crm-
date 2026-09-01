@@ -177,9 +177,10 @@ export function DealConditionsSection({ dealId, divisionId, party }: DealConditi
               onChange={(e) => setSellerForm((f) => ({ ...f, otherConditions: e.target.value }))}
               placeholder="自由記述" className={inputCls} />
           </div>
-          {/* AD契・NDA締結管理（048、M&A事業部要望フェーズ3）。「締結可否」の意味は
-              酒田さん未回答のためNULL=未確認の状態として扱う。締結日は可否と独立して入力可能
-              （締結済みなら日付だけ先に埋める運用も許容する） */}
+          {/* AD契・NDA締結管理（048、M&A事業部要望フェーズ3）。「締結可否」は
+              「締結済みかどうか」の意味で確定（2026-09-01酒田さん回答。IM送付可否の
+              判断材料のため、未定/締結予定等の細かい状態管理は不要とのこと）。
+              締結日は可否と独立して入力可能（締結済みなら日付だけ先に埋める運用も許容する） */}
           <div>
             <label className={labelCls}>AD契 締結可否</label>
             <select value={sellerForm.adContractStatus}
