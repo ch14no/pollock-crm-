@@ -1,6 +1,24 @@
 # pollock-crm 引継ぎメモ（.claude/CLAUDE.md）
 
-## 2026-08-28(3): M&A事業部（酒田さん）フェーズ4「商談記録フォーム拡張」実装・本番デプロイ済み（`8d1a41e`、049適用済み）— 4項目の要望すべて完了
+## 2026-09-03: M&A事業部（酒田さん）追加依頼7項目「商談画面の改善」実装・本番デプロイ済み（`fc8c64f`、050適用済み）
+
+フェーズ1〜4完了後、酒田さんから新たに7項目の修正・追加依頼（画像添付）が届き対応。
+
+1. **「商談」→「案件」表記変更**: `activities`（049の`counterpart_type`）と同じ「全事業部共有UIに一事業部だけの用語要望」問題。文字通り全社一律で変えると他事業部（IT/人材/財務支援/メディケア）の呼称まで変わってしまうため、**`divisions.deal_term`列を新設し事業部ごとに呼称を上書きできる仕組みを構築**（M&A事業部のみ`'案件'`にシード、他は既定値`'商談'`）。`useDealTerm()`フック（`src/hooks/useDealTerm.ts`、`activeDivision.deal_term`を読むだけ）を作り、サイドバー・ボトムナビ・商談カンバン・DealModal・ダッシュボード・設定画面など約20ファイルの UI 文言を動的化。着手前にAskUserQuestionで「全社一律 or M&A限定の新規構築」を確認し、後者を選択。
+2. **対応期日の日付ピッカー連続遡り不可**: ブラウザ標準`<input type="date">`の仕様（CSS/JSでは調整不可）のため、**`react-day-picker`（新規依存追加、`date-fns`は既存依存で互換）を導入**し`MilestoneDatePicker`（`src/components/ui/`）を新設。`captionLayout="dropdown"`で月・年を直接選べるようにし「連続クリックで遡る」操作自体を不要にした。着手前に「新規ライブラリ導入 vs 現状維持」を確認。
+3. **「対応期日」→「対応期日・対応済」+チェックボックス**: `deal_milestones.completed_at`（NULL=未対応）を追加。従来は`due_date`が空になると行自体を削除する設計だったため、日付と独立してチェックだけ入れられるよう`upsertDealMilestone`のロジックを変更（削除条件は「日付・チェックの両方が最終的に空になる」ときのみ、呼び出し元が判断）。
+4. **「案件情報」表記+モーダル幅拡大**: M&A事業部の商談編集モーダルタイトルを「編集」ではなく「案件情報」という固有の文言に（他事業部は従来通り`{呼称}を編集`）。`Modal`の`size`を`md`→`lg`に変更し入力欄を拡幅。
+5. **ステージに「マッチング」追加**: 調査の結果`stages_manage`RLS（006）はmanagerにもステージ管理を許可していたが、**`DivisionStagesPanel`が長らくsuper_admin専用ブロックの中にしかなくmanagerが到達できていなかった**（`TaskStagesPanel`等で以前修正した既知パターンの再発）。マネージャー設定ブロックにも追加し、以後は東さん・酒田さん（manager以上）が設定画面から自分でステージ追加できる。
+6. **希望価額の数値化**: `deal_seller_conditions.desired_price_thousand_yen`（NUMERIC）を新設し、自由記述の「希望譲渡対価」を千円単位の数値入力＋自動カンマ整形に変更。既存の自由記述データ（例:「持分価額3.4億円（手取り2.5億）」）は`desired_price`列ごと残し、フォーム上は読み取り専用の「（旧データ）」注記として表示（データ消失なし）。
+7. **案件の削除**: 調査したところ**既に完全実装済み・ロール制限なしで動作していた**（040適用後）。追加対応不要、位置が分かりにくいだけと判断し、その旨を回答。
+
+**`/code-review`で4件修正**:
+- 期限アラートcron（`api/cron/deadline-alerts/route.ts`）が`completed_at`を見ておらず、対応済みマイルストーンにまで期限通知を送り続ける → `.is('completed_at', null)`を追加。
+- `DealMilestonesSection`の`handleUpdate`が日付のみの編集でも「現在の完了状態」を毎回booleanに合成して`upsertDealMilestone`へ渡していたため、日付だけ編集するたびに`completed_at`が「今」に再スタンプされ、本来の対応済み日時が上書きされ続ける不具合 → `completed`は実際にチェックが操作されたときだけ渡す（undefinedのまま透過）よう修正、削除要否の判定は値を全部知っている呼び出し元に集約（`shouldDelete`を明示的に渡す方式に変更）。
+- 対応済みチェックボタンの`aria-label`が「対応済みにする」のような汎用文言のみで、スクリーンリーダーでは複数のマイルストーン行を区別できない → `type.name`を含める、`MilestoneDatePicker`にも`milestoneLabel`props追加。
+- 「案件情報」表記の判定が`dealTerm === '案件'`という**カスタマイズ可能なラベル文字列**への一致に依存しており、将来他事業部がたまたま同じラベルを設定すると意図せず巻き込まれるリスク → `activeDivision?.name === 'M＆A事業部'`という事業部名そのものでの判定に変更。
+
+**教訓**: 「一部の事業部だけの表記変更依頼」は`activities.counterpart_type`（049）で確立した「共有UIの文言を事業部ごとにカスタマイズ可能にする」パターンを再利用できた。今後も同種の依頼が来たら、まず「全社一律で問題ないか」をユーザーに確認する（一律なら小さい変更、事業部限定なら`divisions`への新規列＋読み取りフックのパターンで対応）。
 
 フェーズ1〜3に続き最終フェーズ。これで酒田さんからの4項目の要望すべてが実装・デプロイ完了。
 
@@ -192,7 +210,8 @@ Google Docsのバグ・要望管理ドキュメント（画像添付あり、`re
   - 043 companies_delete ポリシー新設
   - **044〜046（2026-08-28適用済み）** M&A事業部フェーズ1: `industry_classes`（業種マスタ）＋`companies`列追加（044）、業種マスタのサンプル37区分投入（045）、`company_group_links`（グループ会社紐づけ、046）
   - **047〜048（2026-08-28適用済み）** M&A事業部フェーズ2+3: `deal_buyer_prospects`（買手打診リスト）＋`companies`列追加（047）、`deal_seller_conditions`へのAD契・NDA列追加（048）
-  - **049（2026-08-28適用済み）** M&A事業部フェーズ4: `division_counterpart_types`（顧客属性マスタ）＋`activities`列追加（`end_at`・`counterpart_type`）。詳細は本ファイル冒頭の各該当セクション参照
+  - **049（2026-08-28適用済み）** M&A事業部フェーズ4: `division_counterpart_types`（顧客属性マスタ）＋`activities`列追加（`end_at`・`counterpart_type`）
+  - **050（2026-09-03適用済み）** M&A事業部フェーズ5（商談画面の改善7項目）: `deal_milestones.completed_at`（対応済みチェック）、`divisions.deal_term`（事業部ごとの「商談」呼称カスタマイズ）、`deal_seller_conditions.desired_price_thousand_yen`（希望譲渡対価の数値化）。詳細は本ファイル冒頭の各該当セクション参照
 
 ## 2026-07-31セッションの変更（要点・PRブランチ`realtime-task-sync`、未マージ・未SQL適用）
 
