@@ -18,6 +18,7 @@ import { DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import { hasTabs, stagesForTab, tabIdForStage } from '@/lib/pipeline-tabs'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { updateDealStage } from '@/lib/db/deals'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import type { Deal } from '@/types/database'
 import toast from 'react-hot-toast'
 import Confetti from './Confetti'
@@ -211,6 +212,7 @@ interface StageColumnProps {
 function StageColumn({
   stage, deals, activeId, readOnly, isDragActive, onEdit, onAdd, columnRef,
 }: StageColumnProps) {
+  const dealTerm = useDealTerm()
   const total = deals.reduce((sum, d) => sum + d.amount, 0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const shouldVirtualize = deals.length > VIRTUALIZE_THRESHOLD
@@ -247,7 +249,7 @@ function StageColumn({
         </div>
         {isUnassigned && (
           <p className="text-[11px] text-yellow-700 leading-snug">
-            現在の列に対応しない商談です。カードを正しい列へドラッグしてください
+            現在の列に対応しない{dealTerm}です。カードを正しい列へドラッグしてください
           </p>
         )}
         {total > 0 && (

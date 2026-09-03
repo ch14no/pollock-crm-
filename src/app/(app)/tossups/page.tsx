@@ -12,6 +12,7 @@ import { formatRelativeTime, cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchTossupsByDivision, updateTossupStatus } from '@/lib/db/tossups'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import type { Tossup, TossupStatus } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -29,6 +30,7 @@ export default function TossupsPage() {
     openTossupModal, openDealModal, activeDivision,
     localTossups, tossupStatuses, setTossupStatus, tossupModal,
   } = useAppStore()
+  const dealTerm = useDealTerm()
 
   const [filter, setFilter]             = useState<FilterTab>('all')
   const [statusFilter, setStatusFilter] = useState<TossupStatus | 'all'>('all')
@@ -267,7 +269,7 @@ export default function TossupsPage() {
                             className="flex items-center gap-1 text-xs text-orange-600 hover:text-orange-700 font-medium px-3 py-1.5 rounded-lg hover:bg-orange-50 border border-orange-200 transition-colors"
                           >
                             <Plus size={12} />
-                            商談を作成
+                            {dealTerm}を作成
                           </button>
                         )}
                         <button

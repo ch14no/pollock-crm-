@@ -11,6 +11,7 @@ import type { Activity, Deal } from '@/types/database'
 import { MOCK_ACTIVITIES, MOCK_DEALS, MOCK_CONTACTS, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import { cn } from '@/lib/utils'
 import { buildWonLostStageIds } from '@/lib/stage-status'
+import { useDealTerm } from '@/hooks/useDealTerm'
 
 function daysUntil(dateStr: string) {
   return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86400000)
@@ -32,6 +33,7 @@ interface DailyMissionProps {
 export function DailyMission({ personalMode = false }: DailyMissionProps) {
   const router = useRouter()
   const { activeDivisionId, localActivities, localDeals, taskStatuses, currentUser, divisionStages } = useAppStore()
+  const dealTerm = useDealTerm()
 
   const [dbActivities, setDbActivities] = useState<Activity[]>([])
   const [dbDeals, setDbDeals]           = useState<Deal[]>([])
@@ -193,7 +195,7 @@ export function DailyMission({ personalMode = false }: DailyMissionProps) {
           <span className="text-2xl">🎉</span>
           <div>
             <p className="text-sm font-medium text-gray-700">今日のタスクはすべて完了！</p>
-            <p className="text-xs text-gray-400 mt-0.5">新しい活動を記録して商談を前進させましょう</p>
+            <p className="text-xs text-gray-400 mt-0.5">新しい活動を記録して{dealTerm}を前進させましょう</p>
           </div>
         </div>
       ) : (

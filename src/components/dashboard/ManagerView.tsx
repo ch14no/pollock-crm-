@@ -15,6 +15,7 @@ import { fetchDivisionUsers } from '@/lib/db/users'
 import { MOCK_DEALS, MOCK_ACTIVITIES, MOCK_TEAM_MEMBERS, DEFAULT_DIVISION_STAGES } from '@/lib/mock-data'
 import { formatCurrency, getInitials, cn } from '@/lib/utils'
 import { buildWonLostStageIds } from '@/lib/stage-status'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import type { User, Deal, Activity as ActivityType } from '@/types/database'
 
 function isSameMonth(dateStr: string) {
@@ -117,6 +118,7 @@ function MemberCard({
 }) {
   const router = useRouter()
   const { teamGoals, setTeamGoal, taskStatuses } = useAppStore()
+  const dealTerm = useDealTerm()
   const [showGoalEditor, setShowGoalEditor] = useState(false)
   const [showTasks, setShowTasks] = useState(false)
 
@@ -170,7 +172,7 @@ function MemberCard({
         <GoalBar label="今月の活動数"   actual={myActivitiesMonth.length} goal={activeGoal?.activityCount} format={(n) => `${n}件`} />
         <div className="pt-2 border-t border-gray-50 space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-gray-500">進行中の商談</span>
+            <span className="text-gray-500">進行中の{dealTerm}</span>
             <span className="font-medium text-gray-700">
               {myActiveDeals.length}件
               <span className="text-gray-400 ml-1">({formatCurrency(myActiveDeals.reduce((s, d) => s + d.amount, 0))})</span>
@@ -247,6 +249,7 @@ function MemberCard({
 
 export function ManagerView({ divisionId }: { divisionId: string | null }) {
   const { localDeals, localActivities, taskStatuses, divisionStages } = useAppStore()
+  const dealTerm = useDealTerm()
 
   // 受注/失注判定は事業部別ステージ定義のIDで行う（名前ハードコードでは本番UUIDに一致しない）
   const { wonIds, lostIds } = useMemo(() => {
@@ -298,7 +301,7 @@ export function ManagerView({ divisionId }: { divisionId: string | null }) {
     <div className="space-y-6">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'チーム進行中商談', value: divActiveDeals.length, sub: `見込み ${formatCurrency(divActiveDeals.reduce((s, d) => s + d.amount, 0))}`, icon: <TrendingUp size={16} />, color: 'text-orange-500' },
+          { label: `チーム進行中${dealTerm}`, value: divActiveDeals.length, sub: `見込み ${formatCurrency(divActiveDeals.reduce((s, d) => s + d.amount, 0))}`, icon: <TrendingUp size={16} />, color: 'text-orange-500' },
           { label: '今月チーム受注額', value: divWonAmountMonth === 0 ? '—' : `${(divWonAmountMonth / 10000).toFixed(0)}万`, sub: 'チーム合計', icon: <Target size={16} />, color: 'text-green-500', highlight: true },
           { label: '今月の活動数', value: divActivitiesMonth.length, sub: `メンバー ${members.length}名`, icon: <Activity size={16} />, color: 'text-blue-500' },
           { label: '未完了タスク', value: divPendingTasks.length, sub: divOverdueTasks.length > 0 ? `期限切れ ${divOverdueTasks.length}件` : '期限切れなし', icon: <CheckSquare size={16} />, color: divOverdueTasks.length > 0 ? 'text-red-500' : 'text-gray-500' },

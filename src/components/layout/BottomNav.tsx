@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { NAV_ITEMS } from '@/components/layout/Sidebar'
 import { createClient } from '@/lib/supabase/client'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import toast from 'react-hot-toast'
 
 const NAV_LEFT  = [
@@ -27,6 +28,7 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
   const router = useRouter()
   const { activeDivision, divisions, setActiveDivision, currentUser } = useAppStore()
   const userOwnDivisionIds = useAppStore((s) => s.userOwnDivisionIds)
+  const dealTerm = useDealTerm()
   const [search, setSearch] = useState('')
 
   // デスクトップのヘッダー検索と同じ動き（顧客ページへ検索クエリ付きで遷移）
@@ -126,6 +128,7 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-2 gap-1.5">
             {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
               const active = pathname.startsWith(href)
+              const displayLabel = href === '/deals' ? dealTerm : label
               return (
                 <Link
                   key={href}
@@ -138,7 +141,7 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
                   )}
                 >
                   <Icon size={18} className="flex-shrink-0" />
-                  <span className="truncate">{label}</span>
+                  <span className="truncate">{displayLabel}</span>
                 </Link>
               )
             })}
@@ -170,6 +173,7 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
 export function BottomNav() {
   const pathname = usePathname()
   const router = useRouter()
+  const dealTerm = useDealTerm()
   const [menuOpen, setMenuOpen] = useState(false)
   // ドロワーのkeydown effectがonCloseに依存するため、参照を安定させて再登録の無駄を防ぐ
   const closeMenu = useCallback(() => setMenuOpen(false), [])
@@ -188,7 +192,7 @@ export function BottomNav() {
               className={cn('flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium transition-colors',
                 pathname.startsWith(href) ? 'text-orange-600' : 'text-gray-500')}>
               <Icon size={22} />
-              <span>{label}</span>
+              <span>{href === '/deals' ? dealTerm : label}</span>
             </Link>
           ))}
 

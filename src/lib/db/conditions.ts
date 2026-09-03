@@ -8,7 +8,8 @@ import type { ContractSignStatus, DealBuyerConditions, DealSellerConditions, Des
 type RawSellerConditions = {
   deal_id: string; division_id: string
   desired_timing: string | null; desired_scheme: string | null
-  desired_price: string | null; other_conditions: string | null
+  desired_price: string | null; desired_price_thousand_yen: number | null
+  other_conditions: string | null
   ad_contract_status: string | null; ad_contract_date: string | null
   nda_status: string | null; nda_date: string | null
   updated_at: string
@@ -28,6 +29,7 @@ export async function fetchSellerConditions(dealId: string): Promise<DealSellerC
     desired_timing: r.desired_timing ?? undefined,
     desired_scheme: r.desired_scheme ?? undefined,
     desired_price: r.desired_price ?? undefined,
+    desired_price_thousand_yen: r.desired_price_thousand_yen ?? undefined,
     other_conditions: r.other_conditions ?? undefined,
     ad_contract_status: (r.ad_contract_status as ContractSignStatus | null) ?? undefined,
     ad_contract_date: r.ad_contract_date ?? undefined,
@@ -44,10 +46,16 @@ function isMissingColumnError(error: { message?: string } | null, column: string
   const msg = error?.message ?? ''
   return msg.includes(column) && (msg.includes('column') || msg.includes('schema cache'))
 }
-const OPTIONAL_SELLER_CONDITION_COLUMNS = ['ad_contract_status', 'ad_contract_date', 'nda_status', 'nda_date'] as const
+const OPTIONAL_SELLER_CONDITION_COLUMNS = [
+  'ad_contract_status', 'ad_contract_date', 'nda_status', 'nda_date', 'desired_price_thousand_yen',
+] as const
 
 export async function upsertSellerConditions(dealId: string, divisionId: string, input: {
-  desiredTiming?: string; desiredScheme?: string; desiredPrice?: string; otherConditions?: string
+  desiredTiming?: string; desiredScheme?: string
+  // desired_price（自由記述）は050でdesired_price_thousand_yenに一本化したため、
+  // 新規保存では使わない（既存データの読み取り専用表示にのみ残す）
+  desiredPriceThousandYen?: number | null
+  otherConditions?: string
   adContractStatus?: ContractSignStatus | ''; adContractDate?: string
   ndaStatus?: ContractSignStatus | ''; ndaDate?: string
 }): Promise<{ strippedFields: string[] }> {
@@ -56,29 +64,32 @@ export async function upsertSellerConditions(dealId: string, divisionId: string,
     division_id: divisionId,
     desired_timing: input.desiredTiming || null,
     desired_scheme: input.desiredScheme || null,
-    desired_price: input.desiredPrice || null,
     other_conditions: input.otherConditions || null,
     ad_contract_status: input.adContractStatus || null,
     ad_contract_date: input.adContractDate || null,
     nda_status: input.ndaStatus || null,
     nda_date: input.ndaDate || null,
   }
+  if (input.desiredPriceThousandYen !== undefined) payload.desired_price_thousand_yen = input.desiredPriceThousandYen
   const upsert = (p: Record<string, unknown>) =>
     getSupabase().from('deal_seller_conditions').upsert(p, { onConflict: 'deal_id' }).select('deal_id')
 
   // .select() を付けないと、RLSに拒否された0件更新でもエラーにならず「保存できたように見えて
   // 実際は保存されていない」状態になるため、更新行を必ず検証する（修正4。updateContactと同じパターン）
   let { data, error } = await upsert(payload)
-  // 048（AD契・NDA列）未適用の環境では、その4列だけ落として既存4項目の保存を通す
-  // （このバンドルupsertは1文のため、未知列が1つでも混ざると希望譲渡時期等の保存まで
-  // 巻き添えで失敗する。deals.tsのOPTIONAL_DEAL_COLUMNSと同じフォールバック方式）
+  // 048（AD契・NDA列）・050（希望価額の数値列）未適用の環境では、その列だけ落として
+  // 既存項目の保存を通す（このバンドルupsertは1文のため、未知列が1つでも混ざると
+  // 希望譲渡時期等の保存まで巻き添えで失敗する。deals.tsのOPTIONAL_DEAL_COLUMNSと同じ
+  // フォールバック方式。複数列同時欠落に対応するためwhileで取りこぼしなく回す）
   const strippedFields: string[] = []
-  for (const col of OPTIONAL_SELLER_CONDITION_COLUMNS) {
-    if (error && col in payload && isMissingColumnError(error, col)) {
-      delete payload[col]
-      strippedFields.push(col)
-      ;({ data, error } = await upsert(payload))
-    }
+  const remaining = new Set(OPTIONAL_SELLER_CONDITION_COLUMNS)
+  while (error && remaining.size > 0) {
+    const hit = [...remaining].find((col) => col in payload && isMissingColumnError(error, col))
+    if (!hit) break
+    delete payload[hit]
+    remaining.delete(hit)
+    strippedFields.push(hit)
+    ;({ data, error } = await upsert(payload))
   }
   if (error) throw error
   if (!data || data.length === 0) {

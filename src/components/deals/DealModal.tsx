@@ -19,6 +19,7 @@ import { hasTabs, stagesForTab, tabIdForStage } from '@/lib/pipeline-tabs'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { createDeal, updateDeal, updateDealStage, deleteDeal, DealAlreadyDeletedError } from '@/lib/db/deals'
 import { cn, formatCurrencyJa } from '@/lib/utils'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import toast from 'react-hot-toast'
 
 interface DealFormState {
@@ -52,12 +53,13 @@ const FALLBACK_STAGES = [
 
 export function DealModal() {
   const {
-    dealModal, closeDealModal, activeDivisionId,
+    dealModal, closeDealModal, activeDivisionId, activeDivision,
     addDeal, updateLocalDeal, removeLocalDeal, currentUser, divisionStages,
     divisionProducts, divisionProductsEnabled, dealProducts, setDealProduct, clearDealProduct,
     divisionTabs, activeTabId, openActivityModal,
   } = useAppStore()
 
+  const dealTerm = useDealTerm()
   const [loading, setLoading] = useState(false)
   const [amountDisplay, setAmountDisplay] = useState('')
   const [selectedProduct, setSelectedProduct] = useState('')
@@ -153,7 +155,7 @@ export function DealModal() {
 
   const handleSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!form.title.trim()) { toast.error('商談名を入力してください'); return }
+    if (!form.title.trim()) { toast.error(`${dealTerm}名を入力してください`); return }
     if (!form.contactId)    { toast.error('対象顧客を選択してください'); return }
     if (hasTabs(divisionTabs, activeDivisionId ?? dealModal.deal?.division_id) && !selectedTabId) {
       toast.error('タブを選択してください'); return
@@ -253,9 +255,9 @@ export function DealModal() {
         })
         if (!isSupabaseConfigured() && selectedProduct) setDealProduct(dealId, selectedProduct)
         if (strippedFields.some((f) => REFERRER_COLUMNS.includes(f))) {
-          toast(`商談「${form.title}」を作成しました（紹介者欄は未適用のため保存されていません。管理者にご確認ください）`, { icon: '⚠️' })
+          toast(`${dealTerm}「${form.title}」を作成しました（紹介者欄は未適用のため保存されていません。管理者にご確認ください）`, { icon: '⚠️' })
         } else {
-          toast.success(`商談「${form.title}」を作成しました`)
+          toast.success(`${dealTerm}「${form.title}」を作成しました`)
         }
       }
       closeDealModal()
@@ -356,19 +358,28 @@ export function DealModal() {
 
   const amountInMan = form.amount ? Math.floor(parseInt(form.amount, 10) / 10000) : 0
 
+  // M&A事業部は「編集」ではなく情報ページとしての見せ方を要望されたため
+  // 「案件情報」という固有の文言にする（他事業部は従来通り「{呼称}を編集」）。
+  // dealTerm（自由記述のラベル文字列）ではなく事業部名そのもので判定する
+  // ——将来別の事業部がたまたまdeal_term='案件'に設定しても道連れで
+  // 挙動が変わらないように（/code-reviewで指摘）
+  const modalTitle = isEdit
+    ? (activeDivision?.name === 'M＆A事業部' ? '案件情報' : `${dealTerm}を編集`)
+    : `${dealTerm}を登録`
+
   return (
     <Modal
       isOpen={dealModal.isOpen}
       onClose={closeDealModal}
-      title={isEdit ? '商談を編集' : '商談を登録'}
-      size="md"
+      title={modalTitle}
+      size="lg"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
 
         {/* 件名 */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            商談名 <span className="text-red-500">*</span>
+            {dealTerm}名 <span className="text-red-500">*</span>
           </label>
           <input
             type="text"
@@ -568,7 +579,7 @@ export function DealModal() {
             value={form.description}
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
             rows={3}
-            placeholder="商談の背景、課題、ネクストアクションなど..."
+            placeholder={`${dealTerm}の背景、課題、ネクストアクションなど...`}
             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
               focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
           />
@@ -590,7 +601,7 @@ export function DealModal() {
             {/* 失注からの復活 */}
             {isLostStage && (
               <div className="flex items-center justify-between bg-yellow-50 rounded-lg px-3 py-2">
-                <span className="text-xs text-yellow-700">失注した商談を再活性化する</span>
+                <span className="text-xs text-yellow-700">失注した{dealTerm}を再活性化する</span>
                 <button type="button" onClick={handleRestoreDeal} disabled={loading}
                   className="text-xs font-medium text-yellow-700 hover:text-yellow-900 px-3 py-1.5 rounded-lg hover:bg-yellow-100 transition-colors disabled:opacity-50">
                   復活させる
@@ -599,7 +610,7 @@ export function DealModal() {
             )}
             {/* 削除ボタン */}
             <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400">商談を完全に削除する</span>
+              <span className="text-xs text-gray-400">{dealTerm}を完全に削除する</span>
               <button type="button" onClick={handleDeleteDeal} disabled={loading}
                 className="text-xs text-gray-400 hover:text-red-500 font-medium px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50">
                 削除する
@@ -609,7 +620,7 @@ export function DealModal() {
         )}
 
         <Button type="submit" loading={loading} className="w-full" size="lg">
-          {loading ? '保存中...' : isEdit ? '更新する' : '商談を登録する'}
+          {loading ? '保存中...' : isEdit ? '更新する' : `${dealTerm}を登録する`}
         </Button>
       </form>
 
@@ -636,7 +647,7 @@ export function DealModal() {
               border border-orange-200 bg-orange-50 rounded-lg hover:bg-orange-100 transition-colors"
           >
             <Activity size={15} />
-            この商談の活動を記録する
+            この{dealTerm}の活動を記録する
           </button>
           <DealDocumentsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
           <DealPaymentsSection dealId={dealModal.deal.id} divisionId={dealModal.deal.division_id} />
@@ -656,7 +667,7 @@ export function DealModal() {
       {/* 新規作成時はセクション自体が出ないため、機能の存在と手順を案内する */}
       {!isEdit && isSupabaseConfigured() && (
         <p className="mt-3 text-xs text-gray-400 text-center">
-          資料（Driveリンク）と手数料・入金の管理は、商談を登録した後に編集画面から追加できます
+          資料（Driveリンク）と手数料・入金の管理は、{dealTerm}を登録した後に編集画面から追加できます
         </p>
       )}
     </Modal>

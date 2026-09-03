@@ -16,6 +16,7 @@ import { fetchActivitiesByUser, fetchActivitiesByContactIds, deleteActivity, upd
 import { fetchContactsByDivision } from '@/lib/db/contacts'
 import { fetchDealsByDivision } from '@/lib/db/deals'
 import { fetchDivisionUsers } from '@/lib/db/users'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import { MOCK_CONTACTS } from '@/lib/mock-data'
 import type { ActivityType, ActivityStatus, Activity, Deal } from '@/types/database'
 import type { Contact, User } from '@/types/database'
@@ -74,6 +75,7 @@ export default function ActivitiesPage() {
     localActivities, taskStatuses, setTaskStatus, removeLocalActivity, updateLocalActivity,
     activityModal,
   } = useAppStore()
+  const dealTerm = useDealTerm()
 
   const isManager = currentUser?.role === 'manager' || currentUser?.role === 'super_admin'
 
@@ -176,7 +178,7 @@ export default function ActivitiesPage() {
         contactId,
       }
     }
-    return { name: '商談' }
+    return { name: dealTerm }
   }
 
   // クライアントフィルター用の選択肢

@@ -13,6 +13,7 @@ import {
   fetchDivisionMemoCategories, DEFAULT_MEMO_CATEGORY_NAMES, fetchDivisionCounterpartTypes,
 } from '@/lib/db/activities'
 import { fetchDivisionUsers } from '@/lib/db/users'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import { getInitials, cn, formatErrorDetail } from '@/lib/utils'
 import toast from 'react-hot-toast'
 import type { Activity, ActivityType, User } from '@/types/database'
@@ -45,6 +46,7 @@ function todayStr() {
 
 export function ActivityModal() {
   const { activityModal, closeActivityModal, activeDivisionId, currentUser, addActivity, setTaskMeta, setTaskStage } = useAppStore()
+  const dealTerm = useDealTerm()
   const [loading, setLoading] = useState(false)
   const [taskUrgency, setTaskUrgency] = useState(false)
   const [taskImportance, setTaskImportance] = useState(false)
@@ -136,7 +138,7 @@ export function ActivityModal() {
     const targetDealId    = activityModal.prefillDealId
 
     if (!targetContactId && !targetDealId) {
-      toast.error('対象顧客または商談を選択してください')
+      toast.error(`対象顧客または${dealTerm}を選択してください`)
       return
     }
     if (isTask && !form.title.trim()) {
@@ -357,7 +359,7 @@ export function ActivityModal() {
         {(activityModal.prefillContactId || activityModal.prefillDealId) && (
           <div className="flex items-center gap-2 px-3 py-2 bg-orange-50 border border-orange-100 rounded-lg text-sm">
             <span className="text-xs text-orange-400 font-medium flex-shrink-0">
-              {activityModal.prefillDealId ? '商談' : '顧客'}
+              {activityModal.prefillDealId ? dealTerm : '顧客'}
             </span>
             <span className="font-medium text-orange-700 truncate">
               {activityModal.prefillContactName ?? activityModal.prefillDealTitle ?? '対象設定済み'}

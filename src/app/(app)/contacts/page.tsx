@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { formatRelativeTime, getInitials, cn, escapeCsvCell } from '@/lib/utils'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import { useAppStore, selectIsOwnDivision } from '@/store/appStore'
 import type { ContactStatus } from '@/store/appStore'
 import { STATUS_CONFIG } from '@/lib/contactStatus'
@@ -952,11 +953,12 @@ function StatusIcons({ contactId, contactStatuses, listStatuses }: { contactId: 
 }
 
 function DealBadge({ count }: { count: number }) {
+  const dealTerm = useDealTerm()
   if (count <= 0) return null
   return (
     <span
       className="inline-flex items-center gap-0.5 flex-shrink-0 text-xs bg-orange-50 text-orange-600 rounded-full px-1.5 py-0.5"
-      title={`商談${count}件`}
+      title={`${dealTerm}${count}件`}
     >
       <Briefcase size={11} />
       {count}

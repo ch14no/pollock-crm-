@@ -13,6 +13,7 @@ import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchContactById, updateContact, deleteContact, fetchContactCustomValues, upsertContactCustomValue } from '@/lib/db/contacts'
 import { fetchActivitiesByTarget, updateActivityStatus, updateActivityFields } from '@/lib/db/activities'
 import { fetchDealsByContact } from '@/lib/db/deals'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import type { Contact, Activity, Deal } from '@/types/database'
 import { getLocationConfig, sortTags } from '@/lib/config'
 import { Button } from '@/components/ui/Button'
@@ -72,6 +73,7 @@ export default function ContactDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const { openTossupModal, openActivityModal, openDealModal } = useAppStore()
+  const dealTerm = useDealTerm()
   const userOwnDivisionIds = useAppStore((s) => s.userOwnDivisionIds)
   const divisions = useAppStore((s) => s.divisions)
   const activeDivision = useAppStore((s) => s.activeDivision)
@@ -754,7 +756,7 @@ export default function ContactDetailPage() {
               {([
                 { id: 'timeline', label: '活動タイムライン', icon: Clock,         badge: activities.length },
                 { id: 'tasks',    label: 'タスク',           icon: CheckSquare,   badge: todoTasks.length || undefined },
-                { id: 'deals',    label: '商談',             icon: MessageSquare, badge: openDeals.length || undefined },
+                { id: 'deals',    label: dealTerm,           icon: MessageSquare, badge: openDeals.length || undefined },
               ] as const).map(({ id: tabId, label, icon: Icon, badge }) => (
                 <button
                   key={tabId}
@@ -1081,10 +1083,10 @@ export default function ContactDetailPage() {
                     disabled={!isOwnDivision}
                     onClick={() => isOwnDivision && openDealModal({ prefillContactId: contact.id })}
                   >
-                    商談を作成
+                    {dealTerm}を作成
                   </Button>
                   {deals.length === 0 ? (
-                    <p className="text-center text-sm text-gray-400 py-8">関連する商談がありません</p>
+                    <p className="text-center text-sm text-gray-400 py-8">関連する{dealTerm}がありません</p>
                   ) : (
                     <div className="space-y-2">
                       {deals.map((deal) => {
@@ -1183,7 +1185,7 @@ export default function ContactDetailPage() {
                 </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">商談数</span>
+                <span className="text-gray-500">{dealTerm}数</span>
                 <span className="font-bold text-gray-700">{deals.length}件</span>
               </div>
               <div className="flex justify-between text-sm">

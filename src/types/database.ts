@@ -46,6 +46,8 @@ export interface Division {
   id: string
   name: string
   color_code?: string
+  // 事業部ごとの「商談」呼称カスタマイズ（050）。未設定時は'商談'扱い
+  deal_term?: string
   created_at: string
 }
 
@@ -267,6 +269,8 @@ export interface DealMilestone {
   milestone_type_id: string
   due_date?: string
   notified_at?: string
+  // 対応済みチェック（050）。NULL=未対応、値あり=対応済みにした日時
+  completed_at?: string
   created_at: string
   updated_at: string
   // joined
@@ -298,7 +302,10 @@ export interface DealSellerConditions {
   division_id: string
   desired_timing?: string
   desired_scheme?: string
+  // 旧・自由記述の希望譲渡対価（050で数値専用の desired_price_thousand_yen に統合。
+  // 過去データを消さないため列・型は残し、参考表示（読み取り専用）にのみ使う）
   desired_price?: string
+  desired_price_thousand_yen?: number
   other_conditions?: string
   // AD契・NDA締結管理（048、M&A事業部要望フェーズ3）
   ad_contract_status?: ContractSignStatus

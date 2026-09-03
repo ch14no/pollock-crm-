@@ -9,6 +9,7 @@ import { fetchUnreadTossupCount } from '@/lib/db/tossups'
 import { fetchRecentDealStageChanges } from '@/lib/db/activities'
 import { formatRelativeTime } from '@/lib/utils'
 import { loadNotifSettings, DEFAULT_NOTIF_SETTINGS } from '@/lib/notif-settings'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import type { Activity } from '@/types/database'
 
 // ステージ変更通知の既読基準（この時刻より新しいものをバッジに数える）
@@ -31,6 +32,7 @@ export function Header() {
   const [notifPrefs, setNotifPrefs] = useState(DEFAULT_NOTIF_SETTINGS)
   const { activeDivision, localTossups, tossupStatuses, currentUser } = useAppStore()
   const router = useRouter()
+  const dealTerm = useDealTerm()
   const notifRef = useRef<HTMLDivElement>(null)
 
   // localStorageの既読時刻・通知設定はハイドレーション完了後に反映する
@@ -210,7 +212,7 @@ export function Header() {
                 {visibleStageChanges.length > 0 && (
                   <>
                     <p className="px-4 pt-3 pb-1 text-[11px] font-bold text-gray-400 uppercase tracking-wide">
-                      商談の動き（直近24時間）
+                      {dealTerm}の動き（直近24時間）
                     </p>
                     {visibleStageChanges.map((a) => (
                       <button
@@ -223,7 +225,7 @@ export function Header() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">
-                            {a.title?.replace(/^ステージ変更: /, '') ?? '商談'}
+                            {a.title?.replace(/^ステージ変更: /, '') ?? dealTerm}
                           </p>
                           <p className="text-xs text-gray-500 truncate">{a.memo}</p>
                           <p className="text-xs text-gray-400 mt-0.5">

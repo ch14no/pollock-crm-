@@ -23,7 +23,9 @@ const CONTRACT_SIGN_OPTIONS: ContractSignStatus[] = ['可', '否']
 interface SellerFormState {
   desiredTiming: string
   desiredScheme: string
-  desiredPrice: string
+  // 希望譲渡対価（050で数値専用に変更。生の数字のみ・カンマ無しで保持し、
+  // 表示用のカンマ整形はrenderで行う。DealModalのamount入力と同じ方式）
+  desiredPriceThousandYen: string
   otherConditions: string
   // AD契・NDA締結管理（048、M&A事業部要望フェーズ3）
   adContractStatus: ContractSignStatus | ''
@@ -32,7 +34,7 @@ interface SellerFormState {
   ndaDate: string
 }
 const EMPTY_SELLER: SellerFormState = {
-  desiredTiming: '', desiredScheme: '', desiredPrice: '', otherConditions: '',
+  desiredTiming: '', desiredScheme: '', desiredPriceThousandYen: '', otherConditions: '',
   adContractStatus: '', adContractDate: '', ndaStatus: '', ndaDate: '',
 }
 
@@ -67,6 +69,8 @@ export function DealConditionsSection({ dealId, divisionId, party }: DealConditi
   const [saving, setSaving] = useState(false)
   const [sellerForm, setSellerForm] = useState<SellerFormState>(EMPTY_SELLER)
   const [buyerForm, setBuyerForm] = useState<BuyerFormState>(EMPTY_BUYER)
+  // 旧・自由記述の希望譲渡対価（過去データの参考表示専用。編集も保存もしない）
+  const [legacyDesiredPrice, setLegacyDesiredPrice] = useState('')
 
   const loadSeq = useRef(0)
   const loadData = useCallback(async () => {
@@ -78,13 +82,14 @@ export function DealConditionsSection({ dealId, divisionId, party }: DealConditi
         setSellerForm(data ? {
           desiredTiming: data.desired_timing ?? '',
           desiredScheme: data.desired_scheme ?? '',
-          desiredPrice: data.desired_price ?? '',
+          desiredPriceThousandYen: data.desired_price_thousand_yen != null ? String(data.desired_price_thousand_yen) : '',
           otherConditions: data.other_conditions ?? '',
           adContractStatus: data.ad_contract_status ?? '',
           adContractDate: data.ad_contract_date ?? '',
           ndaStatus: data.nda_status ?? '',
           ndaDate: data.nda_date ?? '',
         } : EMPTY_SELLER)
+        setLegacyDesiredPrice(data?.desired_price ?? '')
       } else {
         const data = await fetchBuyerConditions(dealId)
         if (loadSeq.current !== seq) return
@@ -118,14 +123,31 @@ export function DealConditionsSection({ dealId, divisionId, party }: DealConditi
     void loadData()
   }, [loadData])
 
+  const FIELD_LABELS: Record<string, string> = {
+    ad_contract_status: 'AD契締結可否', ad_contract_date: 'AD契締結日',
+    nda_status: 'NDA締結可否', nda_date: 'NDA締結日',
+    desired_price_thousand_yen: '希望譲渡対価',
+  }
+
   const handleSave = useCallback(async () => {
     setSaving(true)
     try {
       if (party === 'seller') {
-        const { strippedFields } = await upsertSellerConditions(dealId, divisionId, sellerForm)
+        const { strippedFields } = await upsertSellerConditions(dealId, divisionId, {
+          desiredTiming: sellerForm.desiredTiming,
+          desiredScheme: sellerForm.desiredScheme,
+          desiredPriceThousandYen: sellerForm.desiredPriceThousandYen ? Number(sellerForm.desiredPriceThousandYen) : null,
+          otherConditions: sellerForm.otherConditions,
+          adContractStatus: sellerForm.adContractStatus,
+          adContractDate: sellerForm.adContractDate,
+          ndaStatus: sellerForm.ndaStatus,
+          ndaDate: sellerForm.ndaDate,
+        })
         if (strippedFields.length > 0) {
-          // 048（AD契・NDA列）未適用の環境。既存項目は保存されたが、新項目だけ反映されなかった旨を伝える
-          toast.error('AD契・NDA欄はデータベースの準備が未完了のため保存されませんでした（他の項目は保存済みです）', { duration: 6000 })
+          // 048（AD契・NDA列）・050（希望譲渡対価の数値列）未適用の環境。
+          // 既存項目は保存されたが、未適用の列だけ反映されなかった旨を伝える
+          const labels = strippedFields.map((f) => FIELD_LABELS[f] ?? f).join('・')
+          toast.error(`${labels}はデータベースの準備が未完了のため保存されませんでした（他の項目は保存済みです）`, { duration: 6000 })
         } else {
           toast.success('条件を保存しました')
         }
@@ -166,10 +188,23 @@ export function DealConditionsSection({ dealId, divisionId, party }: DealConditi
               placeholder="例: 株式譲渡" className={inputCls} />
           </div>
           <div>
-            <label className={labelCls}>希望譲渡対価</label>
-            <input type="text" value={sellerForm.desiredPrice}
-              onChange={(e) => setSellerForm((f) => ({ ...f, desiredPrice: e.target.value }))}
-              placeholder="例: 1億円以上" className={inputCls} />
+            <label className={labelCls}>希望譲渡対価（千円）</label>
+            <input type="text" inputMode="numeric"
+              value={sellerForm.desiredPriceThousandYen ? Number(sellerForm.desiredPriceThousandYen).toLocaleString('ja-JP') : ''}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/[^0-9]/g, '')
+                setSellerForm((f) => ({ ...f, desiredPriceThousandYen: digits }))
+              }}
+              placeholder="例: 340,000" className={inputCls} />
+            {sellerForm.desiredPriceThousandYen && (
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                ≒ {(Number(sellerForm.desiredPriceThousandYen) / 100000).toLocaleString('ja-JP', { maximumFractionDigits: 1 })}億円
+              </p>
+            )}
+            {/* 旧・自由記述データ（050で数値専用に変更する前の登録内容）。読み取り専用の参考表示のみ */}
+            {legacyDesiredPrice && (
+              <p className="text-[11px] text-gray-400 mt-0.5">（旧データ）{legacyDesiredPrice}</p>
+            )}
           </div>
           <div>
             <label className={labelCls}>その他条件</label>

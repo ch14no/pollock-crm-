@@ -43,6 +43,7 @@ import {
   fetchDivisionMemoCategories, createDivisionMemoCategory, deleteDivisionMemoCategory,
   fetchDivisionCounterpartTypes, createDivisionCounterpartType, deleteDivisionCounterpartType,
 } from '@/lib/db/activities'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import type { DivisionDocType } from '@/types/database'
 import type { User as UserType, Division } from '@/types/database'
 // 通知設定（保存はlib/notif-settings、ヘッダーの通知ベルが参照する）
@@ -73,6 +74,7 @@ function moveItem<T>(arr: T[], idx: number, dir: -1 | 1): T[] {
 // ─── メインページ ─────────────────────────────────────────────────
 export default function SettingsPage() {
   const { currentUser, setCurrentUser, activeDivision, divisions } = useAppStore()
+  const dealTerm = useDealTerm()
   const isSuperAdmin = currentUser?.role === 'super_admin'
   // Slack通知設定（022マイグレーションのRLS: division_notification_settings_select/_manage）は
   // super_adminと当該事業部のmanagerの両方を許可する設計だが、以前はUI側が
@@ -214,7 +216,7 @@ export default function SettingsPage() {
             <p className="text-xs text-gray-400">ヘッダーの通知ベルに表示する種類を選べます（このブラウザにのみ適用）</p>
             {([
               { key: 'tossup',       label: 'トスアップを受信したとき' },
-              { key: 'dealStage',    label: '商談フェーズが変更されたとき' },
+              { key: 'dealStage',    label: `${dealTerm}フェーズが変更されたとき` },
               // 以下2種は通知の発生元が未実装。ONにしても何も起きない「飾りのトグル」に
               // ならないよう、準備中として無効化しておく
               { key: 'taskDue',      label: 'タスクの期限が近づいたとき', disabled: true },
@@ -340,6 +342,16 @@ export default function SettingsPage() {
 
           {managerNotifDivId && (
             <>
+              {/* stages_manage（006）はsuper_admin/managerの両方を許可しているが、
+                  DivisionStagesPanelは長らくsuper_admin専用ブロックの中にしかなく
+                  managerが「マッチング」等の新ステージを自分で追加できなかった
+                  （M&A事業部・酒田さん依頼で発覚。task_kanban_stages_manage等と同種の
+                  UI/RLS不一致のため同時に解消する） */}
+              <DivisionStagesPanel
+                key={`stages-mgr-${managerNotifDivId}`}
+                divisionId={managerNotifDivId}
+                divisionName={managerNotifDivName}
+              />
               {/* task_kanban_stages_manage（025）・task_kanban_tabs_manage（039）とも
                   super_admin/managerの両方を許可しているが、以前はUIがsuper_admin専用
                   ブロックの中にしかなくmanagerが到達できなかった（既存の不一致、
@@ -779,7 +791,7 @@ function DivisionsPanel() {
       if (!refs.deletable) {
         const parts: string[] = []
         if (refs.contacts > 0) parts.push(`顧客${refs.contacts}件`)
-        if (refs.deals > 0) parts.push(`商談${refs.deals}件`)
+        if (refs.deals > 0) parts.push(`${division.deal_term ?? '商談'}${refs.deals}件`)
         if (refs.tossups > 0) parts.push(`トスアップ${refs.tossups}件`)
         toast.error(`この事業部には${parts.join('・')}が紐づいているため削除できません`)
         return
@@ -902,8 +914,11 @@ function DivisionsPanel() {
 
 // ─── 事業部別パイプラインステージ ────────────────────────────────
 function DivisionStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
-  const { divisionStages, setDivisionStages, setDivisionTabs } = useAppStore()
+  const { divisionStages, setDivisionStages, setDivisionTabs, divisions } = useAppStore()
   const selectedDivId = divisionId
+  // マスタ管理はactiveDivisionと無関係に任意の事業部を選んで編集できるため、
+  // 選択中(divisionId)の呼称を使う（activeDivisionのuseDealTermは使わない）
+  const dealTerm = divisions.find((d) => d.id === divisionId)?.deal_term ?? '商談'
   const [stages, setStages] = useState<DivisionStage[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -1106,7 +1121,7 @@ function DivisionStagesPanel({ divisionId, divisionName }: MasterPanelProps) {
         </div>
       </CardHeader>
       <CardBody>
-        <p className="text-xs text-gray-500 mb-3">商談カンバンの列（フェーズ）を設定します。「受注」「失注」として扱う列もここで指定できます。</p>
+        <p className="text-xs text-gray-500 mb-3">{dealTerm}カンバンの列（フェーズ）を設定します。「受注」「失注」として扱う列もここで指定できます。</p>
 
         {/* ─── パイプラインタブ（任意） ─── */}
         <div className="mb-4">
@@ -1477,8 +1492,9 @@ function DivisionFieldsPanel({ divisionId, divisionName }: MasterPanelProps) {
 
 // ─── 商品マスタ管理 ───────────────────────────────────────────────
 function ProductsPanel({ divisionId, divisionName }: MasterPanelProps) {
-  const { divisionProducts, setDivisionProducts, divisionProductsEnabled, setDivisionProductsEnabled } = useAppStore()
+  const { divisionProducts, setDivisionProducts, divisionProductsEnabled, setDivisionProductsEnabled, divisions } = useAppStore()
   const selectedDivId = divisionId
+  const dealTerm = divisions.find((d) => d.id === divisionId)?.deal_term ?? '商談'
 
   const products = divisionProducts[selectedDivId] ?? DEFAULT_DIVISION_PRODUCTS[selectedDivId] ?? []
   const enabled = divisionProductsEnabled[selectedDivId] ?? false
@@ -1555,7 +1571,7 @@ function ProductsPanel({ divisionId, divisionName }: MasterPanelProps) {
         </div>
       </CardHeader>
       <CardBody>
-        <p className="text-xs text-gray-500 mb-4">商談登録画面で選択できる提案商品・サービスを管理します。</p>
+        <p className="text-xs text-gray-500 mb-4">{dealTerm}登録画面で選択できる提案商品・サービスを管理します。</p>
 
         {isSupabaseConfigured() && !dbReady && (
           <div className="mb-4 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-800">
@@ -1567,8 +1583,8 @@ function ProductsPanel({ divisionId, divisionName }: MasterPanelProps) {
         {/* 表示ON/OFFトグル */}
         <div className="flex items-center justify-between mb-4 p-3 bg-gray-50 rounded-xl border border-gray-100">
           <div>
-            <p className="text-sm font-medium text-gray-700">商談画面に商品選択を表示する</p>
-            <p className="text-xs text-gray-400 mt-0.5">ONにすると商談登録・編集時に商品を選択できます</p>
+            <p className="text-sm font-medium text-gray-700">{dealTerm}画面に商品選択を表示する</p>
+            <p className="text-xs text-gray-400 mt-0.5">ONにすると{dealTerm}登録・編集時に商品を選択できます</p>
           </div>
           <button
             onClick={handleToggleEnabled}
@@ -1610,6 +1626,8 @@ function ProductsPanel({ divisionId, divisionName }: MasterPanelProps) {
 // ─── 資料カテゴリ管理 ─────────────────────────────────────────────
 function DocTypesPanel({ divisionId, divisionName }: MasterPanelProps) {
   const selectedDivId = divisionId
+  const divisions = useAppStore((s) => s.divisions)
+  const dealTerm = divisions.find((d) => d.id === divisionId)?.deal_term ?? '商談'
   const [docTypes, setDocTypes] = useState<DivisionDocType[]>([])
   // 013マイグレーション（division_document_types）が利用可能か
   const [dbReady, setDbReady] = useState(false)
@@ -1677,8 +1695,8 @@ function DocTypesPanel({ divisionId, divisionName }: MasterPanelProps) {
       </CardHeader>
       <CardBody>
         <p className="text-xs text-gray-500 mb-4">
-          商談の「資料（Driveリンク）」で選択できるカテゴリを管理します。
-          「常設」にしたカテゴリは、資料が未登録でも商談画面に枠が常に表示されます（例: ノンネームシート・IMシート）。
+          {dealTerm}の「資料（Driveリンク）」で選択できるカテゴリを管理します。
+          「常設」にしたカテゴリは、資料が未登録でも{dealTerm}画面に枠が常に表示されます（例: ノンネームシート・IMシート）。
         </p>
 
         {isSupabaseConfigured() && !dbReady && !docsLoading && (
@@ -2001,14 +2019,16 @@ function MemoCategoriesPanel(props: MasterPanelProps) {
 
 // ─── 顧客属性管理（商談記録フォーム拡張・M&A事業部要望フェーズ4） ───────────────
 function CounterpartTypesPanel(props: MasterPanelProps) {
+  const divisions = useAppStore((s) => s.divisions)
+  const dealTerm = divisions.find((d) => d.id === props.divisionId)?.deal_term ?? '商談'
   return (
     <DivisionCategoryPanel
       {...props}
       title="顧客属性管理"
       icon={<Activity size={18} />}
-      description="商談に紐づく活動記録（電話・メール・面談・メモ）で、件名の代わりに選べる顧客属性を管理します（例: 売主・買主・提携先）。1件も設定していない事業部ではこの項目自体が表示されず、従来どおり件名を入力します。"
+      description={`${dealTerm}に紐づく活動記録（電話・メール・面談・メモ）で、件名の代わりに選べる顧客属性を管理します（例: 売主・買主・提携先）。1件も設定していない事業部ではこの項目自体が表示されず、従来どおり件名を入力します。`}
       migrationHint="顧客属性のDBテーブル（049_deal_activity_recording.sql）が未適用のため利用できません。"
-      emptyText="顧客属性は未設定です（商談の活動記録では従来どおり件名を入力します）"
+      emptyText={`顧客属性は未設定です（${dealTerm}の活動記録では従来どおり件名を入力します）`}
       placeholder="属性名を入力（例: 仲介先）"
       fetchCategories={fetchDivisionCounterpartTypes}
       createCategory={createDivisionCounterpartType}

@@ -8,10 +8,12 @@ import { formatRelativeTime, cn, matchSearch } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchDocumentsByDivision } from '@/lib/db/documents'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import type { DealDocument } from '@/types/database'
 
 // 資料の追加手順を？マークのホバー/フォーカスで表示するチュートリアル
 function DocumentsHowToTooltip() {
+  const dealTerm = useDealTerm()
   return (
     <span
       tabIndex={0}
@@ -28,8 +30,8 @@ function DocumentsHowToTooltip() {
       >
         <span className="block font-bold mb-2 text-sm">資料を追加するには</span>
         <span className="block space-y-1.5">
-          <span className="block">1. サイドバーの「商談」を開く</span>
-          <span className="block">2. 資料を紐づけたい商談カードをクリックして編集画面を開く</span>
+          <span className="block">1. サイドバーの「{dealTerm}」を開く</span>
+          <span className="block">2. 資料を紐づけたい{dealTerm}カードをクリックして編集画面を開く</span>
           <span className="block">3. 「資料（Driveリンク）」セクションの「追加」を押す</span>
           <span className="block">4. 資料名・カテゴリと、Google Drive等に置いたファイルのURLを入力して保存</span>
         </span>
@@ -46,6 +48,7 @@ function DocumentsHowToTooltip() {
 export default function DocumentsPage() {
   const activeDivisionId = useAppStore((s) => s.activeDivisionId)
   const activeDivision   = useAppStore((s) => s.activeDivision)
+  const dealTerm = useDealTerm()
 
   const [documents, setDocuments] = useState<DealDocument[]>([])
   const [loading, setLoading] = useState(false)
@@ -183,7 +186,7 @@ export default function DocumentsPage() {
             <EmptyState
               icon={<FileText size={48} />}
               title="資料がありません"
-              description="資料リンクは商談の編集画面から登録できます。"
+              description={`資料リンクは${dealTerm}の編集画面から登録できます。`}
               action={<DocumentsHowToTooltip />}
             />
           ) : filtered.length === 0 ? (

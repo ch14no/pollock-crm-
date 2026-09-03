@@ -67,7 +67,11 @@ async function processDivision(admin: ReturnType<typeof createAdminClient>, sett
       .select('id, due_date, deals(title), division_milestone_types(name)')
       .eq('division_id', settings.division_id)
       .lte('due_date', targetDate)
-      .is('notified_at', null),
+      .is('notified_at', null)
+      // 050で追加した「対応済み」チェック。完了済みのマイルストーンにまで期限通知を
+      // 送り続けると新機能の意味がなくなるため対象から除外する。
+      // 050はこのコードのデプロイより先にSQL適用される運用のため、列不在は想定しない
+      .is('completed_at', null),
     admin
       .from('deals')
       .select('id, title, close_date, close_date_alert_notified_at')

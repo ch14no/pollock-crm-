@@ -21,6 +21,7 @@ import { fetchActivitiesByDivision } from '@/lib/db/activities'
 import type { Tossup, Deal, Contact, Activity as DbActivity } from '@/types/database'
 import { formatCurrency, formatDate, formatRelativeTime, getStaleDays, cn } from '@/lib/utils'
 import { buildWonLostStageIds } from '@/lib/stage-status'
+import { useDealTerm } from '@/hooks/useDealTerm'
 
 type DashView = 'personal' | 'team' | 'manager'
 
@@ -95,7 +96,8 @@ export interface PipelineStageRow {
 }
 
 function PipelineChart({ activeDeals, stages }: { activeDeals: { stage_id: string; amount: number }[]; stages: PipelineStageRow[] }) {
-  if (activeDeals.length === 0) return <p className="text-sm text-gray-400 text-center py-6">進行中の商談はありません</p>
+  const dealTerm = useDealTerm()
+  if (activeDeals.length === 0) return <p className="text-sm text-gray-400 text-center py-6">進行中の{dealTerm}はありません</p>
 
   // 1商談=1行に必ず割り当てる（idを優先し、旧データ用に名前でもフォールバック。
   // 同名ステージが複数タブにあっても最初の1行にのみ紐づけ、二重カウントを防ぐ）
@@ -174,6 +176,7 @@ export default function DashboardPage() {
   const taskStatuses     = useAppStore((s) => s.taskStatuses)
   const divisionStages   = useAppStore((s) => s.divisionStages)
   const divisionTabs     = useAppStore((s) => s.divisionTabs)
+  const dealTerm = useDealTerm()
 
   const [dbDivTossups, setDbDivTossups] = useState<Tossup[]>([])
   const [dbDeals,      setDbDeals]      = useState<Deal[]>([])
@@ -388,7 +391,7 @@ export default function DashboardPage() {
           {/* 個人 KPI */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <KPICard
-              label="担当商談"
+              label={`担当${dealTerm}`}
               value={myActiveDeals.length}
               unit="件"
               sublabel={`見込み額 ${formatCurrency(myActiveDeals.reduce((s, d) => s + d.amount, 0))}`}
@@ -398,7 +401,7 @@ export default function DashboardPage() {
               label="担当顧客"
               value={myAssignedContacts.length}
               unit="社"
-              sublabel={`商談あり ${new Set(myDeals.map((d) => d.contact_id)).size}社`}
+              sublabel={`${dealTerm}あり ${new Set(myDeals.map((d) => d.contact_id)).size}社`}
               icon={<Users size={18} />}
             />
             <KPICard
@@ -480,7 +483,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 bg-white border border-gray-100 rounded-2xl shadow-sm p-5">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="font-bold text-gray-800">自分の担当商談</h2>
+                <h2 className="font-bold text-gray-800">自分の担当{dealTerm}</h2>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-gray-400">
                     見込み額合計 {formatCurrency(myActiveDeals.reduce((s, d) => s + d.amount, 0))}
@@ -567,7 +570,7 @@ export default function DashboardPage() {
           {/* チーム KPI */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <KPICard
-              label="進行中の商談"
+              label={`進行中の${dealTerm}`}
               value={teamActiveDeals.length}
               unit="件"
               sublabel={`見込み額合計 ${formatCurrency(teamActiveDeals.reduce((s, d) => s + d.amount, 0))}`}
@@ -604,7 +607,7 @@ export default function DashboardPage() {
                   className="flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-left hover:bg-red-100 transition-colors">
                   <AlertCircle size={18} className="text-red-500 flex-shrink-0" />
                   <div className="flex-1">
-                    <p className="text-sm font-bold text-red-700">滞留商談あり</p>
+                    <p className="text-sm font-bold text-red-700">滞留{dealTerm}あり</p>
                     <p className="text-xs text-red-600">{teamStaleCount}件が5日以上更新されていません</p>
                   </div>
                   <span className="text-xs text-red-600 font-medium">確認する →</span>
@@ -686,12 +689,13 @@ export default function DashboardPage() {
 function ClosingSoonTable({
   deals, onRowClick,
 }: { deals: { id: string; title: string; contacts?: { name?: string } | null; amount: number; close_date?: string }[]; onRowClick: () => void }) {
+  const dealTerm = useDealTerm()
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="text-xs text-gray-400 border-b border-gray-100">
-            <th className="text-left py-2 font-medium">商談名</th>
+            <th className="text-left py-2 font-medium">{dealTerm}名</th>
             <th className="text-left py-2 font-medium">顧客</th>
             <th className="text-right py-2 font-medium">見込み額</th>
             <th className="text-right py-2 font-medium">期限</th>

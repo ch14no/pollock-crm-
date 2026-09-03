@@ -13,6 +13,7 @@ import { useAppStore } from '@/store/appStore'
 import { createClient } from '@/lib/supabase/client'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchUnreadTossupCount } from '@/lib/db/tossups'
+import { useDealTerm } from '@/hooks/useDealTerm'
 import toast from 'react-hot-toast'
 
 // モバイルのメニュードロワー（BottomNav）とも共有する
@@ -57,6 +58,7 @@ export function Sidebar() {
   const router = useRouter()
   const { activeDivision, divisions, setActiveDivision, openTossupModal, currentUser, localTossups, tossupStatuses } = useAppStore()
   const userOwnDivisionIds = useAppStore((s) => s.userOwnDivisionIds)
+  const dealTerm = useDealTerm()
 
   // 事業部セレクタは自分の所属事業部のみに制限する（super_adminは全事業部が
   // userOwnDivisionIds に入るため全件表示）。所属未取得（デモモード・初期化中）は
@@ -168,6 +170,8 @@ export function Sidebar() {
             const active = pathname.startsWith(href)
             const isTossup = href === '/tossups'
             const badge = isTossup && unreadTossupCount > 0 ? unreadTossupCount : 0
+            // 事業部ごとの呼称カスタマイズ（050）。「商談」ナビだけ動的に差し替える
+            const displayLabel = href === '/deals' ? dealTerm : label
             return (
               <li key={href}>
                 <Link
@@ -179,7 +183,7 @@ export function Sidebar() {
                   )}
                 >
                   <Icon size={18} className="flex-shrink-0" />
-                  <span className="flex-1">{label}</span>
+                  <span className="flex-1">{displayLabel}</span>
                   {badge > 0 && (
                     <span className="min-w-5 h-5 px-1 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center">
                       {badge}
