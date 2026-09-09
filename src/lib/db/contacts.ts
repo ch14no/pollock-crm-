@@ -1,4 +1,4 @@
-import { getSupabase, chunkIdList } from './client'
+import { getSupabase, chunkIdList, fetchAllByCursor, DEFAULT_PAGE_SIZE } from './client'
 import type { Contact, ReferrerType } from '@/types/database'
 
 type RawContact = {
@@ -66,6 +66,10 @@ function isMissingReferrerColumn(error: { message?: string } | null): boolean {
   return msg.includes('referrer') && (msg.includes('column') || msg.includes('schema cache') || msg.includes('relationship'))
 }
 
+// division_idで絞り込むため通常は1000件未満（現状最大の事業部でも数百件規模）。
+// tasks/dashboard/activities/analysis等9箇所から呼ばれ、事業部切り替え時の
+// 連打・Realtime再取得と競合しやすい実装が多いため、ここは意図的に単一リクエストの
+// ままにして待ち時間を増やさない（全件取得が要る場合はfetchAllContacts側で対応する）
 export async function fetchContactsByDivision(divisionId: string): Promise<Contact[]> {
   let { data, error } = await getSupabase()
     .from('contacts')
@@ -83,21 +87,39 @@ export async function fetchContactsByDivision(divisionId: string): Promise<Conta
   return (data ?? []).map(toContact)
 }
 
+// ContactPicker（事業部を絞らない全社検索）用に全件取得する
+// （「全件ロード→クライアントフィルタ」方式）。PostgRESTの1リクエストあたり
+// 返却件数上限（db-max-rows、本番実測1000件）をクライアント側の.limit()では
+// 超えられないため、取得はidカーソルのキーセット方式でたぐる（OFFSETと違い、
+// ページ取得の合間に他の担当者が連絡先を編集・登録しても取りこぼし・重複が
+// 起きない）。表示順は取得後にupdated_at降順へ並べ直し、従来通り「最近更新した
+// 連絡先が上に来る」体験を保つ
 export async function fetchAllContacts(): Promise<Contact[]> {
-  let { data, error } = await getSupabase()
-    .from('contacts')
-    .select(CONTACT_SELECT_WITH_REFERRER)
-    .order('updated_at', { ascending: false })
-    .limit(500)
-  if (error && isMissingReferrerColumn(error)) {
-    ;({ data, error } = await getSupabase()
-      .from('contacts')
-      .select(CONTACT_BASE_SELECT)
-      .order('updated_at', { ascending: false })
-      .limit(500))
+  let useBase = false
+
+  const fetchBasePage = async (afterId: string | null): Promise<RawContact[]> => {
+    let query = getSupabase().from('contacts').select(CONTACT_BASE_SELECT).order('id').limit(DEFAULT_PAGE_SIZE)
+    if (afterId) query = query.gt('id', afterId)
+    const { data, error } = await query
+    if (error) throw error
+    return data ?? []
   }
-  if (error) throw error
-  return (data ?? []).map(toContact)
+
+  const rows = await fetchAllByCursor<RawContact>(async (afterId) => {
+    if (useBase) return fetchBasePage(afterId)
+    let query = getSupabase().from('contacts').select(CONTACT_SELECT_WITH_REFERRER).order('id').limit(DEFAULT_PAGE_SIZE)
+    if (afterId) query = query.gt('id', afterId)
+    const { data, error } = await query
+    if (error && isMissingReferrerColumn(error)) {
+      useBase = true
+      return fetchBasePage(afterId)
+    }
+    if (error) throw error
+    return data ?? []
+  }, (r) => r.id)
+
+  rows.sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0))
+  return rows.map(toContact)
 }
 
 export async function fetchContactById(id: string): Promise<Contact | null> {

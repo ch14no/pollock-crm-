@@ -1,4 +1,4 @@
-import { getSupabase } from './client'
+import { getSupabase, fetchAllPages, fetchAllByCursor, DEFAULT_PAGE_SIZE } from './client'
 import type { Company, Contact, ListingStatus } from '@/types/database'
 
 // companyGroups.tsからも参照するためexportする（同じ変換ロジックの重複を避ける）
@@ -55,27 +55,42 @@ export async function fetchCompanyById(id: string): Promise<Company | null> {
 // ContactPicker（fetchAllContacts）と同じ「全件ロード→クライアントフィルタ」方式
 // （companiesは全社マスタで数千件規模までこの方式で問題ない）
 export async function fetchAllCompanies(): Promise<Company[]> {
-  const { data, error } = await getSupabase()
-    .from('companies')
-    .select(COMPANY_SELECT)
-    .order('name')
-    .limit(2000)
-  if (error) throw error
-  return (data ?? []).map(toCompany)
+  const data = await fetchAllPages(async (from, to) => {
+    const { data, error } = await getSupabase()
+      .from('companies')
+      .select(COMPANY_SELECT)
+      .order('name')
+      .order('id')
+      .range(from, to)
+    if (error) throw error
+    return data ?? []
+  })
+  return data.map(toCompany)
 }
 
 // CompanyPickerの「自分の事業部の顧客のみ表示」トグル用。companiesは全社共有マスタで
 // division_idを持たないため、contactsの所属事業部経由で間接的に紐づける
-// （顧客管理画面が「自事業部の顧客」を数える基準と同じ定義）
+// （顧客管理画面が「自事業部の顧客」を数える基準と同じ定義）。
+// OFFSET(.range())ではなくidカーソルで送るキーセット方式にしているのは、ページを
+// たぐっている間に同じ事業部へ新しい連絡先が登録されても、既に読んだ範囲がズレて
+// company_idを取りこぼすことがないようにするため（idはランダムなUUIDなので、現在の
+// カーソルより手前に来る値でinsertされた行までは拾えないが、稀かつ次回開いた際には
+// 反映される実害の小さいギャップとして許容している）
 export async function fetchCompanyIdsByDivision(divisionId: string): Promise<Set<string>> {
-  const { data, error } = await getSupabase()
-    .from('contacts')
-    .select('company_id')
-    .eq('division_id', divisionId)
-    .not('company_id', 'is', null)
-    .limit(5000)
-  if (error) throw error
-  return new Set((data ?? []).map((r) => r.company_id as string))
+  const rows = await fetchAllByCursor<{ id: string; company_id: string }>(async (afterId) => {
+    let query = getSupabase()
+      .from('contacts')
+      .select('id, company_id')
+      .eq('division_id', divisionId)
+      .not('company_id', 'is', null)
+      .order('id')
+      .limit(DEFAULT_PAGE_SIZE)
+    if (afterId) query = query.gt('id', afterId)
+    const { data, error } = await query
+    if (error) throw error
+    return data ?? []
+  }, (r) => r.id)
+  return new Set(rows.map((r) => r.company_id))
 }
 
 // 会社情報の更新。019適用後はログイン済みの全ユーザーが更新可能

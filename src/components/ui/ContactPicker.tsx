@@ -41,6 +41,7 @@ export function ContactSearchPopup({
   const [contacts, setContacts] = useState<Contact[]>([])
   const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const loadSeq = useRef(0)
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
@@ -51,13 +52,20 @@ export function ContactSearchPopup({
   }, [onClose])
 
   useEffect(() => {
+    // 全件取得が複数往復のページングになったため、フォーカス再取得（新規登録タブから
+    // 戻ってきたときの更新）と初回読み込みが逆順で返ってくることがある。通し番号で
+    // 古い方のレスポンスを捨て、新しい方だけを反映する
     const load = (withSpinner: boolean) => {
+      const seq = ++loadSeq.current
       if (isSupabaseConfigured()) {
         if (withSpinner) setLoading(true)
         const fetch = filterDivisionId
           ? fetchContactsByDivision(filterDivisionId)
           : fetchAllContacts()
-        fetch.then(setContacts).catch(() => {}).finally(() => { if (withSpinner) setLoading(false) })
+        fetch
+          .then((data) => { if (loadSeq.current === seq) setContacts(data) })
+          .catch(() => {})
+          .finally(() => { if (withSpinner && loadSeq.current === seq) setLoading(false) })
       } else {
         const base = filterDivisionId
           ? MOCK_CONTACTS.filter((c) => c.division_id === filterDivisionId)
