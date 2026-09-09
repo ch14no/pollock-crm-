@@ -74,7 +74,7 @@ export function ContactSearchPopup({
   }, [filterDivisionId])
 
   const candidates = useMemo(() => {
-    if (!query.trim()) return contacts.slice(0, 50)
+    if (!query.trim()) return contacts
     const q = normalize(query)
     return contacts.filter((c) =>
       normalize(c.name).includes(q) ||

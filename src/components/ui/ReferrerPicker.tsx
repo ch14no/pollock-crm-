@@ -77,7 +77,7 @@ function UserSearchPopup({
   }, [])
 
   const candidates = useMemo(() => {
-    if (!query.trim()) return users.slice(0, 50)
+    if (!query.trim()) return users
     const q = normalize(query)
     return users.filter((u) =>
       normalize(u.name).includes(q) || normalize(u.primaryDivisionName ?? '').includes(q)

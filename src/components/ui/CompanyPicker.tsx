@@ -56,7 +56,7 @@ export function CompanySearchPopup({
 
   const candidates = useMemo(() => {
     const base = companies.filter((c) => !excludeSet.has(c.id))
-    if (!query.trim()) return base.slice(0, 50)
+    if (!query.trim()) return base
     const q = normalize(query)
     return base.filter((c) =>
       normalize(c.name).includes(q) ||
