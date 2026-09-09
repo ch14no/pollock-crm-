@@ -45,7 +45,7 @@ export function CompanySearchPopup({
   const [query, setQuery] = useState('')
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(false)
-  const [onlyMyDivision, setOnlyMyDivision] = useState(false)
+  const [onlyMyDivision, setOnlyMyDivision] = useState(!!divisionId)
   const [divisionCompanyIds, setDivisionCompanyIds] = useState<Set<string> | null>(null)
   const [divisionIdsError, setDivisionIdsError] = useState(false)
   const divisions = useAppStore((s) => s.divisions)
