@@ -64,6 +64,20 @@ export async function fetchAllCompanies(): Promise<Company[]> {
   return (data ?? []).map(toCompany)
 }
 
+// CompanyPickerの「自分の事業部の顧客のみ表示」トグル用。companiesは全社共有マスタで
+// division_idを持たないため、contactsの所属事業部経由で間接的に紐づける
+// （顧客管理画面が「自事業部の顧客」を数える基準と同じ定義）
+export async function fetchCompanyIdsByDivision(divisionId: string): Promise<Set<string>> {
+  const { data, error } = await getSupabase()
+    .from('contacts')
+    .select('company_id')
+    .eq('division_id', divisionId)
+    .not('company_id', 'is', null)
+    .limit(5000)
+  if (error) throw error
+  return new Set((data ?? []).map((r) => r.company_id as string))
+}
+
 // 会社情報の更新。019適用後はログイン済みの全ユーザーが更新可能
 // （companies_updateポリシー。会社は全社共有マスタのため変更は全事業部に反映される）
 export async function updateCompany(id: string, updates: {

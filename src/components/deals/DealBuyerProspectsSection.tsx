@@ -228,6 +228,7 @@ export function DealBuyerProspectsSection({ dealId, divisionId, dealTitle }: Dea
           <CompanyPicker
             onSelect={(id) => handleAdd(id)}
             excludeIds={excludeIds}
+            divisionId={divisionId}
             placeholder="買手候補の会社を検索..."
           />
           <button

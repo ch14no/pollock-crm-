@@ -2,8 +2,9 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { Search, X, Building2 } from 'lucide-react'
-import { fetchAllCompanies } from '@/lib/db/companies'
+import { fetchAllCompanies, fetchCompanyIdsByDivision } from '@/lib/db/companies'
 import { cn } from '@/lib/utils'
+import { useAppStore } from '@/store/appStore'
 import type { Company } from '@/types/database'
 
 function normalize(str: string): string {
@@ -23,22 +24,34 @@ interface CompanyPickerProps {
   // 会社を検索候補から除外するために使う（呼び出し元が都度組み立てる）
   excludeIds?: string[]
   placeholder?: string
+  // 指定すると「自分の事業部の顧客のみ表示」トグルが出る（買手打診リスト用）。
+  // companiesは全社共有マスタなので、渡さない呼び出し元（グループ会社紐づけ等）は
+  // 従来通り全社検索のみになる
+  divisionId?: string
 }
 
 // グループ会社紐づけ・買手打診リストの両方で共通利用するため export する
 export function CompanySearchPopup({
   excludeIds,
+  divisionId,
   onSelect,
   onClose,
 }: {
   excludeIds?: string[]
+  divisionId?: string
   onSelect: (company: Company) => void
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(false)
+  const [onlyMyDivision, setOnlyMyDivision] = useState(false)
+  const [divisionCompanyIds, setDivisionCompanyIds] = useState<Set<string> | null>(null)
+  const [divisionIdsError, setDivisionIdsError] = useState(false)
+  const divisions = useAppStore((s) => s.divisions)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  const divisionName = divisions.find((d) => d.id === divisionId)?.name
 
   useEffect(() => { inputRef.current?.focus() }, [])
   useEffect(() => {
@@ -52,10 +65,22 @@ export function CompanySearchPopup({
     fetchAllCompanies().then(setCompanies).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
+  useEffect(() => {
+    if (!divisionId) return
+    setDivisionCompanyIds(null)
+    setDivisionIdsError(false)
+    fetchCompanyIdsByDivision(divisionId)
+      .then(setDivisionCompanyIds)
+      .catch(() => setDivisionIdsError(true))
+  }, [divisionId])
+
   const excludeSet = useMemo(() => new Set(excludeIds ?? []), [excludeIds])
 
   const candidates = useMemo(() => {
-    const base = companies.filter((c) => !excludeSet.has(c.id))
+    let base = companies.filter((c) => !excludeSet.has(c.id))
+    if (onlyMyDivision && divisionCompanyIds) {
+      base = base.filter((c) => divisionCompanyIds.has(c.id))
+    }
     if (!query.trim()) return base
     const q = normalize(query)
     return base.filter((c) =>
@@ -63,7 +88,7 @@ export function CompanySearchPopup({
       normalize(c.name_kana ?? '').includes(q) ||
       normalize(c.representative ?? '').includes(q)
     )
-  }, [query, companies, excludeSet])
+  }, [query, companies, excludeSet, onlyMyDivision, divisionCompanyIds])
 
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center pt-16 px-4"
@@ -91,11 +116,36 @@ export function CompanySearchPopup({
           </button>
         </div>
 
-        <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
+        <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 space-y-1.5">
           <p className="text-xs text-gray-400">
             {loading ? '読み込み中...' :
               query ? `「${query}」の検索結果 ${candidates.length}件` : `会社 ${candidates.length}件`}
           </p>
+          {divisionId && (
+            <div className="flex items-center gap-1.5">
+              <label
+                className={cn(
+                  'flex items-center gap-1.5 text-xs text-gray-500 w-fit',
+                  divisionCompanyIds ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={onlyMyDivision}
+                  disabled={!divisionCompanyIds}
+                  onChange={(e) => setOnlyMyDivision(e.target.checked)}
+                  className="rounded border-gray-300 text-orange-500 focus:ring-orange-500 disabled:cursor-not-allowed"
+                />
+                {divisionName ?? 'この事業部'}の顧客のみ表示
+                {!divisionCompanyIds && !divisionIdsError && (
+                  <span className="text-gray-300">（読込中...）</span>
+                )}
+              </label>
+              {divisionIdsError && (
+                <span className="text-[11px] text-red-400">絞り込みを読み込めませんでした</span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="overflow-y-auto max-h-80">
@@ -147,6 +197,7 @@ export function CompanyPicker({
   disabled,
   excludeIds,
   placeholder = '会社を選択...',
+  divisionId,
 }: CompanyPickerProps) {
   const [open, setOpen] = useState(false)
 
@@ -192,6 +243,7 @@ export function CompanyPicker({
       {open && (
         <CompanySearchPopup
           excludeIds={excludeIds}
+          divisionId={divisionId}
           onSelect={handleSelect}
           onClose={() => setOpen(false)}
         />
