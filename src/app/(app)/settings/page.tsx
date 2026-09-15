@@ -352,6 +352,15 @@ export default function SettingsPage() {
                 divisionId={managerNotifDivId}
                 divisionName={managerNotifDivName}
               />
+              {/* dcf_manage（003）もsuper_admin/managerの両方を許可しているが、以前は
+                  DivisionStagesPanelと同様にsuper_admin専用ブロックの中にしかなく
+                  managerが自分でカスタム項目を追加できなかった（M&A事業部・酒田さん
+                  依頼で発覚。同種のUI/RLS不一致のため同時に解消する） */}
+              <DivisionFieldsPanel
+                key={`fields-mgr-${managerNotifDivId}`}
+                divisionId={managerNotifDivId}
+                divisionName={managerNotifDivName}
+              />
               {/* task_kanban_stages_manage（025）・task_kanban_tabs_manage（039）とも
                   super_admin/managerの両方を許可しているが、以前はUIがsuper_admin専用
                   ブロックの中にしかなくmanagerが到達できなかった（既存の不一致、
