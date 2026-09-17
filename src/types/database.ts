@@ -48,6 +48,8 @@ export interface Division {
   color_code?: string
   // 事業部ごとの「商談」呼称カスタマイズ（050）。未設定時は'商談'扱い
   deal_term?: string
+  // 事業部ごとの「タスク管理」呼称カスタマイズ（052）。未設定時は'タスク管理'扱い
+  task_term?: string
   created_at: string
 }
 
@@ -126,6 +128,11 @@ export interface Contact {
   referrer_type?: ReferrerType
   referrer_user_id?: string
   referrer_contact_id?: string
+  // 接触経路（詳細）の人物紐づけ（M&A事業部要望。052マイグレーション。
+  // 紹介者と同型だが別概念のため独立した列として持つ）
+  source_type?: ReferrerType
+  source_user_id?: string
+  source_contact_id?: string
   created_at: string
   updated_at: string
   // joined
@@ -134,6 +141,8 @@ export interface Contact {
   divisions?: Division
   referrer_user?: ReferrerUser
   referrer_contact?: ReferrerContact
+  source_user?: ReferrerUser
+  source_contact?: ReferrerContact
 }
 
 export interface PipelineStage {

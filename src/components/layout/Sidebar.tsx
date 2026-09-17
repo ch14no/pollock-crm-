@@ -14,6 +14,7 @@ import { createClient } from '@/lib/supabase/client'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { fetchUnreadTossupCount } from '@/lib/db/tossups'
 import { useDealTerm } from '@/hooks/useDealTerm'
+import { useTaskTerm } from '@/hooks/useTaskTerm'
 import toast from 'react-hot-toast'
 
 // モバイルのメニュードロワー（BottomNav）とも共有する
@@ -59,6 +60,7 @@ export function Sidebar() {
   const { activeDivision, divisions, setActiveDivision, openTossupModal, currentUser, localTossups, tossupStatuses } = useAppStore()
   const userOwnDivisionIds = useAppStore((s) => s.userOwnDivisionIds)
   const dealTerm = useDealTerm()
+  const taskTerm = useTaskTerm()
 
   // 事業部セレクタは自分の所属事業部のみに制限する（super_adminは全事業部が
   // userOwnDivisionIds に入るため全件表示）。所属未取得（デモモード・初期化中）は
@@ -170,8 +172,8 @@ export function Sidebar() {
             const active = pathname.startsWith(href)
             const isTossup = href === '/tossups'
             const badge = isTossup && unreadTossupCount > 0 ? unreadTossupCount : 0
-            // 事業部ごとの呼称カスタマイズ（050）。「商談」ナビだけ動的に差し替える
-            const displayLabel = href === '/deals' ? dealTerm : label
+            // 事業部ごとの呼称カスタマイズ（050・052）。「商談」「タスク管理」ナビだけ動的に差し替える
+            const displayLabel = href === '/deals' ? dealTerm : href === '/tasks' ? taskTerm : label
             return (
               <li key={href}>
                 <Link

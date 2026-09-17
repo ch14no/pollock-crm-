@@ -20,6 +20,7 @@ import { DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
 import { hasTaskTabs, taskStagesForTab, taskTabIdForStage, resolveFallbackTaskTabId } from '@/lib/task-kanban-tabs'
 import { TaskKanbanBoard } from '@/components/tasks/TaskKanbanBoard'
 import { useTaskRealtime } from '@/hooks/useTaskRealtime'
+import { useTaskTerm } from '@/hooks/useTaskTerm'
 import type { Activity, Contact, User as UserType } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -45,6 +46,7 @@ export default function TasksPage() {
   const searchParams = useSearchParams()
   const currentUser       = useAppStore((s) => s.currentUser)
   const activeDivisionId  = useAppStore((s) => s.activeDivisionId)
+  const taskTerm = useTaskTerm()
   const localActivities   = useAppStore((s) => s.localActivities)
   const taskStatuses      = useAppStore((s) => s.taskStatuses)
   const setTaskStatus     = useAppStore((s) => s.setTaskStatus)
@@ -468,7 +470,7 @@ export default function TasksPage() {
       {/* ヘッダー */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-black text-gray-800">タスク管理</h1>
+          <h1 className="text-2xl font-black text-gray-800">{taskTerm}</h1>
           <p className="text-sm text-gray-500">
             {loading ? '読み込み中...' : `未完了 ${pendingTasks.length}件 · 課題 ${openCount}件`}
           </p>

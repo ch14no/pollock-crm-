@@ -19,6 +19,17 @@ type RawContact = {
     email: string | null; phone: string | null; company_id: string | null
     companies: { id: string; name: string } | null
   } | null
+  // 052マイグレーション（接触経路（詳細）の人物紐づけ）未適用の環境では
+  // select に含めないため常に optional。referrer_*と同型
+  source_type?: string | null
+  source_user_id?: string | null
+  source_contact_id?: string | null
+  source_user?: { id: string; name: string; email: string; role: string; created_at: string } | null
+  source_contact?: {
+    id: string; name: string; department: string | null; position: string | null
+    email: string | null; phone: string | null; company_id: string | null
+    companies: { id: string; name: string } | null
+  } | null
 }
 
 function toContact(r: RawContact): Contact {
@@ -32,6 +43,9 @@ function toContact(r: RawContact): Contact {
     referrer_type: (r.referrer_type as ReferrerType | null | undefined) ?? undefined,
     referrer_user_id: r.referrer_user_id ?? undefined,
     referrer_contact_id: r.referrer_contact_id ?? undefined,
+    source_type: (r.source_type as ReferrerType | null | undefined) ?? undefined,
+    source_user_id: r.source_user_id ?? undefined,
+    source_contact_id: r.source_contact_id ?? undefined,
     created_at: r.created_at, updated_at: r.updated_at,
     companies: r.companies ? {
       ...r.companies,
@@ -50,16 +64,40 @@ function toContact(r: RawContact): Contact {
       company_id: r.referrer_contact.company_id ?? undefined,
       companies: r.referrer_contact.companies ?? undefined,
     } : undefined,
+    source_user: r.source_user ? { ...r.source_user, role: r.source_user.role as 'super_admin' | 'manager' | 'user' } : undefined,
+    source_contact: r.source_contact ? {
+      id: r.source_contact.id,
+      name: r.source_contact.name,
+      department: r.source_contact.department ?? undefined,
+      position: r.source_contact.position ?? undefined,
+      email: r.source_contact.email ?? undefined,
+      phone: r.source_contact.phone ?? undefined,
+      company_id: r.source_contact.company_id ?? undefined,
+      companies: r.source_contact.companies ?? undefined,
+    } : undefined,
   }
 }
 
-// 021マイグレーション（紹介者：referrer_type/referrer_user_id/referrer_contact_id）が
-// 未適用の環境でも既存の顧客一覧・詳細取得が壊れないよう、join込みで失敗したら
-// 紹介者なしの従来select にフォールバックする
+// 021（紹介者）・052（接触経路詳細の人物紐づけ）が未適用の環境でも既存の顧客一覧・
+// 詳細取得が壊れないよう、join込みで失敗したら従来selectにフォールバックする。
+// 021と052は別々のタイミングで適用されうる（052はまだ未適用の環境がありうる）ため、
+// 2つを1本のselect+1段フォールバックにまとめると、052未適用の環境で052分の
+// エラーが出た時点で021分のjoin（既に本番で使われている紹介者表示）まで巻き添えで
+// 失われてしまう。source（052）→referrer（021）→無しの3段階に分けて、
+// どちらか片方だけ未適用でももう片方は生かす
 const CONTACT_BASE_SELECT = '*, companies(*), users:assigned_user_id(id,name,email,role,created_at)'
 const CONTACT_SELECT_WITH_REFERRER = `${CONTACT_BASE_SELECT},
   referrer_user:referrer_user_id(id,name,email,role,created_at),
   referrer_contact:referrer_contact_id(id,name,department,position,email,phone,company_id,companies(id,name))`
+const CONTACT_SELECT_FULL = `${CONTACT_SELECT_WITH_REFERRER},
+  source_user:source_user_id(id,name,email,role,created_at),
+  source_contact:source_contact_id(id,name,department,position,email,phone,company_id,companies(id,name))`
+
+function isMissingSourceColumn(error: { message?: string } | null): boolean {
+  const msg = error?.message ?? ''
+  const mentionsSource = msg.includes('source_user') || msg.includes('source_contact')
+  return mentionsSource && (msg.includes('column') || msg.includes('schema cache') || msg.includes('relationship'))
+}
 
 function isMissingReferrerColumn(error: { message?: string } | null): boolean {
   const msg = error?.message ?? ''
@@ -73,9 +111,16 @@ function isMissingReferrerColumn(error: { message?: string } | null): boolean {
 export async function fetchContactsByDivision(divisionId: string): Promise<Contact[]> {
   let { data, error } = await getSupabase()
     .from('contacts')
-    .select(CONTACT_SELECT_WITH_REFERRER)
+    .select(CONTACT_SELECT_FULL)
     .eq('division_id', divisionId)
     .order('updated_at', { ascending: false })
+  if (error && isMissingSourceColumn(error)) {
+    ;({ data, error } = await getSupabase()
+      .from('contacts')
+      .select(CONTACT_SELECT_WITH_REFERRER)
+      .eq('division_id', divisionId)
+      .order('updated_at', { ascending: false }))
+  }
   if (error && isMissingReferrerColumn(error)) {
     ;({ data, error } = await getSupabase()
       .from('contacts')
@@ -95,7 +140,7 @@ export async function fetchContactsByDivision(divisionId: string): Promise<Conta
 // 起きない）。表示順は取得後にupdated_at降順へ並べ直し、従来通り「最近更新した
 // 連絡先が上に来る」体験を保つ
 export async function fetchAllContacts(): Promise<Contact[]> {
-  let useBase = false
+  let tier: 'full' | 'referrer' | 'base' = 'full'
 
   const fetchBasePage = async (afterId: string | null): Promise<RawContact[]> => {
     let query = getSupabase().from('contacts').select(CONTACT_BASE_SELECT).order('id').limit(DEFAULT_PAGE_SIZE)
@@ -105,14 +150,27 @@ export async function fetchAllContacts(): Promise<Contact[]> {
     return data ?? []
   }
 
-  const rows = await fetchAllByCursor<RawContact>(async (afterId) => {
-    if (useBase) return fetchBasePage(afterId)
+  const fetchReferrerPage = async (afterId: string | null): Promise<RawContact[]> => {
     let query = getSupabase().from('contacts').select(CONTACT_SELECT_WITH_REFERRER).order('id').limit(DEFAULT_PAGE_SIZE)
     if (afterId) query = query.gt('id', afterId)
     const { data, error } = await query
     if (error && isMissingReferrerColumn(error)) {
-      useBase = true
+      tier = 'base'
       return fetchBasePage(afterId)
+    }
+    if (error) throw error
+    return data ?? []
+  }
+
+  const rows = await fetchAllByCursor<RawContact>(async (afterId) => {
+    if (tier === 'base') return fetchBasePage(afterId)
+    if (tier === 'referrer') return fetchReferrerPage(afterId)
+    let query = getSupabase().from('contacts').select(CONTACT_SELECT_FULL).order('id').limit(DEFAULT_PAGE_SIZE)
+    if (afterId) query = query.gt('id', afterId)
+    const { data, error } = await query
+    if (error && isMissingSourceColumn(error)) {
+      tier = 'referrer'
+      return fetchReferrerPage(afterId)
     }
     if (error) throw error
     return data ?? []
@@ -125,9 +183,16 @@ export async function fetchAllContacts(): Promise<Contact[]> {
 export async function fetchContactById(id: string): Promise<Contact | null> {
   let { data, error } = await getSupabase()
     .from('contacts')
-    .select(CONTACT_SELECT_WITH_REFERRER)
+    .select(CONTACT_SELECT_FULL)
     .eq('id', id)
     .single()
+  if (error && isMissingSourceColumn(error)) {
+    ;({ data, error } = await getSupabase()
+      .from('contacts')
+      .select(CONTACT_SELECT_WITH_REFERRER)
+      .eq('id', id)
+      .single())
+  }
   if (error && isMissingReferrerColumn(error)) {
     ;({ data, error } = await getSupabase()
       .from('contacts')
@@ -139,9 +204,12 @@ export async function fetchContactById(id: string): Promise<Contact | null> {
   return toContact(data)
 }
 
-// 021マイグレーション（紹介者）未適用の環境ではinsert/updateから当該カラムを
-// 外してリトライする（deals.ts の OPTIONAL_DEAL_COLUMNS と同じ考え方）
-const OPTIONAL_CONTACT_COLUMNS = ['referrer_type', 'referrer_user_id', 'referrer_contact_id'] as const
+// 021（紹介者）・052（接触経路詳細の人物紐づけ）未適用の環境ではinsert/updateから
+// 当該カラムを外してリトライする（deals.ts の OPTIONAL_DEAL_COLUMNS と同じ考え方）
+const OPTIONAL_CONTACT_COLUMNS = [
+  'referrer_type', 'referrer_user_id', 'referrer_contact_id',
+  'source_type', 'source_user_id', 'source_contact_id',
+] as const
 
 function isMissingContactColumnError(error: { message?: string } | null, column: string): boolean {
   const msg = error?.message ?? ''
@@ -154,6 +222,7 @@ export async function createContact(input: {
   address?: string; department?: string; notes?: string
   tags?: string[]; customAttributes?: Record<string, unknown>
   referrerType?: ReferrerType; referrerUserId?: string; referrerContactId?: string
+  sourceType?: ReferrerType; sourceUserId?: string; sourceContactId?: string
 }): Promise<{ contact: Contact; strippedFields: string[] }> {
   const payload: Record<string, unknown> = {
     division_id: input.divisionId,
@@ -172,20 +241,28 @@ export async function createContact(input: {
   if (input.referrerType !== undefined) payload.referrer_type = input.referrerType
   if (input.referrerUserId !== undefined) payload.referrer_user_id = input.referrerUserId
   if (input.referrerContactId !== undefined) payload.referrer_contact_id = input.referrerContactId
+  if (input.sourceType !== undefined) payload.source_type = input.sourceType
+  if (input.sourceUserId !== undefined) payload.source_user_id = input.sourceUserId
+  if (input.sourceContactId !== undefined) payload.source_contact_id = input.sourceContactId
 
   const insertContact = (p: Record<string, unknown>) =>
     getSupabase().from('contacts').insert(p).select('*, companies(*)').single()
 
   let { data, error } = await insertContact(payload)
-  // 削除した任意カラム名を呼び出し元へ返す（修正5）。OPTIONAL_CONTACT_COLUMNSは
-  // 紹介者関連カラムのみなので、1件でも含まれれば「紹介者欄が未反映」を意味する
+  // for文の1回巡回だと、あるカラムを除去した結果「次のエラーが実は前段で
+  // 既にチェック済みの別カラムを指す」場合に取りこぼす（列不在エラーの報告順が
+  // OPTIONAL_CONTACT_COLUMNSの配列順と一致する保証はないため。activities.tsの
+  // OPTIONAL_ACTIVITY_COLUMNSと同じ理由・同じ対策）。未試行のカラム集合が
+  // 尽きるかエラーが消えるまで回すことで対応
   const strippedFields: string[] = []
-  for (const col of OPTIONAL_CONTACT_COLUMNS) {
-    if (error && col in payload && isMissingContactColumnError(error, col)) {
-      delete payload[col]
-      strippedFields.push(col)
-      ;({ data, error } = await insertContact(payload))
-    }
+  const remaining = new Set(OPTIONAL_CONTACT_COLUMNS)
+  while (error && remaining.size > 0) {
+    const hit = [...remaining].find((col) => col in payload && isMissingContactColumnError(error, col))
+    if (!hit) break
+    delete payload[hit]
+    remaining.delete(hit)
+    strippedFields.push(hit)
+    ;({ data, error } = await insertContact(payload))
   }
   if (error) throw error
   return { contact: toContact(data), strippedFields }
@@ -196,6 +273,7 @@ export async function updateContact(id: string, updates: {
   position?: string | null; address?: string | null; department?: string | null
   notes?: string | null; tags?: string[]
   referrerType?: ReferrerType | null; referrerUserId?: string | null; referrerContactId?: string | null
+  sourceType?: ReferrerType | null; sourceUserId?: string | null; sourceContactId?: string | null
 }): Promise<{ strippedFields: string[] }> {
   const patch: Record<string, unknown> = {}
   if (updates.name !== undefined) patch.name = updates.name
@@ -209,6 +287,9 @@ export async function updateContact(id: string, updates: {
   if (updates.referrerType !== undefined) patch.referrer_type = updates.referrerType
   if (updates.referrerUserId !== undefined) patch.referrer_user_id = updates.referrerUserId
   if (updates.referrerContactId !== undefined) patch.referrer_contact_id = updates.referrerContactId
+  if (updates.sourceType !== undefined) patch.source_type = updates.sourceType
+  if (updates.sourceUserId !== undefined) patch.source_user_id = updates.sourceUserId
+  if (updates.sourceContactId !== undefined) patch.source_contact_id = updates.sourceContactId
 
   // .select() を付けないと、RLSに拒否された0件更新でもエラーにならず
   // 「保存できたように見えて実際は保存されていない」状態になるため、更新行を必ず検証する
@@ -217,14 +298,18 @@ export async function updateContact(id: string, updates: {
     .update(patch)
     .eq('id', id)
     .select('id')
-  // 削除した任意カラム名を呼び出し元へ返す（修正5）
+  // 削除した任意カラム名を呼び出し元へ返す（修正5）。createContactと同じ
+  // while+Setの取りこぼさないリトライ（列不在エラーの報告順が配列順と
+  // 一致する保証はないため）
   const strippedFields: string[] = []
-  for (const col of OPTIONAL_CONTACT_COLUMNS) {
-    if (error && col in patch && isMissingContactColumnError(error, col)) {
-      delete patch[col]
-      strippedFields.push(col)
-      ;({ data, error } = await getSupabase().from('contacts').update(patch).eq('id', id).select('id'))
-    }
+  const remaining = new Set(OPTIONAL_CONTACT_COLUMNS)
+  while (error && remaining.size > 0) {
+    const hit = [...remaining].find((col) => col in patch && isMissingContactColumnError(error, col))
+    if (!hit) break
+    delete patch[hit]
+    remaining.delete(hit)
+    strippedFields.push(hit)
+    ;({ data, error } = await getSupabase().from('contacts').update(patch).eq('id', id).select('id'))
   }
   if (error) throw error
   if (!data || data.length === 0) {

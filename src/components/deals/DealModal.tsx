@@ -19,6 +19,7 @@ import { hasTabs, stagesForTab, tabIdForStage } from '@/lib/pipeline-tabs'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { createDeal, updateDeal, updateDealStage, deleteDeal, DealAlreadyDeletedError } from '@/lib/db/deals'
 import { cn, formatCurrencyJa } from '@/lib/utils'
+import { MA_DIVISION_NAME } from '@/lib/config'
 import { useDealTerm } from '@/hooks/useDealTerm'
 import toast from 'react-hot-toast'
 
@@ -364,7 +365,7 @@ export function DealModal() {
   // ——将来別の事業部がたまたまdeal_term='案件'に設定しても道連れで
   // 挙動が変わらないように（/code-reviewで指摘）
   const modalTitle = isEdit
-    ? (activeDivision?.name === 'M＆A事業部' ? '案件情報' : `${dealTerm}を編集`)
+    ? (activeDivision?.name === MA_DIVISION_NAME ? '案件情報' : `${dealTerm}を編集`)
     : `${dealTerm}を登録`
 
   return (

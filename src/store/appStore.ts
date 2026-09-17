@@ -85,6 +85,12 @@ export interface ContactLocalEdit {
   // DB保存はされない（referrer_user_id/referrer_contact_idのみが真実源）
   referrer_user?: ReferrerUser
   referrer_contact?: ReferrerContact
+  // 接触経路（詳細）の人物紐づけ（M&A事業部追加依頼①。052）。referrer_*と同型
+  source_type?: 'internal' | 'external'
+  source_user_id?: string
+  source_contact_id?: string
+  source_user?: ReferrerUser
+  source_contact?: ReferrerContact
 }
 
 // 事業部別カスタムフィールド定義

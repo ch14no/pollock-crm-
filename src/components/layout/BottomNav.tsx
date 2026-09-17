@@ -9,6 +9,7 @@ import { useAppStore } from '@/store/appStore'
 import { NAV_ITEMS } from '@/components/layout/Sidebar'
 import { createClient } from '@/lib/supabase/client'
 import { useDealTerm } from '@/hooks/useDealTerm'
+import { useTaskTerm } from '@/hooks/useTaskTerm'
 import toast from 'react-hot-toast'
 
 const NAV_LEFT  = [
@@ -29,6 +30,7 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
   const { activeDivision, divisions, setActiveDivision, currentUser } = useAppStore()
   const userOwnDivisionIds = useAppStore((s) => s.userOwnDivisionIds)
   const dealTerm = useDealTerm()
+  const taskTerm = useTaskTerm()
   const [search, setSearch] = useState('')
 
   // デスクトップのヘッダー検索と同じ動き（顧客ページへ検索クエリ付きで遷移）
@@ -128,7 +130,7 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-2 gap-1.5">
             {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
               const active = pathname.startsWith(href)
-              const displayLabel = href === '/deals' ? dealTerm : label
+              const displayLabel = href === '/deals' ? dealTerm : href === '/tasks' ? taskTerm : label
               return (
                 <Link
                   key={href}
@@ -174,6 +176,11 @@ export function BottomNav() {
   const pathname = usePathname()
   const router = useRouter()
   const dealTerm = useDealTerm()
+  const taskTerm = useTaskTerm()
+  // ボトムタブは幅が狭いため、既定の「タスク管理」のままなら従来通りの短縮ラベル
+  // 「タスク」を使い、カスタマイズされている場合（M&A事業部の「IM管理」等）のみ
+  // その呼称をそのまま使う
+  const taskShortLabel = taskTerm !== 'タスク管理' ? taskTerm : 'タスク'
   const [menuOpen, setMenuOpen] = useState(false)
   // ドロワーのkeydown effectがonCloseに依存するため、参照を安定させて再登録の無駄を防ぐ
   const closeMenu = useCallback(() => setMenuOpen(false), [])
@@ -215,7 +222,7 @@ export function BottomNav() {
               className={cn('flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium transition-colors',
                 pathname.startsWith(href) ? 'text-orange-600' : 'text-gray-500')}>
               <Icon size={22} />
-              <span>{label}</span>
+              <span>{href === '/tasks' ? taskShortLabel : label}</span>
             </Link>
           ))}
 

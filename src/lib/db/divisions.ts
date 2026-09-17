@@ -51,6 +51,7 @@ export async function fetchDivisions(): Promise<Division[]> {
     name: d.name,
     color_code: d.color_code ?? undefined,
     deal_term: d.deal_term ?? '商談',
+    task_term: d.task_term ?? 'タスク管理',
     created_at: d.created_at,
   }))
 }

@@ -8,7 +8,7 @@ import {
   Trash2, Download, CheckSquare, Square, Filter, Info, Briefcase,
 } from 'lucide-react'
 import { MOCK_CONTACTS, MOCK_TEAM_MEMBERS } from '@/lib/mock-data'
-import { LOCATIONS, getLocationConfig, getLocationsByRegion, sortTags } from '@/lib/config'
+import { LOCATIONS, getLocationConfig, getLocationsByRegion, sortTags, MA_DIVISION_NAME } from '@/lib/config'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -446,9 +446,12 @@ export default function ContactsPage() {
   // 一覧の行に出す事業部カスタム区分（select型）の値。M&Aの「売主/買主」のように、
   // 開かないと分からない重要区分を一覧で見えるようにする。
   // 旧データ（custom_attributes）にも項目名でフォールバックする。
+  const isMADivision = activeDivision?.name === MA_DIVISION_NAME
   const customBadges = useMemo(() => {
     const map: Record<string, string[]> = {}
-    if (selectCustomFields.length === 0) return map
+    // select型カスタムフィールドが無く、かつ接触経路（詳細、M&A限定）も出す必要が
+    // ない事業部では、全件を回さず即座に空を返す（大半の事業部はこちら）
+    if (selectCustomFields.length === 0 && !isMADivision) return map
     for (const c of divisionContacts) {
       const vals = selectCustomFields
         .map((f) => {
@@ -456,10 +459,14 @@ export default function ContactsPage() {
           return typeof v === 'string' ? v : ''
         })
         .filter((v) => v !== '')
+      // 接触経路（詳細）の人物紐づけ（M&A事業部追加依頼③。052マイグレーション）。
+      // 専用列のためselectCustomFieldsには含まれず、別枠で解決してバッジに合流させる
+      if (isMADivision && c.source_user) vals.push(`接触経路: ${c.source_user.name}（社内）`)
+      else if (isMADivision && c.source_contact) vals.push(`接触経路: ${c.source_contact.name}`)
       if (vals.length > 0) map[c.id] = vals
     }
     return map
-  }, [selectCustomFields, divisionContacts, listCustomValues])
+  }, [selectCustomFields, divisionContacts, listCustomValues, isMADivision])
 
   return (
     <div className="w-full">
@@ -885,6 +892,7 @@ export default function ContactsPage() {
           isReadOnly={!isOwnDivision}
           contactStatuses={contactStatuses}
           listStatuses={listStatuses}
+          customBadges={customBadges}
         />
       ) : (
         <CardView
@@ -1102,7 +1110,7 @@ function ListView({
 
 // ─── Company View ─────────────────────────────────────────────────────────────
 function CompanyView({
-  contacts, selectedIds, onToggleSelect, onSelect, onViewDetail, isReadOnly, contactStatuses, listStatuses,
+  contacts, selectedIds, onToggleSelect, onSelect, onViewDetail, isReadOnly, contactStatuses, listStatuses, customBadges,
 }: {
   contacts: Contact[]
   selectedIds: Set<string>
@@ -1112,6 +1120,7 @@ function CompanyView({
   isReadOnly: boolean
   contactStatuses: ContactStatusMap
   listStatuses: Record<string, string[]>
+  customBadges: Record<string, string[]>
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
@@ -1216,6 +1225,7 @@ function CompanyView({
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium text-sm text-gray-800">{contact.name}</span>
                           <StatusIcons contactId={contact.id} contactStatuses={contactStatuses} listStatuses={listStatuses} />
+                          <CustomValueBadges values={customBadges[contact.id]} />
                           {contact.position && <span className="text-xs text-gray-500">{contact.position}</span>}
                           {isReadOnly && <span className="inline-flex items-center gap-1 text-xs text-gray-400"><Lock size={9} /> 閲覧のみ</span>}
                         </div>

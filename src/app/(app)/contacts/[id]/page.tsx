@@ -15,7 +15,7 @@ import { fetchActivitiesByTarget, updateActivityStatus, updateActivityFields } f
 import { fetchDealsByContact } from '@/lib/db/deals'
 import { useDealTerm } from '@/hooks/useDealTerm'
 import type { Contact, Activity, Deal } from '@/types/database'
-import { getLocationConfig, sortTags } from '@/lib/config'
+import { getLocationConfig, sortTags, MA_DIVISION_NAME } from '@/lib/config'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { AutoGrowTextarea } from '@/components/ui/AutoGrowTextarea'
@@ -162,6 +162,10 @@ export default function ContactDetailPage() {
   const contactDivisionName = contact
     ? (divisions.find((d) => d.id === contact.division_id)?.name ?? activeDivision?.name ?? '担当事業部')
     : ''
+  // 接触経路（詳細）の人物紐づけ（052）はM&A事業部固有の概念のため、他事業部の
+  // 顧客詳細には表示・編集どちらも出さない（deal_term/task_term等と同じ、事業部名
+  // そのものでの判定パターン）
+  const isMADivision = contactDivisionName === MA_DIVISION_NAME
 
   // 事業部別フィールド定義
   const divFields = useMemo(() => {
@@ -170,6 +174,18 @@ export default function ContactDetailPage() {
   }, [divisionCustomFields, contact?.division_id])
 
   const divValues = contactCustomValues[id] ?? {}
+
+  // 接触経路（詳細）の旧データ（051でdivision_custom_fieldsのtext型として追加した
+  // 自由記述。052の人物紐づけに置き換わったため、一般のカスタムフィールド一覧からは
+  // 除外し、新しい紐づけが未設定の場合のみ読み取り専用の参考情報として表示する）。
+  // フィールド名（name）はラベルからの自動生成で他事業部の項目とも衝突しうるため、
+  // M&A事業部の顧客を見ているときだけ対象にする（他事業部で偶然同名の項目が
+  // 作られても隠さない）
+  const sourceLegacyField = useMemo(
+    () => (isMADivision ? divFields.find((f) => f.name === 'encounter_source') : undefined),
+    [isMADivision, divFields]
+  )
+  const sourceLegacyValue = sourceLegacyField ? (divValues[sourceLegacyField.id] ?? '') : ''
 
   const [activeTab, setActiveTab] = useState<TabType>('timeline')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
@@ -187,6 +203,10 @@ export default function ContactDetailPage() {
   // 選択中の紹介者の表示用フルオブジェクト（修正9: loadContactData()の完了を待たずに
   // 保存直後から表示名を反映するため、ReferrerPickerが選択時に渡す実体をそのまま保持する）
   const [referrerDetail, setReferrerDetail] = useState<ReferrerSelectDetail>({})
+  // 接触経路（詳細）の人物紐づけ（M&A事業部追加依頼①。052マイグレーション。
+  // 紹介者と同型のReferrerPickerを別の値として再利用する）
+  const [sourceForm, setSourceForm] = useState<ReferrerValue>({})
+  const [sourceDetail, setSourceDetail] = useState<ReferrerSelectDetail>({})
   // 顧客ページからの削除（2026-08-25報告「顧客ページで削除ができるようにしてほしい」。
   // 従来は顧客一覧のチェックボックス一括削除にしか無かった）
   const [deletingContact, setDeletingContact] = useState(false)
@@ -276,6 +296,15 @@ export default function ContactDetailPage() {
       user: displayContact.referrer_user,
       contact: displayContact.referrer_contact,
     })
+    setSourceForm({
+      type: displayContact.source_type,
+      userId: displayContact.source_user_id,
+      contactId: displayContact.source_contact_id,
+    })
+    setSourceDetail({
+      user: displayContact.source_user,
+      contact: displayContact.source_contact,
+    })
     setEditingInfo(true)
   }
 
@@ -297,6 +326,10 @@ export default function ContactDetailPage() {
     const referrerType = referrerForm.type ?? null
     const referrerUserId = referrerForm.type === 'internal' ? (referrerForm.userId ?? null) : null
     const referrerContactId = referrerForm.type === 'external' ? (referrerForm.contactId ?? null) : null
+    // 接触経路（詳細）：紹介者と同じくCHECK制約（052）に合わせて使わない側は毎回nullへ揃える
+    const sourceType = sourceForm.type ?? null
+    const sourceUserId = sourceForm.type === 'internal' ? (sourceForm.userId ?? null) : null
+    const sourceContactId = sourceForm.type === 'external' ? (sourceForm.contactId ?? null) : null
     const updates = {
       name: infoForm.name.trim(),
       position: infoForm.position.trim() || null,
@@ -309,6 +342,9 @@ export default function ContactDetailPage() {
       referrerType,
       referrerUserId,
       referrerContactId,
+      sourceType,
+      sourceUserId,
+      sourceContactId,
     }
     const prevEdit = localContactEdits[id]
     setLocalContactEdit(id, {
@@ -327,14 +363,26 @@ export default function ContactDetailPage() {
       // Supabase接続の有無・loadContactData()の完了を待たずに画面へ即時反映するため
       referrer_user: referrerType === 'internal' ? referrerDetail.user : undefined,
       referrer_contact: referrerType === 'external' ? referrerDetail.contact : undefined,
+      source_type: sourceType ?? undefined,
+      source_user_id: sourceUserId ?? undefined,
+      source_contact_id: sourceContactId ?? undefined,
+      source_user: sourceType === 'internal' ? sourceDetail.user : undefined,
+      source_contact: sourceType === 'external' ? sourceDetail.contact : undefined,
     })
     if (isSupabaseConfigured()) {
       try {
         const { strippedFields } = await updateContact(id, updates)
-        // OPTIONAL_CONTACT_COLUMNSは紹介者関連カラムのみなので、1件でも
-        // 含まれていれば紹介者欄が未反映であることを意味する（修正5）
-        if (strippedFields.length > 0) {
+        // OPTIONAL_CONTACT_COLUMNSは紹介者・接触経路（詳細）関連カラムのみなので、
+        // 1件でも含まれていればどちらかの欄が未反映であることを意味する（修正5）。
+        // どちらが未適用かで案内文を出し分ける
+        const strippedReferrer = strippedFields.some((f) => f.startsWith('referrer_'))
+        const strippedSource = strippedFields.some((f) => f.startsWith('source_'))
+        if (strippedReferrer && strippedSource) {
+          toast('保存しました（紹介者欄・接触経路（詳細）欄は未適用のため保存されていません。管理者にご確認ください）', { icon: '⚠️' })
+        } else if (strippedReferrer) {
           toast('保存しました（紹介者欄は未適用のため保存されていません。管理者にご確認ください）', { icon: '⚠️' })
+        } else if (strippedSource) {
+          toast('保存しました（接触経路（詳細）欄は未適用のため保存されていません。管理者にご確認ください）', { icon: '⚠️' })
         } else {
           toast.success('顧客情報を保存しました')
         }
@@ -563,6 +611,31 @@ export default function ContactDetailPage() {
                       </div>
                     </div>
                   )}
+                  {/* 接触経路（詳細）の人物紐づけ（M&A事業部追加依頼①。052マイグレーション） */}
+                  {isMADivision && (displayContact.source_user || displayContact.source_contact) ? (
+                    <div className="flex items-center gap-2 text-gray-600 pt-2 border-t border-gray-100">
+                      <Users size={14} className="flex-shrink-0 text-gray-400" />
+                      <div className="min-w-0">
+                        <span className="text-xs text-gray-400">接触経路（詳細）: </span>
+                        {displayContact.source_user ? (
+                          <span className="text-gray-700 font-medium">{displayContact.source_user.name}（社内）</span>
+                        ) : displayContact.source_contact ? (
+                          <span className="text-gray-700 font-medium">
+                            {displayContact.source_contact.name}
+                            {displayContact.source_contact.companies && `（${displayContact.source_contact.companies.name}）`}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : isMADivision && sourceLegacyValue ? (
+                    <div className="flex items-center gap-2 text-gray-600 pt-2 border-t border-gray-100">
+                      <Users size={14} className="flex-shrink-0 text-gray-400" />
+                      <div className="min-w-0">
+                        <span className="text-xs text-gray-400">接触経路（詳細）（旧データ）: </span>
+                        <span className="text-gray-500">{sourceLegacyValue}</span>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 {/* 顧客の削除（担当事業部のみ。従来は顧客一覧のチェックボックス一括削除にしか
@@ -614,6 +687,19 @@ export default function ContactDetailPage() {
                     filterDivisionId={contact.division_id}
                   />
                 </div>
+                {isMADivision && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">接触経路（詳細）</label>
+                    <ReferrerPicker
+                      value={sourceForm}
+                      onChange={(v, detail) => { setSourceForm(v); setSourceDetail(detail ?? {}) }}
+                      filterDivisionId={contact.division_id}
+                    />
+                    {sourceLegacyValue && (
+                      <p className="text-xs text-gray-400 mt-1">（旧データ）{sourceLegacyValue}</p>
+                    )}
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs text-gray-400 mb-0.5">メモ・備考</label>
                   <AutoGrowTextarea
@@ -701,7 +787,11 @@ export default function ContactDetailPage() {
                   )}
                 </div>
                 <div className="space-y-2">
-                  {divFields.map((field) => {
+                  {/* 接触経路（詳細）＝encounter_sourceは052で専用の人物紐づけ欄に
+                      置き換わったため、M&A事業部でだけ汎用カスタムフィールドの一覧から
+                      除外する（紐づけ欄・旧データはこの上の「基本情報」ブロックに表示済み。
+                      他事業部で偶然同名のフィールドが作られても除外しない） */}
+                  {(isMADivision ? divFields.filter((f) => f.name !== 'encounter_source') : divFields).map((field) => {
                     const val = divValues[field.id] ?? ''
                     return (
                       <div key={field.id}>
@@ -1156,7 +1246,13 @@ export default function ContactDetailPage() {
           {contact.companies && (
             <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-4">
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">企業情報</p>
-              <p className="font-medium text-gray-800 text-sm">{contact.companies.name}</p>
+              <button
+                type="button"
+                onClick={() => router.push(`/contacts/company/${contact.companies?.id}`)}
+                className="font-medium text-gray-800 text-sm hover:text-orange-600 hover:underline text-left"
+              >
+                {contact.companies.name}
+              </button>
               {contact.companies.website && (
                 <a
                   href={contact.companies.website}
