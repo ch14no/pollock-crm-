@@ -594,8 +594,11 @@ export default function ContactDetailPage() {
                       </div>
                     </div>
                   )}
-                  {/* 紹介者（M&A事業部要望④） */}
-                  {(displayContact.referrer_user || displayContact.referrer_contact) && (
+                  {/* 紹介者（M&A事業部要望④）。M&A事業部は「接触経路（詳細）」欄と
+                      内容が重複するとの要望で、M&A事業部の顧客詳細画面だけ非表示にする
+                      （紹介者自体はcontacts/deals両方に汎用追加された全事業部共有の
+                      機能のため、データ・他事業部の画面には一切手を入れない） */}
+                  {!isMADivision && (displayContact.referrer_user || displayContact.referrer_contact) && (
                     <div className="flex items-center gap-2 text-gray-600 pt-2 border-t border-gray-100">
                       <Users size={14} className="flex-shrink-0 text-gray-400" />
                       <div className="min-w-0">
@@ -679,14 +682,16 @@ export default function ContactDetailPage() {
                     />
                   </div>
                 ))}
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">紹介者</label>
-                  <ReferrerPicker
-                    value={referrerForm}
-                    onChange={(v, detail) => { setReferrerForm(v); setReferrerDetail(detail ?? {}) }}
-                    filterDivisionId={contact.division_id}
-                  />
-                </div>
+                {!isMADivision && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">紹介者</label>
+                    <ReferrerPicker
+                      value={referrerForm}
+                      onChange={(v, detail) => { setReferrerForm(v); setReferrerDetail(detail ?? {}) }}
+                      filterDivisionId={contact.division_id}
+                    />
+                  </div>
+                )}
                 {isMADivision && (
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">接触経路（詳細）</label>

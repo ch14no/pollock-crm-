@@ -118,27 +118,31 @@ function TaskCard({
     >
       {/* ─── 通常表示 ─── */}
       {mode === 'view' && (
-        <div className="flex items-start gap-1.5">
-          {/* ドラッグハンドル */}
+        <div className="flex items-stretch gap-1.5">
+          {/* ドラッグハンドル。以前はアイコンぴったりの13px四方しか掴めず
+              「ドラッグしても動かない」という報告につながっていた（M&A事業部）。
+              カード全体を掴めるようにはしない（touch-noneがモバイルでの列スクロールを
+              妨げてしまうため）代わりに、カード左端いっぱいの縦帯を掴み所として広げる */}
           <button
             {...listeners}
             onClick={(e) => e.stopPropagation()}
-            className="mt-0.5 p-0.5 text-gray-200 hover:text-gray-400 cursor-grab active:cursor-grabbing flex-shrink-0 touch-none"
+            className="self-stretch px-1.5 flex items-center justify-center text-gray-200 hover:text-gray-400 hover:bg-gray-50 cursor-grab active:cursor-grabbing flex-shrink-0 touch-none rounded-lg"
           >
             <GripVertical size={13} />
           </button>
 
-          {/* 完了チェック */}
+          {/* 完了チェック。ドラッグハンドルだけをstretchさせたいので、他の兄弟要素は
+              self-startで元通り上詰めにする（items-stretchの巻き添えを防ぐ） */}
           {isMyTask && (
             <button
               onClick={(e) => { e.stopPropagation(); setMode('confirmComplete') }}
-              className="mt-0.5 w-4 h-4 rounded border-2 border-gray-300 hover:border-green-400 flex-shrink-0 transition-colors"
+              className="self-start mt-0.5 w-4 h-4 rounded border-2 border-gray-300 hover:border-green-400 flex-shrink-0 transition-colors"
               title="完了にする"
             />
           )}
 
           {/* 内容 */}
-          <div className="flex-1 min-w-0">
+          <div className="self-start flex-1 min-w-0">
             {isOverdue && !isDone && (
               <div className="flex items-center gap-1 mb-1">
                 <AlertCircle size={10} className="text-red-400" />
@@ -183,7 +187,7 @@ function TaskCard({
           </div>
 
           {/* アクションボタン: 編集は同一事業部メンバーなら誰でも可（030）。削除は本人/未担当/super_adminのみ（canDelete参照） */}
-          <div className="flex gap-0.5 flex-shrink-0">
+          <div className="self-start flex gap-0.5 flex-shrink-0">
             <button
               onClick={openEdit}
               className="p-0.5 text-gray-200 hover:text-orange-400 transition-colors"

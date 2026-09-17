@@ -151,6 +151,13 @@ export default function ContactsPage() {
   const [listCustomValues, setListCustomValues] = useState<Record<string, Record<string, string>>>({})
   const [statusFilter, setStatusFilter] = useState<string[]>([])
   const [customFieldFilters, setCustomFieldFilters] = useState<Record<string, string>>({})
+  // 接触経路（詳細）のフリーワード検索（M&A事業部追加依頼。052の人物紐づけ先の
+  // 氏名で絞り込む。select型の選択肢方式では表現できないためテキスト入力にする）。
+  // この欄自体がM&A事業部限定でしか表示されないため、値を残したまま他事業部に
+  // 切り替えると、入力欄が見えないまま一覧が0件になる（気づけない）事故になる。
+  // 事業部切り替えのたびに必ずリセットする
+  const [sourceQuery, setSourceQuery] = useState('')
+  useEffect(() => { setSourceQuery('') }, [activeDivisionId])
 
   const loadContacts = useCallback(async () => {
     if (!activeDivisionId || !isSupabaseConfigured()) return
@@ -247,6 +254,15 @@ export default function ContactsPage() {
     return fields.filter((f) => f.fieldType === 'select' && (f.options?.length ?? 0) > 0)
   }, [divisionCustomFields, activeDivisionId])
 
+  // 接触経路（詳細）の旧データ（052導入前の自由記述、encounter_source）のフィールドID。
+  // 新しい人物紐づけ（source_user/source_contact）だけを検索対象にすると、052以前に
+  // 登録された自由記述データ（詳細ページでは「（旧データ）」として今も表示される）が
+  // 検索から漏れて「見えているのに検索に出てこない」状態になるため、フォールバックで含める
+  const sourceLegacyFieldId = useMemo(() => {
+    const fields = divisionCustomFields[activeDivisionId ?? ''] ?? []
+    return fields.find((f) => f.name === 'encounter_source')?.id
+  }, [divisionCustomFields, activeDivisionId])
+
   const filtered = useMemo(() => {
     let result = divisionContacts.filter((c) => {
       const matchQuery =
@@ -279,7 +295,12 @@ export default function ContactsPage() {
 
       const matchTag = tagFilter === null ? true : c.tags.includes(tagFilter)
 
-      return matchQuery && matchLocation && matchStatus && matchCustom && matchTag
+      const matchSource = !sourceQuery.trim() ? true :
+        matchSearch(c.source_user?.name, sourceQuery) ||
+        matchSearch(c.source_contact?.name, sourceQuery) ||
+        matchSearch(sourceLegacyFieldId ? listCustomValues[c.id]?.[sourceLegacyFieldId] : undefined, sourceQuery)
+
+      return matchQuery && matchLocation && matchStatus && matchCustom && matchTag && matchSource
     })
 
     result = [...result].sort((a, b) => {
@@ -303,7 +324,7 @@ export default function ContactsPage() {
     })
     return result
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [divisionContacts, query, sortKey, locationFilter, tagFilter, statusFilter, customFieldFilters, listStatuses, contactStatuses, listCustomValues, selectCustomFields])
+  }, [divisionContacts, query, sortKey, locationFilter, tagFilter, statusFilter, customFieldFilters, listStatuses, contactStatuses, listCustomValues, selectCustomFields, sourceQuery, sourceLegacyFieldId])
 
   const allFilteredSelected = filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id))
 
@@ -374,7 +395,7 @@ export default function ContactsPage() {
   const toggleStatus = (s: string) =>
     setStatusFilter((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s])
 
-  const clearFilters = () => { setLocationFilter(null); setTagFilter(null); setStatusFilter([]); setCustomFieldFilters({}) }
+  const clearFilters = () => { setLocationFilter(null); setTagFilter(null); setStatusFilter([]); setCustomFieldFilters({}); setSourceQuery('') }
 
   const contactsWithAddress = useMemo(() =>
     divisionContacts.filter((c) => c.address || (c.custom_attributes?.address as string | undefined)),
@@ -427,10 +448,11 @@ export default function ContactsPage() {
     (locationFilter !== null ? 1 : 0) +
     (tagFilter !== null ? 1 : 0) +
     statusFilter.length +
-    Object.values(customFieldFilters).filter(Boolean).length
+    Object.values(customFieldFilters).filter(Boolean).length +
+    (sourceQuery.trim() ? 1 : 0)
 
   const currentSortLabel = SORT_OPTIONS.find((o) => o.value === sortKey)?.label ?? ''
-  const hasFilter = !!(query || locationFilter !== null || tagFilter !== null || statusFilter.length > 0 || Object.values(customFieldFilters).some(Boolean))
+  const hasFilter = !!(query || locationFilter !== null || tagFilter !== null || statusFilter.length > 0 || Object.values(customFieldFilters).some(Boolean) || sourceQuery.trim())
   const noLocationCount = divisionContacts.filter(
     (c) => !LOCATIONS.some((l) => c.tags.includes(l.id))
   ).length
@@ -719,6 +741,23 @@ export default function ContactsPage() {
             </div>
           ))}
 
+          {/* 接触経路（詳細）のフリーワード検索（M&A事業部限定。人物への紐づけのため
+              select型の選択肢方式ではなく、紐づけ先の氏名で検索するテキスト入力にする） */}
+          {isMADivision && (
+            <div className="flex items-start gap-4">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0 truncate">接触経路（詳細）</span>
+              <div className="flex-1 max-w-xs">
+                <input
+                  type="text"
+                  value={sourceQuery}
+                  onChange={(e) => setSourceQuery(e.target.value)}
+                  placeholder="紐づけ先の氏名で検索..."
+                  className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+            </div>
+          )}
+
           {/* 都道府県（地方別グループ） */}
           <div className="flex items-start gap-4">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1.5 w-14 flex-shrink-0">都道府県</span>
@@ -844,6 +883,12 @@ export default function ContactsPage() {
               </span>
             ) : null
           })}
+          {sourceQuery.trim() && (
+            <span className="inline-flex items-center gap-1 bg-orange-50 text-orange-700 border border-orange-200 px-2.5 py-1 rounded-full text-xs font-medium">
+              接触経路（詳細）: {sourceQuery}
+              <button onClick={() => setSourceQuery('')}><X size={10} /></button>
+            </span>
+          )}
           <button onClick={() => { setQuery(''); clearFilters() }} className="text-xs text-gray-400 hover:text-gray-600 ml-1 underline">
             すべてクリア
           </button>
