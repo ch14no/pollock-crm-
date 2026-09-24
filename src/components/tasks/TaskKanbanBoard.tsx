@@ -613,7 +613,7 @@ export function TaskKanbanBoard({
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex gap-4 overflow-x-auto pb-4">
+        <div className="board-scroll flex gap-4 overflow-x-auto pb-4">
           {/* タブ機能（039）でタブの列を全て削除した直後など、stagesが空になりうる。
               空のまま何も表示しないと「壊れた」ように見えるため一言添える */}
           {stages.length === 0 && (

@@ -16,6 +16,29 @@ body {
   scrollbar-color: #e5e7eb transparent;
 }
 
+/* カンバンボード（商談・タスク）の横スクロール用。列数が画面幅を超えた時に
+   「横にスライドできる」ことが分かるよう、常時見える太めのバーにする。
+   *{scrollbar-width/color}はFirefox用で、Chrome/Edge/Safariは効かないため
+   別途::-webkit-scrollbarで指定する（OSの自動非表示スクロールバー設定だと
+   何も見えず「スライドバーが無い」と誤解されるのを防ぐ） */
+.board-scroll {
+  scrollbar-color: #fdba74 #f3f4f6;
+}
+.board-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+.board-scroll::-webkit-scrollbar-track {
+  background: #f3f4f6;
+  border-radius: 9999px;
+}
+.board-scroll::-webkit-scrollbar-thumb {
+  background-color: #fdba74;
+  border-radius: 9999px;
+}
+.board-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #fb923c;
+}
+
 @keyframes slide-in-from-top {
   from { opacity: 0; transform: translateY(-8px); }
   to   { opacity: 1; transform: translateY(0); }

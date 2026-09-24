@@ -630,7 +630,7 @@ export function KanbanBoard({ initialDeals, readOnly = false }: KanbanBoardProps
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div ref={boardScrollRef} className="flex gap-4 overflow-x-auto pb-4 min-h-[calc(100vh-260px)]">
+        <div ref={boardScrollRef} className="board-scroll flex gap-4 overflow-x-auto pb-4 min-h-[calc(100vh-260px)]">
           {visibleStages.map((stage) => {
             const deals = dealsByStage[stage.id] ?? []
             return (
