@@ -624,7 +624,12 @@ export function TaskKanbanBoard({
             const colors = STAGE_COLORS[stage.color] ?? STAGE_COLORS.gray
             return (
               <div key={stage.id} className={cn('flex-shrink-0 w-64 rounded-2xl border p-3', colors.bg, colors.border)}>
-                <div className="flex items-center justify-between mb-3">
+                {/* 列の高さを画面内に収め、カード一覧だけ内側でスクロールさせる
+                    （商談カンバンのStageColumnと同じパターン）。以前は列自体が
+                    カード数だけ縦に伸びていたため、列数が多い事業部では横スクロール
+                    バーがページ最下部まで押し下げられ、そこまでスクロールしないと
+                    横方向に動かせないという報告があった */}
+                <div className="flex items-center justify-between mb-3 sticky top-0 z-10">
                   <div className="flex items-center gap-2">
                     <span className={cn('w-2.5 h-2.5 rounded-full', colors.dot)} />
                     <span className="text-sm font-bold text-gray-700">{stage.name}</span>
@@ -634,22 +639,24 @@ export function TaskKanbanBoard({
                   </span>
                 </div>
 
-                <SortableContext items={stageTasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-                  <DroppableColumn stageId={stage.id} isEmpty={stageTasks.length === 0}>
-                    {stageTasks.map((task) => (
-                      <TaskCard
-                        key={task.id}
-                        task={task}
-                        isDragging={task.id === activeId}
-                        divisionMembers={divisionMembers}
-                        onComplete={onComplete}
-                        onDelete={onDelete}
-                        onSave={onSave}
-                        onReassign={onReassign}
-                      />
-                    ))}
-                  </DroppableColumn>
-                </SortableContext>
+                <div className="max-h-[calc(100vh-320px)] overflow-y-auto">
+                  <SortableContext items={stageTasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+                    <DroppableColumn stageId={stage.id} isEmpty={stageTasks.length === 0}>
+                      {stageTasks.map((task) => (
+                        <TaskCard
+                          key={task.id}
+                          task={task}
+                          isDragging={task.id === activeId}
+                          divisionMembers={divisionMembers}
+                          onComplete={onComplete}
+                          onDelete={onDelete}
+                          onSave={onSave}
+                          onReassign={onReassign}
+                        />
+                      ))}
+                    </DroppableColumn>
+                  </SortableContext>
+                </div>
 
                 {onAddTask && (
                   <button
