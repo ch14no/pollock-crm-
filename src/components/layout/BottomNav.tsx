@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { LayoutDashboard, Briefcase, Activity, CheckSquare, CreditCard, Menu, X, LogOut, ChevronDown, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/appStore'
-import { NAV_ITEMS } from '@/components/layout/Sidebar'
+import { navItemsForDivision } from '@/components/layout/Sidebar'
 import { createClient } from '@/lib/supabase/client'
 import { useDealTerm } from '@/hooks/useDealTerm'
 import { useTaskTerm } from '@/hooks/useTaskTerm'
@@ -128,7 +128,7 @@ function MobileMenuDrawer({ onClose }: { onClose: () => void }) {
         {/* 全ページリンク */}
         <nav className="p-3">
           <div className="grid grid-cols-2 gap-1.5">
-            {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+            {navItemsForDivision(activeDivision?.name).map(({ href, label, icon: Icon }) => {
               const active = pathname.startsWith(href)
               const displayLabel = href === '/deals' ? dealTerm : href === '/tasks' ? taskTerm : label
               return (

@@ -15,6 +15,8 @@ import type { Role } from '@/types/database'
 import { cn, getInitials } from '@/lib/utils'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { updateUserName, fetchAllUsers, createUserAdmin, updateUserAdmin, deleteUserAdmin, fetchUserDivisionIds, fetchUserTaskAssigneeDivisionIds, fetchDivisionUsers } from '@/lib/db/users'
+import { fetchTsrPrioritySettings, upsertTsrPrioritySettings, TSR_PRIORITY_DEFAULTS, type TsrPrioritySettings } from '@/lib/db/tsrProspects'
+import { MA_DIVISION_NAME } from '@/lib/config'
 import {
   fetchPipelineStages, upsertPipelineStages,
   fetchPipelineTabs, createPipelineTab, updatePipelineTab, deletePipelineTab, upsertPipelineStagesForTab,
@@ -296,6 +298,7 @@ export default function SettingsPage() {
           <TaskStagesPanel key={`tasks-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <TaskStageVisibilityPanel key={`task-visibility-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
           <NotificationSettingsPanel key={`notif-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
+          <TsrPrioritySettingsPanel key={`tsr-priority-${masterDivId}`} divisionId={masterDivId} divisionName={masterDivName} />
         </>
       )}
 
@@ -377,6 +380,11 @@ export default function SettingsPage() {
               />
               <NotificationSettingsPanel
                 key={`notif-mgr-${managerNotifDivId}`}
+                divisionId={managerNotifDivId}
+                divisionName={managerNotifDivName}
+              />
+              <TsrPrioritySettingsPanel
+                key={`tsr-priority-mgr-${managerNotifDivId}`}
                 divisionId={managerNotifDivId}
                 divisionName={managerNotifDivName}
               />
@@ -1752,6 +1760,90 @@ function DocTypesPanel({ divisionId, divisionName }: MasterPanelProps) {
             className="flex items-center gap-1 px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50">
             <Plus size={13} />追加
           </button>
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+// ─── TSRソーシングリスト: アプローチ優先度の閾値（053。M&A事業部のみ表示） ───────
+// tsr_priority_settings_manage と同じ権限パターン（super_admin or 当該事業部manager）。
+function TsrPrioritySettingsPanel({ divisionId, divisionName }: MasterPanelProps) {
+  const currentUser = useAppStore((s) => s.currentUser)
+  const [values, setValues] = useState<TsrPrioritySettings>(TSR_PRIORITY_DEFAULTS)
+  const [loaded, setLoaded] = useState(false)
+  // DBに行が無い＝判定条件が未設定（ビューの閾値がNULLになり、全件がB/不明になる）。
+  // 既定値を「適用中」のように見せず、保存を促す
+  const [unsaved, setUnsaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const isTarget = divisionName === MA_DIVISION_NAME
+
+  useEffect(() => {
+    if (!isTarget || !isSupabaseConfigured()) return
+    fetchTsrPrioritySettings(divisionId)
+      .then((s) => { if (s) setValues(s); setUnsaved(!s); setLoaded(true) })
+      .catch(() => setLoaded(false))
+  }, [divisionId, isTarget])
+
+  if (!isTarget) return null
+
+  const num = (k: keyof TsrPrioritySettings) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setValues((v) => ({ ...v, [k]: Number(e.target.value.replace(/[,，]/g, '')) || 0 }))
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await upsertTsrPrioritySettings(divisionId, values, currentUser?.id)
+      setUnsaved(false)
+      toast.success('優先度の判定条件を保存しました')
+    } catch (e) {
+      toast.error(`保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const field = (label: string, k: keyof TsrPrioritySettings, unit: string) => (
+    <label className="block">
+      <span className="block text-xs text-gray-500 mb-1">{label}</span>
+      <div className="flex items-center gap-1.5">
+        <input type="text" inputMode="numeric" value={values[k].toLocaleString('ja-JP')} onChange={num(k)}
+          className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" />
+        <span className="text-xs text-gray-400 whitespace-nowrap">{unit}</span>
+      </div>
+    </label>
+  )
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2 font-bold text-gray-700">
+          <Shield size={18} className="text-orange-500" />ソーシング優先度の判定条件
+          <span className="text-xs font-normal text-gray-400">（{divisionName}）</span>
+        </div>
+      </CardHeader>
+      <CardBody>
+        <p className="text-xs text-gray-500 mb-3">
+          TSRリストの「アプローチ優先度」を自動判定する閾値です。S＝代表者年齢・売上の両方を満たす／
+          A＝年齢のみ、または第2条件（年齢と売上）を満たす／B＝それ以外／不明＝生年月日なし。
+          {!loaded && isSupabaseConfigured() && <span className="text-orange-500 ml-1">（読み込み中または053未適用）</span>}
+        </p>
+        {unsaved && (
+          <p className="text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 mb-3">
+            判定条件がまだ保存されていません。この状態では優先度が正しく判定されません（全件がB・不明になります）。
+            下の既定値を確認して「保存」してください。
+          </p>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {field('S: 代表者年齢 以上', 's_min_age', '歳')}
+          {field('S: 直近期売上 以上', 's_min_sales_thousand_yen', '千円')}
+          {field('A: 代表者年齢 以上', 'a_min_age', '歳')}
+          <div />
+          {field('A（第2条件）: 代表者年齢 以上', 'a2_min_age', '歳')}
+          {field('A（第2条件）: 直近期売上 以上', 'a2_min_sales_thousand_yen', '千円')}
+        </div>
+        <div className="flex justify-end mt-3">
+          <Button size="sm" onClick={handleSave} loading={saving} disabled={!loaded}>保存</Button>
         </div>
       </CardBody>
     </Card>

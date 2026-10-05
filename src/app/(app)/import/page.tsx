@@ -12,7 +12,7 @@ import type { DivisionCustomField } from '@/store/appStore'
 import { DEFAULT_DIVISION_CUSTOM_FIELDS } from '@/lib/mock-data'
 import { LOCATIONS } from '@/lib/config'
 import toast from 'react-hot-toast'
-import { cn, escapeCsvCell } from '@/lib/utils'
+import { cn, downloadCsv } from '@/lib/utils'
 
 // ─── エクスポート列定義 ─────────────────────────────────────────
 interface ExportColumn {
@@ -43,26 +43,17 @@ function buildCustomColumn(field: DivisionCustomField): ExportColumn {
   }
 }
 
-function generateCSV(
+function exportContactsCsv(
+  filename: string,
   contacts: Contact[],
   selectedColumns: ExportColumn[],
   customValuesMap: Record<string, Record<string, string>>
-): string {
+): void {
   const headers = selectedColumns.map((c) => c.label)
   const rows = contacts.map((contact) =>
     selectedColumns.map((col) => col.getValue(contact, customValuesMap[contact.id] ?? {}))
   )
-  return [headers, ...rows]
-    .map((row) => row.map(escapeCsvCell).join(','))
-    .join('\n')
-}
-
-function downloadCSV(content: string, filename: string) {
-  const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = filename; a.click()
-  URL.revokeObjectURL(url)
+  downloadCsv(filename, headers, rows)
 }
 
 // ─── エクスポートセクション ─────────────────────────────────────
@@ -172,7 +163,6 @@ function ExportSection() {
     if (selectedColumns.length === 0) { toast.error('出力列を1つ以上選択してください'); return }
     setExporting(true)
     try {
-      const csv = generateCSV(filteredContacts, selectedColumns, customValuesMap)
       const filters = [
         tagFilter ? `tag-${tagFilter}` : '',
         locationFilter ? `loc-${locationFilter}` : '',
@@ -180,7 +170,7 @@ function ExportSection() {
       ].filter(Boolean).join('_')
       const suffix = filters ? `_${filters}` : ''
       const filename = `contacts_${activeDivision?.name ?? 'export'}${suffix}_${new Date().toISOString().slice(0, 10)}.csv`
-      downloadCSV(csv, filename)
+      exportContactsCsv(filename, filteredContacts, selectedColumns, customValuesMap)
       toast.success(`${filteredContacts.length}件・${selectedColumns.length}列をエクスポートしました`)
     } catch {
       toast.error('エクスポートに失敗しました')

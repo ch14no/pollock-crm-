@@ -11,7 +11,7 @@ import { findOrCreateCompany } from '@/lib/db/companies'
 import { fetchDivisionCustomFields } from '@/lib/db/divisions'
 import { useAppStore } from '@/store/appStore'
 import type { DivisionCustomField } from '@/store/appStore'
-import { escapeCsvCell, isValidEmail } from '@/lib/utils'
+import { escapeCsvCell, isValidEmail, downloadCsvText } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 const SYSTEM_FIELDS = [
@@ -59,11 +59,7 @@ interface CompanyOnlyEntry {
 
 
 function downloadCSV(content: string, filename: string) {
-  const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = filename; a.click()
-  URL.revokeObjectURL(url)
+  downloadCsvText(filename, content)
 }
 
 interface CSVImporterProps {

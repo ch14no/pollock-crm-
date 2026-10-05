@@ -7,7 +7,7 @@ import {
 } from '@/lib/db/buyerProspects'
 import { CompanyPicker } from '@/components/ui/CompanyPicker'
 import { useAppStore } from '@/store/appStore'
-import { escapeCsvCell, extractPrefecture } from '@/lib/utils'
+import { downloadCsv, extractPrefecture } from '@/lib/utils'
 import type { DealBuyerProspect, NameClearStatus } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -37,15 +37,8 @@ function exportProspectsCSV(prospects: DealBuyerProspect[], dealTitle: string) {
       p.name_clear ?? '未確認',
     ]
   })
-  const csv = [headers, ...rows].map((row) => row.map(escapeCsvCell).join(',')).join('\n')
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  a.download = `買手打診リスト_${dealTitle}_${today}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
+  downloadCsv(`買手打診リスト_${dealTitle}_${today}.csv`, headers, rows)
 }
 
 // 買手打診リスト（047、M&A事業部要望フェーズ2）。企業名・代表者・業種等はcompany_id経由の

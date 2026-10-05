@@ -69,6 +69,29 @@ export function escapeCsvCell(value: unknown): string {
   return `"${guarded.replace(/"/g, '""')}"`
 }
 
+// CSV文字列をブラウザでダウンロードさせる（BOM付きUTF-8＝Excelで文字化けしない）。
+// blob: URLの破棄はクリック直後に同期で行うとFirefox/Safariでダウンロードが空になることが
+// あるため、アンカーをDOMに付けてから次のティックで破棄する
+export function downloadCsvText(filename: string, csv: string): void {
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  setTimeout(() => {
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }, 0)
+}
+
+// 行配列をCSVにしてダウンロードさせる。セルのエスケープは escapeCsvCell に統一する
+export function downloadCsv(filename: string, headers: unknown[], rows: unknown[][]): void {
+  downloadCsvText(filename, [headers, ...rows].map((row) => row.map(escapeCsvCell).join(',')).join('\r\n'))
+}
+
 // 47都道府県（JIS地方公共団体コード順）。companies.prefecture の選択肢、
 // および住所文字列からのベストエフォート抽出（extractPrefecture）の両方で使う
 export const PREFECTURES = [

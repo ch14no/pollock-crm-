@@ -269,5 +269,9 @@ await client.query(
   `INSERT INTO public.tsr_import_logs (division_id, file_name, rows_read, unique_companies, inserted_count, updated_count, started_at, note)
    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
   [divisionId, FILE.split('/').pop(), rowsRead, merged.size, inserted, updated, startedAt, `batch=${batchId}`])
+// 業種の絞り込み選択肢（マテリアライズドビュー）は取込時にしか変わらないのでここで更新する
+console.log('[import-tsr] refreshing tsr_industry_options ...')
+// CONCURRENTLY: 更新中も画面側の読み取りを止めない（一意インデックス idx_tsr_industry_options_key が前提）
+await client.query('REFRESH MATERIALIZED VIEW CONCURRENTLY public.tsr_industry_options')
 await client.end()
 console.log(`[import-tsr] DONE rows=${rowsRead} companies=${merged.size} inserted=${inserted} updated=${updated} batch=${batchId}`)

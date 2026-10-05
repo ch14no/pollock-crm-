@@ -6,9 +6,10 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, Users, Briefcase, Activity,
   ArrowLeftRight, Upload, Settings, Rocket, ChevronDown,
-  LogOut, BarChart2, CheckSquare, ExternalLink, LayoutGrid, X, FileText, BookOpen,
+  LogOut, BarChart2, CheckSquare, ExternalLink, LayoutGrid, X, FileText, BookOpen, Target,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { MA_DIVISION_NAME } from '@/lib/config'
 import { useAppStore } from '@/store/appStore'
 import { createClient } from '@/lib/supabase/client'
 import { isSupabaseConfigured } from '@/lib/db/client'
@@ -31,6 +32,15 @@ export const NAV_ITEMS = [
   { href: '/import',      label: 'インポート・エクスポート', icon: Upload },
   { href: '/settings',    label: '設定',         icon: Settings },
 ]
+
+// M&A事業部限定のメニュー（TSRソーシングリスト、053）。他事業部にはリンク自体を出さない
+// （ページ側・RLS側でも二重に制限している）。Sidebar・BottomNavのドロワー共通
+const SOURCING_ITEM = { href: '/sourcing', label: 'ソーシング', icon: Target }
+export function navItemsForDivision(divisionName: string | undefined) {
+  if (divisionName !== MA_DIVISION_NAME) return NAV_ITEMS
+  const i = NAV_ITEMS.findIndex((n) => n.href === '/deals')
+  return [...NAV_ITEMS.slice(0, i + 1), SOURCING_ITEM, ...NAV_ITEMS.slice(i + 1)]
+}
 
 // ─── グループアプリ一覧（追加はここに書くだけ）────────────────────
 const GROUP_APPS = [
@@ -168,7 +178,7 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 px-3 py-3 overflow-y-auto">
         <ul className="space-y-0.5">
-          {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+          {navItemsForDivision(activeDivision?.name).map(({ href, label, icon: Icon }) => {
             const active = pathname.startsWith(href)
             const isTossup = href === '/tossups'
             const badge = isTossup && unreadTossupCount > 0 ? unreadTossupCount : 0

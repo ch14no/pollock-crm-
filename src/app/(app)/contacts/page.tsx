@@ -12,7 +12,7 @@ import { LOCATIONS, getLocationConfig, getLocationsByRegion, sortTags, MA_DIVISI
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { formatRelativeTime, getInitials, cn, escapeCsvCell } from '@/lib/utils'
+import { formatRelativeTime, getInitials, cn, downloadCsv } from '@/lib/utils'
 import { useDealTerm } from '@/hooks/useDealTerm'
 import { useAppStore, selectIsOwnDivision } from '@/store/appStore'
 import type { ContactStatus } from '@/store/appStore'
@@ -86,16 +86,7 @@ function exportContactsCSV(contacts: Contact[], filename: string) {
     c.tags.join('|'),
     c.updated_at,
   ])
-  const csv = [headers, ...rows]
-    .map((row) => row.map(escapeCsvCell).join(','))
-    .join('\n')
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
+  downloadCsv(filename, headers, rows)
 }
 
 export default function ContactsPage() {
