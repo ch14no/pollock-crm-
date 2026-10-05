@@ -1,6 +1,30 @@
 # pollock-crm 引継ぎメモ（.claude/CLAUDE.md）
 
-## 2026-10-05: TSRソーシングリスト（M&A営業対象リスト・約46万社）着手（053・未適用、画面は未実装）
+## 2026-10-06: TSRソーシングリスト 画面実装・本番デプロイ済み（`8b8395d`）。**053は未適用・データ未投入**
+
+`/sourcing`（M&A事業部のみナビに表示）・`src/lib/db/tsrProspects.ts`・設定画面の優先度閾値パネル・
+サイドバー/ボトムナビの `navItemsForDivision()` を追加。`/code-review` 3ラウンド（計30件）を反映。
+
+- **「CRMに登録」は 053 の `promote_tsr_prospect(p_tsr_code)` RPC（SECURITY INVOKER・FOR UPDATE）で
+  1トランザクション**。画面側の多段書き込みは同時操作で会社が二重にできる／途中失敗で宙に浮く会社が
+  残る／負けた側の後片付け delete が RLS（043）で無音0件になる、の三重苦だったため（035/039 と同じ判断）。
+- 既存会社との突き合わせは **`phone_digits`（NFKC→数字のみ、`tsr_phone_digits()` IMMUTABLE 関数の
+  生成列。`companies` にも追加）が同じ かつ 商号が同じ（空白無視）** のときだけ。一致時は空欄のみ補完。
+- 一覧: `count: 'estimated'` ＋ pageSize+1 件取得で `hasMore` 判定（exact は46万行の全件カウントで遅い。
+  planned は trgm 検索で桁違いに外れる）。0件ページに出たら1つ戻る。ページ番号のリセットは
+  effect 内 setState ではなく「前回キーと違ったらレンダー中に更新」の定石（lint `set-state-in-effect`）。
+- 検索語が数字・ハイフンだけなら 企業コード（9桁以下） と `phone_digits` 部分一致の両方を見る。
+  商号/カナは trgm ilike。業種は4桁なら eq（btree）、2〜3桁なら like 前方一致。
+- 優先度は view の数値列 `priority_rank` で ORDER BY（文字列 S/A/B は辞書順で S が最後になる）。
+  年齢判定は表示と同じ月日考慮の `rep_age`。`tsr_industry_options` はマテビュー化し
+  `import-tsr.mjs` の最後で `REFRESH ... CONCURRENTLY`（一意インデックス前提）。
+- CSV: `downloadCsv/downloadCsvText`（`src/lib/utils.ts`）に共通化し既存4箇所も置換。
+  個人情報なし出力は列自体を要求しない（`TSR_SELECT_PUBLIC`）。あり出力は
+  `tsr_prospect_view_logs(action='export', row_count, detail)` の記録成功後にのみダウンロード。
+- 既知の未対応（低）: `settings/page.tsx`・`import/page.tsx` 等に **既存の** `react-hooks/set-state-in-effect`
+  lint エラー多数（今回のコードは0件）。`tsc`/`build` は通る。
+
+### 2026-10-05: 着手時の設計メモ（053・取込スクリプト）
 
 M&A事業部（酒田さん）から、TSR購入データ（86万3443行・1.07GB・46列）をCRMへ取り込む依頼。
 依頼書は Drive `PJフォルダ\Pollock Core CRM\【CRM】TSR（表示項目選別表）_20260918_v2.xlsx`、
@@ -16,9 +40,10 @@ M&A事業部（酒田さん）から、TSR購入データ（86万3443行・1.07G
 - **成果物**: `supabase/migrations/053_tsr_prospects.sql`（**未適用**。ユーザーがSQL Editorで実行）、
   `scripts/import-tsr.mjs`（DB直接接続・`TSR_DB_URL`環境変数・`--dry-run`あり。ドライラン済み: 未解釈0件、
   直近期の決算年月/売上欠損0%）。`pg`をdevDependencyに追加。
-- **次の手順**: ①053適用 ②`TSR_DB_URL="<Direct/Session poolerの接続文字列>" node --max-old-space-size=6144 scripts/import-tsr.mjs`
-  ③件数・容量の実測を設計書に追記 ④画面（`/sourcing`一覧・検索・詳細・運用列・CSV出力・CRMに登録・優先度閾値設定・
-  M&A限定ナビ）を実装 ⑤投入後はDBパスワードのリセットを推奨。
+- **次の手順**: ①053適用（SQL Editor・対象プロジェクト `izwbjqnncroddxtwudmy` を確認）
+  ②`TSR_DB_URL="<Direct/Session poolerの接続文字列>" node --max-old-space-size=6144 scripts/import-tsr.mjs --file <csv>`
+  ③件数・容量の実測を設計書に追記 ④`/sourcing` の実機確認（検索速度・優先度・CRMに登録・CSV）
+  ⑤投入後はDBパスワードのリセットを推奨。（画面実装は2026-10-06に完了、上記セクション参照）
 - 酒田さん共有用の重複一覧: Drive同フォルダ `TSR重複企業一覧_20260918.csv`。
 
 ## 2026-09-03: M&A事業部（酒田さん）追加依頼7項目「商談画面の改善」実装・本番デプロイ済み（`fc8c64f`、050適用済み）
