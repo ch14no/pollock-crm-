@@ -67,6 +67,7 @@ export interface TsrProspect {
   rep_birth_year: number | null
   rep_birth_month: number | null
   rep_birth_day: number | null
+  rep_birth_key: number | null   // YYYYMMDD（055、年齢順の並び替え用）
   rep_birthplace: string | null
   rep_school: string | null
   // ビューの算出列
@@ -78,7 +79,7 @@ export interface TsrProspect {
 
 // 個人情報を除いた列。CSV出力で「個人情報を含めない」を選んだときはこの列だけを取得し、
 // 不要な個人情報をそもそもブラウザまで持ってこない
-const TSR_PERSONAL_COLUMNS = ['rep_name', 'rep_name_kana', 'rep_home_address', 'rep_birth_year', 'rep_birth_month', 'rep_birth_day', 'rep_birthplace', 'rep_school'] as const
+const TSR_PERSONAL_COLUMNS = ['rep_name', 'rep_name_kana', 'rep_home_address', 'rep_birth_year', 'rep_birth_month', 'rep_birth_day', 'rep_birth_key', 'rep_birthplace', 'rep_school'] as const
 const TSR_PUBLIC_COLUMNS = [
   'tsr_code', 'division_id', 'listing_code', 'listing_name', 'name', 'name_kana', 'surveyed_on', 'postal_code', 'address', 'prefecture', 'phone', 'phone_digits',
   'established_year', 'established_month', 'capital_thousand_yen', 'employee_count',
@@ -116,9 +117,38 @@ export interface TsrSearchResult {
   hasMore: boolean  // 次のページが実在するか（pageSize+1件目の有無で判定した確定値）
 }
 
-// PostgREST の or() フィルタはカンマ・括弧・引用符を構文として解釈するため、検索語からは除く
+// PostgREST の or() フィルタはカンマ・括弧・引用符を構文として解釈するため、検索語からは除く。
+// `%` `_` `*` は LIKE のワイルドカードなので同様に除く。NFKC 正規化（半角カナ→全角、全角英数→半角）
+// と大文字化は DB側の検索用列 name_core / name_kana_core（057/058 の tsr_name_core）と同じ規則
 function sanitizeQuery(q: string): string {
-  return q.replace(/[,()"\\%]/g, ' ').trim()
+  return q.normalize('NFKC').toUpperCase().replace(/[,()"\\%_*]/g, ' ').trim()
+}
+
+// 検索語から法人格（株式会社・(株)・カブシキガイシャ 等）を取り除く。DB の検索用列
+// name_core / name_kana_core は法人格を除いた商号なので、検索語側も同じ規則で揃えないと
+// 「株式会社穴吹工務店」と貼り付けたときに 0 件になる。正規表現は tsr_name_core() と同じ
+const CORP_LEAD = /^\s*(株式会社|有限会社|合同会社|合資会社|合名会社|医療法人社団|医療法人財団|医療法人|社会福祉法人|社会医療法人|学校法人|宗教法人|一般社団法人|公益社団法人|一般財団法人|公益財団法人|特定非営利活動法人|NPO法人|農事組合法人|企業組合|協同組合|生活協同組合|\(株\)|㈱|\(有\)|㈲|\(同\)|カブシキガイシャ|カブシキカイシャ|ユウゲンガイシャ|ユウゲンカイシャ|ゴウドウガイシャ|ゴウドウカイシャ|イリョウホウジン|シャカイフクシホウジン|ガッコウホウジン|イッパンシャダンホウジン|イッパンザイダンホウジン)\s*/
+const CORP_TAIL = /\s*(株式会社|有限会社|合同会社|合資会社|合名会社|\(株\)|㈱|\(有\)|㈲|\(同\)|カブシキガイシャ|カブシキカイシャ|ユウゲンガイシャ|ユウゲンカイシャ|ゴウドウガイシャ|ゴウドウカイシャ)\s*$/
+function stripCorporateType(text: string): string {
+  return text.replace(CORP_LEAD, '').replace(CORP_TAIL, '').trim()
+}
+
+// 優先度（S/A/B/不明）→ 保存列 priority_rank の値。絞り込みは文字列ではなく数値列で行う
+// （ビューの approach_priority は式のためインデックスが使えない）
+const PRIORITY_RANK: Record<TsrPriority, number> = { S: 0, A: 1, B: 2, '不明': 3 }
+
+// 生年月日キー（YYYYMMDD、055）。年齢 N 歳以上 ⇔ 生年月日 ≦ 今日のN年前。
+// 「今日」は DB の CURRENT_DATE（Supabase は UTC）に合わせて UTC で取る（表示年齢・保存済み
+// priority_rank と同じ基準にするため）。2/29 の N 年前が平年なら 2/28 に丸める
+// （Date.setFullYear は 3/1 に繰り上がってしまい境界が1日ずれる）
+function birthKeyYearsAgo(years: number): number {
+  const now = new Date()
+  const y = now.getUTCFullYear() - years
+  const m = now.getUTCMonth() + 1
+  let d = now.getUTCDate()
+  const isLeap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0
+  if (m === 2 && d === 29 && !isLeap) d = 28
+  return y * 10000 + m * 100 + d
 }
 
 // 電話番号の表記ゆれ（全角・ハイフン・括弧・空白）を吸収して数字だけにする。
@@ -138,6 +168,7 @@ function isNumericQuery(text: string): boolean {
 // 共通で使う最小限のメソッドだけを持つ構造的な型で受ける（any を使わない）
 interface TsrQueryBuilder<T> {
   eq(column: string, value: unknown): T
+  gt(column: string, value: unknown): T
   gte(column: string, value: unknown): T
   lte(column: string, value: unknown): T
   is(column: string, value: null): T
@@ -156,11 +187,22 @@ function applyFilters<T extends TsrQueryBuilder<T>>(query: T, f: TsrFilters): T 
       const digits = text.normalize('NFKC').replace(/\D/g, '')
       const conds: string[] = []
       if (digits.length >= 1 && digits.length <= 9) conds.push(`tsr_code.eq.${digits.padStart(9, '0')}`)
-      if (digits.length >= 4) conds.push(`phone_digits.like.%${digits}%`)
+      if (digits.length >= 4) conds.push(`phone_digits.like.*${digits}*`)
       q = q.or(conds.join(','))
     } else {
-      const like = `%${text}%`
-      q = q.or(`name.ilike.${like},name_kana.ilike.${like}`)
+      // 商号検索は法人格を除き NFKC・大文字化した列（name_core / name_kana_core、057/058）に対して行う。
+      // 検索語も同じ規則で揃える（上の sanitizeQuery と stripCorporateType）。
+      // PostgREST の like では `*` がワイルドカード（`%` は URL で問題を起こしやすい）
+      const core = stripCorporateType(text) || text
+      if ([...core.replace(/\s/g, '')].length <= 2) {
+        // 2文字以下は trgm インデックスが原理的に効かない（3文字の塊が取れない）ため前方一致にする
+        const prefix = `${core.replace(/\s/g, '')}*`
+        q = q.or(`name_core.like.${prefix},name_kana_core.like.${prefix}`)
+      } else {
+        // 3文字以上は trgm の部分一致（大文字化済みなので like でよい＝索引が使える）
+        const like = `*${core}*`
+        q = q.or(`name_core.like.${like},name_kana_core.like.${like}`)
+      }
     }
   }
   if (f.prefecture) q = q.eq('prefecture', f.prefecture)
@@ -169,7 +211,7 @@ function applyFilters<T extends TsrQueryBuilder<T>>(query: T, f: TsrFilters): T 
     const c = f.industryCode
     q = /^\d{4}$/.test(c)
       ? q.or(`industry1_code.eq.${c},industry2_code.eq.${c},industry3_code.eq.${c}`)
-      : q.or(`industry1_code.like.${c}%,industry2_code.like.${c}%,industry3_code.like.${c}%`)
+      : q.or(`industry1_code.like.${c}*,industry2_code.like.${c}*,industry3_code.like.${c}*`)
   }
   if (f.employeesMin != null) q = q.gte('employee_count', f.employeesMin)
   if (f.employeesMax != null) q = q.lte('employee_count', f.employeesMax)
@@ -177,9 +219,11 @@ function applyFilters<T extends TsrQueryBuilder<T>>(query: T, f: TsrFilters): T 
   if (f.capitalMax != null) q = q.lte('capital_thousand_yen', f.capitalMax)
   if (f.salesMin != null) q = q.gte('fy1_sales', f.salesMin)
   if (f.salesMax != null) q = q.lte('fy1_sales', f.salesMax)
-  if (f.ageMin != null) q = q.gte('rep_age', f.ageMin)
-  if (f.ageMax != null) q = q.lte('rep_age', f.ageMax)
-  if (f.priority) q = q.eq('approach_priority', f.priority)
+  // 年齢は算出列 rep_age（1行ずつ関数評価で遅い）ではなく、生年月日キーの範囲に変換して絞る。
+  // N歳以上 ⇔ キー ≦ 今日のN年前、M歳以下 ⇔ キー ＞ 今日の(M+1)年前。生年月日なしは対象外
+  if (f.ageMin != null) q = q.lte('rep_birth_key', birthKeyYearsAgo(f.ageMin))
+  if (f.ageMax != null) q = q.gt('rep_birth_key', birthKeyYearsAgo(f.ageMax + 1))
+  if (f.priority) q = q.eq('priority_rank', PRIORITY_RANK[f.priority])
   if (f.status) q = q.eq('status', f.status)
   if (f.ownerUserId) q = q.eq('owner_user_id', f.ownerUserId)
   if (f.surveyedYear) q = q.gte('surveyed_on', `${f.surveyedYear}-01-01`).lte('surveyed_on', `${f.surveyedYear}-12-31`)
@@ -189,17 +233,27 @@ function applyFilters<T extends TsrQueryBuilder<T>>(query: T, f: TsrFilters): T 
 }
 
 // 並び順はすべてサーバー側で確定させる（ページ分割・CSV出力でも同じ順になる）。
-// 優先度はビューの数値列 priority_rank（S=0 … 不明=3）で並べ、同順位は売上の大きい順
-function applySort<T extends TsrQueryBuilder<T>>(query: T, sort: TsrSortKey): T {
+// 優先度は保存列 priority_rank（S=0 … 不明=3、054）で並べ、同順位は売上の大きい順。
+// 年齢順は算出列 rep_age ではなく生年月日キー rep_birth_key（055）で並べる（高い順＝キー昇順）。
+//
+// textSearch=true（商号・カナ・電話の部分一致あり）のときは、同じ値を持つ「式の列」（*_s）で
+// 並べる。インデックス順に全件を舐めながら LIKE で絞る計画（該当が少ないと実質全件走査で
+// 10秒超）を避け、先に trgm インデックスで絞ってから少数を並べ替える計画に誘導するため（055）
+function applySort<T extends TsrQueryBuilder<T>>(query: T, sort: TsrSortKey, textSearch: boolean): T {
+  const s = textSearch ? '_s' : ''
   switch (sort) {
-    case 'sales_desc': return query.order('fy1_sales', { ascending: false, nullsFirst: false }).order('tsr_code')
-    case 'age_desc': return query.order('rep_age', { ascending: false, nullsFirst: false }).order('tsr_code')
-    case 'surveyed_desc': return query.order('surveyed_on', { ascending: false, nullsFirst: false }).order('tsr_code')
-    case 'name': return query.order('name_kana', { ascending: true, nullsFirst: false }).order('tsr_code')
+    case 'sales_desc': return query.order(`fy1_sales${s}`, { ascending: false, nullsFirst: false }).order('tsr_code')
+    case 'age_desc': return query.order(`rep_birth_key${s}`, { ascending: true, nullsFirst: false }).order('tsr_code')
+    case 'surveyed_desc': return query.order(`surveyed_on${s}`, { ascending: false, nullsFirst: false }).order('tsr_code')
+    case 'name': return query.order(`name_kana${s}`, { ascending: true, nullsFirst: false }).order('tsr_code')
     case 'priority':
     default:
-      return query.order('priority_rank', { ascending: true }).order('fy1_sales', { ascending: false, nullsFirst: false }).order('tsr_code')
+      return query.order(`priority_rank${s}`, { ascending: true }).order(`fy1_sales${s}`, { ascending: false, nullsFirst: false }).order('tsr_code')
   }
+}
+
+function hasTextSearch(f: TsrFilters): boolean {
+  return !!(f.query && sanitizeQuery(f.query))
 }
 
 export async function searchTsrProspects(
@@ -214,7 +268,7 @@ export async function searchTsrProspects(
   // ので「次のページがあるか」は件数ではなく、1件余分に取って判定する
   let q = getSupabase().from('tsr_prospects_view').select(TSR_SELECT_FULL, { count: 'estimated' }).eq('division_id', divisionId)
   q = applyFilters(q, filters)
-  q = applySort(q, opts.sort ?? 'priority').range(from, from + pageSize)
+  q = applySort(q, opts.sort ?? 'priority', hasTextSearch(filters)).range(from, from + pageSize)
   const { data, error, count } = await q
   if (error) throw error
   const fetched = (data ?? []) as unknown as TsrProspect[]
@@ -240,7 +294,7 @@ export async function fetchTsrProspectsForExport(
     const to = Math.min(from + chunk, max + 1) - 1
     let q = getSupabase().from('tsr_prospects_view').select(opts.includePersonal ? TSR_SELECT_FULL : TSR_SELECT_PUBLIC).eq('division_id', divisionId)
     q = applyFilters(q, filters)
-    q = applySort(q, opts.sort ?? 'priority').range(from, to)
+    q = applySort(q, opts.sort ?? 'priority', hasTextSearch(filters)).range(from, to)
     const { data, error } = await q
     if (error) throw error
     const page = (data ?? []) as unknown as TsrProspectPublic[]
@@ -318,6 +372,32 @@ export async function upsertTsrPrioritySettings(divisionId: string, values: TsrP
   const { error } = await getSupabase().from('tsr_priority_settings')
     .upsert({ division_id: divisionId, ...values, updated_by: userId ?? null, updated_at: new Date().toISOString() })
   if (error) throw error
+}
+
+// 優先度は tsr_prospects.priority_rank に保存されている（054）。判定条件を変えたら再計算する。
+// 46万社を1回の呼び出しで処理すると PostgREST の 8 秒タイムアウトに掛かるため、企業コード順に
+// 区切って呼ぶ（058 の tsr_recompute_priority_chunk）。本番実測（Nano・キャッシュ冷え）で
+// 1万社 10.8 秒だったため 2,000 社（約2秒）にしている。戻り値は更新件数の合計
+export async function recomputeTsrPriority(
+  divisionId: string,
+  onProgress?: (processed: number, updated: number) => void,
+): Promise<number> {
+  const CHUNK = 2000
+  let after = ''
+  let processed = 0
+  let updated = 0
+  for (let i = 0; i < 1000; i++) {
+    const { data, error } = await getSupabase().rpc('tsr_recompute_priority_chunk', { p_division_id: divisionId, p_after: after, p_limit: CHUNK })
+    if (error) throw error
+    const row = (Array.isArray(data) ? data[0] : data) as { next_code: string | null; processed: number; updated: number } | null
+    if (!row) break
+    processed += row.processed
+    updated += row.updated
+    onProgress?.(processed, updated)
+    if (!row.next_code || row.processed === 0) break
+    after = row.next_code
+  }
+  return updated
 }
 
 

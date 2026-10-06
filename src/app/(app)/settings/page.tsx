@@ -12,10 +12,10 @@ import {
 } from 'lucide-react'
 import { DEFAULT_DIVISION_CUSTOM_FIELDS, DEFAULT_DIVISION_STAGES, DEFAULT_DIVISION_PRODUCTS, DEFAULT_DIVISION_TASK_STAGES } from '@/lib/mock-data'
 import type { Role } from '@/types/database'
-import { cn, getInitials } from '@/lib/utils'
+import { cn, getInitials, formatErrorDetail } from '@/lib/utils'
 import { isSupabaseConfigured } from '@/lib/db/client'
 import { updateUserName, fetchAllUsers, createUserAdmin, updateUserAdmin, deleteUserAdmin, fetchUserDivisionIds, fetchUserTaskAssigneeDivisionIds, fetchDivisionUsers } from '@/lib/db/users'
-import { fetchTsrPrioritySettings, upsertTsrPrioritySettings, TSR_PRIORITY_DEFAULTS, type TsrPrioritySettings } from '@/lib/db/tsrProspects'
+import { fetchTsrPrioritySettings, upsertTsrPrioritySettings, recomputeTsrPriority, TSR_PRIORITY_DEFAULTS, type TsrPrioritySettings } from '@/lib/db/tsrProspects'
 import { MA_DIVISION_NAME } from '@/lib/config'
 import {
   fetchPipelineStages, upsertPipelineStages,
@@ -1795,7 +1795,15 @@ function TsrPrioritySettingsPanel({ divisionId, divisionName }: MasterPanelProps
     try {
       await upsertTsrPrioritySettings(divisionId, values, currentUser?.id)
       setUnsaved(false)
-      toast.success('優先度の判定条件を保存しました')
+      // 保存した条件で全社の優先度を計算し直す（1万社ずつ・46万社で1〜3分。変化のある行だけ更新）
+      const t = toast.loading('優先度を再計算しています...')
+      try {
+        const n = await recomputeTsrPriority(divisionId, (processed, updated) =>
+          toast.loading(`優先度を再計算しています... ${processed.toLocaleString()}社確認・${updated.toLocaleString()}社更新`, { id: t }))
+        toast.success(`判定条件を保存し、${n.toLocaleString()}社の優先度を更新しました`, { id: t })
+      } catch (e) {
+        toast.error(`判定条件は保存されましたが再計算が途中で止まりました（もう一度「保存」すると再計算をやり直せます）: ${formatErrorDetail(e)}`, { id: t, duration: 10000 })
+      }
     } catch (e) {
       toast.error(`保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`)
     } finally {

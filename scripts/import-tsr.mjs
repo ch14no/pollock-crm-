@@ -1,6 +1,6 @@
 // TSRソーシングリスト 一括取込スクリプト（053_tsr_prospects.sql 適用後に実行）
 //
-//   TSR_DB_URL="postgresql://..." node --max-old-space-size=6144 scripts/import-tsr.mjs --file <csv> [--dry-run] [--limit N]
+//   TSR_DB_URL="postgresql://..." node --max-old-space-size=6144 scripts/import-tsr.mjs --file <csv> [--dry-run] [--limit N] [--skip N]
 //
 // - CSV（UTF-8/BOM・RFC4180）をストリーミングで読み、企業コード単位で1件に統合してから
 //   500件ずつ UPSERT する。企業コードが一致すれば上書き、運用列（status等）は保持する。
@@ -16,6 +16,9 @@ const FILE = opt('--file', 'G:/マイドライブ/★自動化・効率化/AI/PJ
 const DRY_RUN = args.includes('--dry-run')
 const LIMIT = Number(opt('--limit', '0')) || 0
 const BATCH = Number(opt('--batch', '500')) || 500
+// 途中で止まったときの再開用。統合後の並び（ファイル順・決定的）の先頭N社を飛ばす。
+// UPSERTなので飛ばさなくても壊れないが、既投入分を更新し直す分だけ遅くなる
+const SKIP = Number(opt('--skip', '0')) || 0
 const DIVISION_NAMES = ['M＆A事業部', 'M&A事業部']
 
 const PREFS = ['北海道','青森県','岩手県','宮城県','秋田県','山形県','福島県','茨城県','栃木県','群馬県','埼玉県','千葉県','東京都','神奈川県','新潟県','富山県','石川県','福井県','山梨県','長野県','岐阜県','静岡県','愛知県','三重県','滋賀県','京都府','大阪府','兵庫県','奈良県','和歌山県','鳥取県','島根県','岡山県','広島県','山口県','徳島県','香川県','愛媛県','高知県','福岡県','佐賀県','長崎県','熊本県','大分県','宮崎県','鹿児島県','沖縄県']
@@ -243,24 +246,38 @@ function buildUpsert(table, cols, updateCols, rows, returning) {
   return { sql, params }
 }
 
-let inserted = 0, updated = 0, done = 0
+let inserted = 0, updated = 0, done = SKIP
 const all = [...merged.values()]
-for (let i = 0; i < all.length; i += BATCH) {
+if (SKIP > 0) console.log(`[import-tsr] skipping first ${SKIP} companies (resume)`)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+for (let i = SKIP; i < all.length; i += BATCH) {
   const chunk = all.slice(i, i + BATCH)
   const main = chunk.map((r) => ({ ...r, division_id: divisionId, import_batch_id: batchId }))
   const personal = chunk.map((r) => ({ tsr_code: r.tsr_code, division_id: divisionId, ...r.personal }))
-  await client.query('BEGIN')
-  try {
-    const q = buildUpsert('tsr_prospects', COLS, UPDATE_COLS, main, true)
-    const res = await client.query(q.sql, q.params)
-    for (const row of res.rows) row.inserted ? inserted++ : updated++
-    const p = buildUpsert('tsr_prospect_personal', PCOLS, PUPDATE_COLS, personal, false)
-    await client.query(p.sql, p.params)
-    await client.query('COMMIT')
-  } catch (e) {
-    await client.query('ROLLBACK')
-    console.error(`batch at ${i} failed:`, e.message)
-    throw e
+  // Supabaseはディスク/プラン上限に近づくとDBを一時的に読み取り専用にする。
+  // その場合は少し待って同じバッチをやり直す（最大10回・約10分）。それ以外のエラーは即中断
+  for (let attempt = 1; ; attempt++) {
+    await client.query('BEGIN')
+    try {
+      const q = buildUpsert('tsr_prospects', COLS, UPDATE_COLS, main, true)
+      const res = await client.query(q.sql, q.params)
+      const p = buildUpsert('tsr_prospect_personal', PCOLS, PUPDATE_COLS, personal, false)
+      await client.query(p.sql, p.params)
+      await client.query('COMMIT')
+      // 件数は COMMIT 後に数える（再試行で同じバッチを二重に数えない）
+      for (const row of res.rows) row.inserted ? inserted++ : updated++
+      break
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {})
+      const readOnly = /read-only/i.test(e.message)
+      if (readOnly && attempt <= 10) {
+        console.warn(`batch at ${i}: database is read-only (attempt ${attempt}/10). waiting 60s ...`)
+        await sleep(60_000)
+        continue
+      }
+      console.error(`batch at ${i} failed:`, e.message, `(resume with --skip ${i})`)
+      throw e
+    }
   }
   done += chunk.length
   if (done % 20000 < BATCH) console.log(`  upserted ${done}/${all.length} (inserted=${inserted} updated=${updated})`)
@@ -269,6 +286,11 @@ await client.query(
   `INSERT INTO public.tsr_import_logs (division_id, file_name, rows_read, unique_companies, inserted_count, updated_count, started_at, note)
    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
   [divisionId, FILE.split('/').pop(), rowsRead, merged.size, inserted, updated, startedAt, `batch=${batchId}`])
+// 優先度（priority_rank・054）を保存済みの判定条件で計算し直す。変化のある行だけ更新
+console.log('[import-tsr] recomputing priority_rank ...')
+await client.query('SET statement_timeout = 0')
+const rc = await client.query('SELECT public.tsr_recompute_priority($1) AS n', [divisionId])
+console.log(`[import-tsr] priority_rank updated: ${rc.rows[0].n} rows`)
 // 業種の絞り込み選択肢（マテリアライズドビュー）は取込時にしか変わらないのでここで更新する
 console.log('[import-tsr] refreshing tsr_industry_options ...')
 // CONCURRENTLY: 更新中も画面側の読み取りを止めない（一意インデックス idx_tsr_industry_options_key が前提）

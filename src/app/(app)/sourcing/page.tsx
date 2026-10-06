@@ -210,7 +210,7 @@ export default function SourcingPage() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="商号・商号カナ・電話番号・企業コードで検索..."
+            placeholder="商号・商号カナ・電話番号・企業コードで検索（2文字以下は商号の先頭一致）"
             className="w-full pl-9 pr-8 py-2.5 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
           {query && (

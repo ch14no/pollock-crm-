@@ -1,6 +1,47 @@
 # pollock-crm 引継ぎメモ（.claude/CLAUDE.md）
 
-## 2026-10-06: TSRソーシングリスト 画面実装・本番デプロイ済み（`8b8395d`）。**053は未適用・データ未投入**
+## 2026-10-06(2): TSR 本番投入完了（461,276社）＋性能対策 054〜057 を直接接続で適用
+
+- **053〜057 はすべて本番適用済み**（SQL Editor ではなく、ユーザーから預かった Direct 接続文字列で
+  `scripts/_apply.tmp.mjs`（使い捨て・削除済み）から 1 トランザクションずつ適用）。053 は前日に
+  ユーザーが貼った旧版が入っていたため、0件のTSRテーブルを DROP してから新版を適用した。
+  **適用後は DB パスワードのリセットを依頼済み**（チャットに平文で共有されたため）。
+- **取込**: `import-tsr.mjs` 実行。264,500社で Supabase がディスク逼迫により read-only 化→
+  自動でディスクが 8GB に拡張された後、`--skip 264500` で再開し完走（inserted 461,276 / updated 0）。
+  スクリプトに `--skip N` と read-only 時の 60秒×10回リトライを追加済み。
+- **本番実測**: tsr_prospects 550MB＋索引 160MB → 057 後は索引増。DB全体 約0.9GB。
+  優先度分布 S 118,950／A 30,972／B 172,617／不明 138,737。電話なし 1.4%、売上なし 0%。
+- **性能で判明したこと**（Nano 計算機。各対策はマイグレーションのヘッダに詳述）:
+  - 054: 優先度をビューで毎回計算→既定の並び 7.1s。`priority_rank` 列＋複合索引で 0.26s（温まれば 14ms）。
+    再計算は取込時・設定保存時（`tsr_recompute_priority` RPC）・毎日 03:00 JST の pg_cron。
+    **初回の全件 UPDATE は 15 分かかった**（trgm GIN ×3 の更新負荷。`SET statement_timeout=0` 必須）
+  - 055: 売上順 18s／年齢順 26s → `DESC NULLS LAST` に合う複合索引、personal の `rep_birth_key`、
+    ビューを INNER JOIN 化。文字検索時は `*_s`（式の列）で並べて「索引順に全件舐める」計画を回避
+  - 056/057: **2文字以下の検索は pg_trgm が原理的に効かない**（3文字の塊が必要）→ 法人格を除き
+    NFKC 正規化した `name_core`/`name_kana_core` の前方一致。**商号カナは半角カナ**で届いている
+    ため NFKC が必須。3文字以上も同じ列への trgm。生成列は関数本体を変えても再計算されない
+    （列の作り直し＝テーブル書き直し 2〜3 分）。**ビューは `p.*` を定義時点で展開する**ので列追加後は
+    ビューの作り直しが必要
+  - 年齢範囲は `rep_age`（関数評価）ではなく `rep_birth_key` の範囲に、優先度は `approach_priority`
+    （式）ではなく `priority_rank` で絞る（クライアント側 `applyFilters`）。年齢→キー変換は DB の
+    CURRENT_DATE（UTC）に合わせて UTC で計算、2/29 は平年なら 2/28 に丸める
+  - 058（`/code-review` 4周目の指摘）: **設定画面の再計算は authenticated の statement_timeout 8s
+    に掛かる**→ `tsr_recompute_priority_chunk`（1万社ずつ・クライアントがループ）。再計算関数は
+    SECURITY DEFINER ＋ `tsr_assert_priority_admin`（当該事業部 manager / super_admin。auth.uid() NULL＝
+    cron は通す）。**`tsr_prospects` の UPDATE 権限を運用列6つに限定**（priority_rank の直接改変防止）。
+    検索列は `upper()` も掛ける（「nt」で NTT を引く）。検索語側も NFKC→大文字化→法人格除去
+    （`stripCorporateType`、DB の `tsr_name_core` と同じ正規表現）してから `like`（PostgREST では
+    `*` がワイルドカード）。cron は `SET statement_timeout = 0;` を前置して登録し直し。
+    分割再計算は本番実測で 1万社 10.8s（Nano・冷え）→ クライアントは 2,000 社ずつ
+  - 059: **このプロジェクトの ALTER DEFAULT PRIVILEGES（postgres）は新しい表に anon/authenticated/
+    service_role へ TRUNCATE・REFERENCES・TRIGGER・MAINTAIN を自動付与する**。RLS は TRUNCATE を
+    止められないので TSR 表は REVOKE ALL→必要分だけ GRANT し直した。**他の既存表も同じ状態の可能性が
+    高い（要棚卸し。PostgREST は TRUNCATE を発行しないため API 経由の実害は限定的）**。
+    新規テーブルを作るときは GRANT の前に `REVOKE ALL ... FROM anon, authenticated` を入れる
+- 残: Compute を Nano→Micro（Pro に含まれる・再起動を伴うため業務時間外に）、酒田さんへの案内、
+  既存表の既定権限の棚卸し。
+
+## 2026-10-06: TSRソーシングリスト 画面実装・本番デプロイ済み（`8b8395d`）
 
 `/sourcing`（M&A事業部のみナビに表示）・`src/lib/db/tsrProspects.ts`・設定画面の優先度閾値パネル・
 サイドバー/ボトムナビの `navItemsForDivision()` を追加。`/code-review` 3ラウンド（計30件）を反映。
