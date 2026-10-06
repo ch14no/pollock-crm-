@@ -38,6 +38,11 @@
     止められないので TSR 表は REVOKE ALL→必要分だけ GRANT し直した。**他の既存表も同じ状態の可能性が
     高い（要棚卸し。PostgREST は TRUNCATE を発行しないため API 経由の実害は限定的）**。
     新規テーブルを作るときは GRANT の前に `REVOKE ALL ... FROM anon, authenticated` を入れる
+  - 060（`0f336d1`）: **PostgREST の estimated count は RLS の条件が絡むと大きく外れる**（46万社が
+    「116,475社」）。ページ取得と並行して本体テーブルに `count: 'exact', head: true` を投げて正確に
+    数える方式に変更（年齢絞り込み時のみビュー経由）。取れなければ概算＋「約」表示。count(*) を
+    索引だけで完結させるカバリング索引（division_id INCLUDE 絞り込み列）を CONCURRENTLY で追加。
+    実測: 全件 0.7s、都道府県 初回 4.9s→以降 0.14s、複合条件 0.1〜0.2s
 - 残: Compute を Nano→Micro（Pro に含まれる・再起動を伴うため業務時間外に）、酒田さんへの案内、
   既存表の既定権限の棚卸し。
 
