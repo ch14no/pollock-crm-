@@ -1,8 +1,12 @@
 import { getSupabase } from './client'
 
-// TSRソーシングリスト（053）。一覧・詳細は tsr_prospects_view（年齢・経過年数・優先度を
-// 算出済み、基表のRLSがそのまま効く）を読む。46万件のため常にサーバー側で絞り込み、
-// 全件をクライアントに持ってこない（既存の会社検索＝全件ロード方式は使わない）。
+// TSRソーシングリスト（053〜062）。
+// 一覧・件数は DB 関数 tsr_search / tsr_search_count（062、SECURITY DEFINER）で取る。
+// 当初は PostgREST から tsr_prospects_view を直接読んでいたが、Postgres の LIKE が leakproof で
+// ないため RLS が効く状態では商号の索引が使えず（46万行の全件走査＝8秒タイムアウト）、
+// 関数の中で所属を検査してから RLS の外で検索する方式に変えた。
+// 絞り込み条件の解釈（検索語の正規化・年齢→生年月日キー変換・優先度→rank）は DB 側
+// tsr_search_where() に一本化されている。ここでは条件を JSON で渡すだけ。
 
 export type TsrPriority = 'S' | 'A' | 'B' | '不明'
 
@@ -60,7 +64,7 @@ export interface TsrProspect {
   source_files: string[]
   imported_at: string
   updated_at: string
-  // 個人情報（tsr_prospect_personal。権限が無いユーザーには行が見えないためnull）
+  // 個人情報（tsr_prospect_personal。CSV出力で「含めない」を選んだときは NULL で返る）
   rep_name: string | null
   rep_name_kana: string | null
   rep_home_address: string | null
@@ -77,27 +81,15 @@ export interface TsrProspect {
   approach_priority: TsrPriority
 }
 
-// 個人情報を除いた列。CSV出力で「個人情報を含めない」を選んだときはこの列だけを取得し、
-// 不要な個人情報をそもそもブラウザまで持ってこない
-const TSR_PERSONAL_COLUMNS = ['rep_name', 'rep_name_kana', 'rep_home_address', 'rep_birth_year', 'rep_birth_month', 'rep_birth_day', 'rep_birth_key', 'rep_birthplace', 'rep_school'] as const
-const TSR_PUBLIC_COLUMNS = [
-  'tsr_code', 'division_id', 'listing_code', 'listing_name', 'name', 'name_kana', 'surveyed_on', 'postal_code', 'address', 'prefecture', 'phone', 'phone_digits',
-  'established_year', 'established_month', 'capital_thousand_yen', 'employee_count',
-  'industry1_code', 'industry1_name', 'industry2_code', 'industry2_name', 'industry3_code', 'industry3_name',
-  'business_description', 'officers', 'major_shareholders', 'branches', 'suppliers', 'customers', 'banks', 'overview',
-  'fy1_closing', 'fy1_sales', 'fy1_profit', 'fy2_closing', 'fy2_sales', 'fy2_profit', 'fy3_closing', 'fy3_sales', 'fy3_profit',
-  'sales_cagr', 'profit_margin', 'approach_type', 'owner_user_id', 'last_contact_on', 'status', 'memo', 'company_id',
-  'source_files', 'imported_at', 'updated_at', 'rep_age', 'data_age_years', 'priority_rank', 'approach_priority',
-] as const
-const TSR_SELECT_PUBLIC = TSR_PUBLIC_COLUMNS.join(',')
-const TSR_SELECT_FULL = [...TSR_PUBLIC_COLUMNS, ...TSR_PERSONAL_COLUMNS].join(',')
-
+// 個人情報を含めない出力で NULL になる列（CSV のヘッダ等で参照する）
+export const TSR_PERSONAL_COLUMNS = ['rep_name', 'rep_name_kana', 'rep_home_address', 'rep_birth_year', 'rep_birth_month', 'rep_birth_day', 'rep_birth_key', 'rep_birthplace', 'rep_school'] as const
 export type TsrProspectPublic = Omit<TsrProspect, (typeof TSR_PERSONAL_COLUMNS)[number]>
 
+// 絞り込み条件。キー名は DB 側 tsr_search_where() と同じ（062）
 export interface TsrFilters {
   query?: string
   prefecture?: string
-  industryCode?: string          // 4桁または先頭2〜3桁（前方一致。業種1〜3のいずれか）
+  industryCode?: string          // 4桁または先頭1〜3桁（前方一致。業種1〜3のいずれか）
   employeesMin?: number; employeesMax?: number
   capitalMin?: number; capitalMax?: number        // 千円
   salesMin?: number; salesMax?: number            // 千円（直近期）
@@ -118,143 +110,14 @@ export interface TsrSearchResult {
   hasMore: boolean     // 次のページが実在するか（pageSize+1件目の有無で判定した確定値）
 }
 
-// PostgREST の or() フィルタはカンマ・括弧・引用符を構文として解釈するため、検索語からは除く。
-// `%` `_` `*` は LIKE のワイルドカードなので同様に除く。NFKC 正規化（半角カナ→全角、全角英数→半角）
-// と大文字化は DB側の検索用列 name_core / name_kana_core（057/058 の tsr_name_core）と同じ規則
-function sanitizeQuery(q: string): string {
-  return q.normalize('NFKC').toUpperCase().replace(/[,()"\\%_*]/g, ' ').trim()
-}
-
-// 検索語から法人格（株式会社・(株)・カブシキガイシャ 等）を取り除く。DB の検索用列
-// name_core / name_kana_core は法人格を除いた商号なので、検索語側も同じ規則で揃えないと
-// 「株式会社穴吹工務店」と貼り付けたときに 0 件になる。正規表現は tsr_name_core() と同じ
-const CORP_LEAD = /^\s*(株式会社|有限会社|合同会社|合資会社|合名会社|医療法人社団|医療法人財団|医療法人|社会福祉法人|社会医療法人|学校法人|宗教法人|一般社団法人|公益社団法人|一般財団法人|公益財団法人|特定非営利活動法人|NPO法人|農事組合法人|企業組合|協同組合|生活協同組合|\(株\)|㈱|\(有\)|㈲|\(同\)|カブシキガイシャ|カブシキカイシャ|ユウゲンガイシャ|ユウゲンカイシャ|ゴウドウガイシャ|ゴウドウカイシャ|イリョウホウジン|シャカイフクシホウジン|ガッコウホウジン|イッパンシャダンホウジン|イッパンザイダンホウジン)\s*/
-const CORP_TAIL = /\s*(株式会社|有限会社|合同会社|合資会社|合名会社|\(株\)|㈱|\(有\)|㈲|\(同\)|カブシキガイシャ|カブシキカイシャ|ユウゲンガイシャ|ユウゲンカイシャ|ゴウドウガイシャ|ゴウドウカイシャ)\s*$/
-function stripCorporateType(text: string): string {
-  return text.replace(CORP_LEAD, '').replace(CORP_TAIL, '').trim()
-}
-
-// 優先度（S/A/B/不明）→ 保存列 priority_rank の値。絞り込みは文字列ではなく数値列で行う
-// （ビューの approach_priority は式のためインデックスが使えない）
-const PRIORITY_RANK: Record<TsrPriority, number> = { S: 0, A: 1, B: 2, '不明': 3 }
-
-// 生年月日キー（YYYYMMDD、055）。年齢 N 歳以上 ⇔ 生年月日 ≦ 今日のN年前。
-// 「今日」は DB の CURRENT_DATE（Supabase は UTC）に合わせて UTC で取る（表示年齢・保存済み
-// priority_rank と同じ基準にするため）。2/29 の N 年前が平年なら 2/28 に丸める
-// （Date.setFullYear は 3/1 に繰り上がってしまい境界が1日ずれる）
-function birthKeyYearsAgo(years: number): number {
-  const now = new Date()
-  const y = now.getUTCFullYear() - years
-  const m = now.getUTCMonth() + 1
-  let d = now.getUTCDate()
-  const isLeap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0
-  if (m === 2 && d === 29 && !isLeap) d = 28
-  return y * 10000 + m * 100 + d
-}
-
-// 電話番号の表記ゆれ（全角・ハイフン・括弧・空白）を吸収して数字だけにする。
-// DB側の tsr_phone_digits() と同じ規則（9桁未満はnull）
-function normalizePhone(phone: string | null | undefined): string | null {
-  if (!phone) return null
-  const digits = phone.normalize('NFKC').replace(/\D/g, '')
-  return digits.length >= 9 ? digits : null
-}
-
-// 検索語が「数字・ハイフン・括弧・空白だけ」なら電話番号／企業コードとして扱う
-function isNumericQuery(text: string): boolean {
-  return /^[\d\-－‐ー()（）\s+＋]+$/.test(text.normalize('NFKC')) && /\d/.test(text)
-}
-
-// supabase-js のフィルタビルダーは select 文字列ごとに別の型になるため、絞り込み・並び替えは
-// 共通で使う最小限のメソッドだけを持つ構造的な型で受ける（any を使わない）
-interface TsrQueryBuilder<T> {
-  eq(column: string, value: unknown): T
-  gt(column: string, value: unknown): T
-  gte(column: string, value: unknown): T
-  lte(column: string, value: unknown): T
-  is(column: string, value: null): T
-  not(column: string, operator: string, value: unknown): T
-  or(filters: string): T
-  order(column: string, options?: { ascending?: boolean; nullsFirst?: boolean }): T
-}
-
-function applyFilters<T extends TsrQueryBuilder<T>>(query: T, f: TsrFilters): T {
-  let q = query
-  const text = f.query ? sanitizeQuery(f.query) : ''
-  if (text) {
-    if (isNumericQuery(text)) {
-      // 数字だけの検索語: 企業コード（9桁以下。先頭ゼロ落ちも許容）と電話番号（数字化した
-      // phone_digits への部分一致）の両方を見る。桁数で決め打ちしない
-      const digits = text.normalize('NFKC').replace(/\D/g, '')
-      const conds: string[] = []
-      if (digits.length >= 1 && digits.length <= 9) conds.push(`tsr_code.eq.${digits.padStart(9, '0')}`)
-      if (digits.length >= 4) conds.push(`phone_digits.like.*${digits}*`)
-      q = q.or(conds.join(','))
-    } else {
-      // 商号検索は法人格を除き NFKC・大文字化した列（name_core / name_kana_core、057/058）に対して行う。
-      // 検索語も同じ規則で揃える（上の sanitizeQuery と stripCorporateType）。
-      // PostgREST の like では `*` がワイルドカード（`%` は URL で問題を起こしやすい）
-      const core = stripCorporateType(text) || text
-      if ([...core.replace(/\s/g, '')].length <= 2) {
-        // 2文字以下は trgm インデックスが原理的に効かない（3文字の塊が取れない）ため前方一致にする
-        const prefix = `${core.replace(/\s/g, '')}*`
-        q = q.or(`name_core.like.${prefix},name_kana_core.like.${prefix}`)
-      } else {
-        // 3文字以上は trgm の部分一致（大文字化済みなので like でよい＝索引が使える）
-        const like = `*${core}*`
-        q = q.or(`name_core.like.${like},name_kana_core.like.${like}`)
-      }
-    }
+// undefined / 空文字のキーを落として JSON にする（DB 側は「キーが無い＝条件なし」）
+function toRpcFilters(f: TsrFilters): Record<string, string | number> {
+  const out: Record<string, string | number> = {}
+  for (const [k, v] of Object.entries(f)) {
+    if (v === undefined || v === null || v === '') continue
+    out[k] = v as string | number
   }
-  if (f.prefecture) q = q.eq('prefecture', f.prefecture)
-  if (f.industryCode) {
-    // 4桁（画面の選択肢）は完全一致でbtreeインデックスを使う。2〜3桁の前方一致は将来の拡張用
-    const c = f.industryCode
-    q = /^\d{4}$/.test(c)
-      ? q.or(`industry1_code.eq.${c},industry2_code.eq.${c},industry3_code.eq.${c}`)
-      : q.or(`industry1_code.like.${c}*,industry2_code.like.${c}*,industry3_code.like.${c}*`)
-  }
-  if (f.employeesMin != null) q = q.gte('employee_count', f.employeesMin)
-  if (f.employeesMax != null) q = q.lte('employee_count', f.employeesMax)
-  if (f.capitalMin != null) q = q.gte('capital_thousand_yen', f.capitalMin)
-  if (f.capitalMax != null) q = q.lte('capital_thousand_yen', f.capitalMax)
-  if (f.salesMin != null) q = q.gte('fy1_sales', f.salesMin)
-  if (f.salesMax != null) q = q.lte('fy1_sales', f.salesMax)
-  // 年齢は算出列 rep_age（1行ずつ関数評価で遅い）ではなく、生年月日キーの範囲に変換して絞る。
-  // N歳以上 ⇔ キー ≦ 今日のN年前、M歳以下 ⇔ キー ＞ 今日の(M+1)年前。生年月日なしは対象外
-  if (f.ageMin != null) q = q.lte('rep_birth_key', birthKeyYearsAgo(f.ageMin))
-  if (f.ageMax != null) q = q.gt('rep_birth_key', birthKeyYearsAgo(f.ageMax + 1))
-  if (f.priority) q = q.eq('priority_rank', PRIORITY_RANK[f.priority])
-  if (f.status) q = q.eq('status', f.status)
-  if (f.ownerUserId) q = q.eq('owner_user_id', f.ownerUserId)
-  if (f.surveyedYear) q = q.gte('surveyed_on', `${f.surveyedYear}-01-01`).lte('surveyed_on', `${f.surveyedYear}-12-31`)
-  if (f.promoted === 'yes') q = q.not('company_id', 'is', null)
-  if (f.promoted === 'no') q = q.is('company_id', null)
-  return q
-}
-
-// 並び順はすべてサーバー側で確定させる（ページ分割・CSV出力でも同じ順になる）。
-// 優先度は保存列 priority_rank（S=0 … 不明=3、054）で並べ、同順位は売上の大きい順。
-// 年齢順は算出列 rep_age ではなく生年月日キー rep_birth_key（055）で並べる（高い順＝キー昇順）。
-//
-// textSearch=true（商号・カナ・電話の部分一致あり）のときは、同じ値を持つ「式の列」（*_s）で
-// 並べる。インデックス順に全件を舐めながら LIKE で絞る計画（該当が少ないと実質全件走査で
-// 10秒超）を避け、先に trgm インデックスで絞ってから少数を並べ替える計画に誘導するため（055）
-function applySort<T extends TsrQueryBuilder<T>>(query: T, sort: TsrSortKey, textSearch: boolean): T {
-  const s = textSearch ? '_s' : ''
-  switch (sort) {
-    case 'sales_desc': return query.order(`fy1_sales${s}`, { ascending: false, nullsFirst: false }).order('tsr_code')
-    case 'age_desc': return query.order(`rep_birth_key${s}`, { ascending: true, nullsFirst: false }).order('tsr_code')
-    case 'surveyed_desc': return query.order(`surveyed_on${s}`, { ascending: false, nullsFirst: false }).order('tsr_code')
-    case 'name': return query.order(`name_kana${s}`, { ascending: true, nullsFirst: false }).order('tsr_code')
-    case 'priority':
-    default:
-      return query.order(`priority_rank${s}`, { ascending: true }).order(`fy1_sales${s}`, { ascending: false, nullsFirst: false }).order('tsr_code')
-  }
-}
-
-function hasTextSearch(f: TsrFilters): boolean {
-  return !!(f.query && sanitizeQuery(f.query))
+  return out
 }
 
 export async function searchTsrProspects(
@@ -265,40 +128,28 @@ export async function searchTsrProspects(
   const pageSize = opts.pageSize ?? 50
   const from = opts.page * pageSize
   const supabase = getSupabase()
-  // ページ本体は estimated（統計ベースの概算）付きで取る。概算は RLS の条件が絡むと大きく外れる
-  // （本番で 46万社が「116,475社」と出た）ので表示には使わず、下の正確な件数が取れなかった
-  // ときの保険にだけ使う。「次のページがあるか」は件数ではなく 1 件余分に取って判定する
-  let q = supabase.from('tsr_prospects_view').select(TSR_SELECT_FULL, { count: 'estimated' }).eq('division_id', divisionId)
-  q = applyFilters(q, filters)
-  q = applySort(q, opts.sort ?? 'priority', hasTextSearch(filters)).range(from, from + pageSize)
-
-  // 正確な件数は別リクエストで count(*) だけを取る（ページ取得と並行）。代表者情報との結合を
-  // 伴わない本体テーブル（tsr_prospects）に対して行うと索引だけで数えられて速い。年齢の
-  // 絞り込み（rep_birth_key＝代表者側の列）があるときだけビューで数える
-  const usesPersonal = filters.ageMin != null || filters.ageMax != null
-  let cq = supabase.from(usesPersonal ? 'tsr_prospects_view' : 'tsr_prospects')
-    .select('tsr_code', { count: 'exact', head: true }).eq('division_id', divisionId)
-  cq = applyFilters(cq, filters)
-
-  const [pageRes, countRes] = await Promise.all([q, cq])
-  const { data, error, count: estimated } = pageRes
-  if (error) throw error
-  const fetched = (data ?? []) as unknown as TsrProspect[]
+  const f = toRpcFilters(filters)
+  // 「次のページがあるか」は件数ではなく 1 件余分に取って判定する。件数は別の関数で並行して数える
+  const [pageRes, countRes] = await Promise.all([
+    supabase.rpc('tsr_search', { p_division_id: divisionId, p_filters: f, p_sort: opts.sort ?? 'priority', p_limit: pageSize + 1, p_offset: from, p_include_personal: true }),
+    supabase.rpc('tsr_search_count', { p_division_id: divisionId, p_filters: f }),
+  ])
+  if (pageRes.error) throw pageRes.error
+  const fetched = (pageRes.data ?? []) as unknown as TsrProspect[]
   const hasMore = fetched.length > pageSize
   const rows = hasMore ? fetched.slice(0, pageSize) : fetched
 
-  if (!countRes.error && countRes.count != null) {
-    return { rows, total: countRes.count, totalIsExact: true, hasMore }
+  const exact = countRes.error ? null : Number(countRes.data)
+  if (exact != null && Number.isFinite(exact)) {
+    return { rows, total: exact, totalIsExact: true, hasMore }
   }
-  // 正確な件数が取れなかった（8秒のタイムアウト等）: 最終ページなら実数で確定、途中なら
-  // 概算と「少なくとも次ページ1件目まで」の大きい方
-  if (countRes.error) console.warn('tsr exact count failed', countRes.error.message)
-  const total = hasMore ? Math.max(estimated ?? 0, from + pageSize + 1) : from + rows.length
-  return { rows, total, totalIsExact: !hasMore, hasMore }
+  // 件数が取れなかった（タイムアウト等）: 最終ページなら実数で確定、途中なら「少なくとも次ページ1件目まで」
+  if (countRes.error) console.warn('tsr count failed', countRes.error.message)
+  return { rows, total: hasMore ? from + pageSize + 1 : from + rows.length, totalIsExact: !hasMore, hasMore }
 }
 
 // CSV出力用。絞り込み結果を1,000件ずつ取得し、上限（既定20,000件）で打ち切る。
-// includePersonal=false のときは個人情報の列をそもそも要求しない
+// includePersonal=false のときは個人情報の列が NULL で返る（DB 側で落とす）
 export async function fetchTsrProspectsForExport(
   divisionId: string,
   filters: TsrFilters,
@@ -306,19 +157,19 @@ export async function fetchTsrProspectsForExport(
 ): Promise<{ rows: TsrProspectPublic[]; truncated: boolean }> {
   const max = opts.max ?? 20000
   const chunk = 1000
+  const f = toRpcFilters(filters)
   const rows: TsrProspectPublic[] = []
   // 上限ちょうどの件数を「打ち切り」と誤報しないよう、max+1件目まで取りに行って判定する
   for (let from = 0; from <= max; from += chunk) {
-    const to = Math.min(from + chunk, max + 1) - 1
-    let q = getSupabase().from('tsr_prospects_view').select(opts.includePersonal ? TSR_SELECT_FULL : TSR_SELECT_PUBLIC).eq('division_id', divisionId)
-    q = applyFilters(q, filters)
-    q = applySort(q, opts.sort ?? 'priority', hasTextSearch(filters)).range(from, to)
-    const { data, error } = await q
+    const limit = Math.min(chunk, max + 1 - from)
+    const { data, error } = await getSupabase().rpc('tsr_search', {
+      p_division_id: divisionId, p_filters: f, p_sort: opts.sort ?? 'priority', p_limit: limit, p_offset: from, p_include_personal: opts.includePersonal,
+    })
     if (error) throw error
     const page = (data ?? []) as unknown as TsrProspectPublic[]
     rows.push(...page)
     opts.onProgress?.(Math.min(rows.length, max))
-    if (page.length < to - from + 1) break
+    if (page.length < limit) break
   }
   if (rows.length > max) return { rows: rows.slice(0, max), truncated: true }
   return { rows, truncated: false }
@@ -362,7 +213,7 @@ export function logTsrProspectView(tsrCode: string, userId: string): void {
 // 出力自体はこの記録が書けた後にだけ行う（記録なしで個人情報が外に出ないようにする）
 export async function logTsrProspectExport(userId: string, rowCount: number, filters: TsrFilters): Promise<void> {
   const { error } = await getSupabase().from('tsr_prospect_view_logs')
-    .insert({ tsr_code: null, user_id: userId, action: 'export', row_count: rowCount, detail: { filters } })
+    .insert({ tsr_code: null, user_id: userId, action: 'export', row_count: rowCount, detail: { filters: toRpcFilters(filters) } })
   if (error) throw new Error(`出力記録の保存に失敗したため出力を中止しました: ${error.message}`)
 }
 
@@ -417,7 +268,6 @@ export async function recomputeTsrPriority(
   }
   return updated
 }
-
 
 // 「CRMに登録」: 会社マスタに昇格させ、リスト側と相互に紐づける。昇格済みなら既存IDを返す。
 // 「既存会社との突き合わせ→会社の作成または空欄補完→リスト側の紐づけ」は1つのトランザクション

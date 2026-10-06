@@ -6,7 +6,7 @@ import { Search, SlidersHorizontal, Download, X, Building2, ChevronLeft, Chevron
 import toast from 'react-hot-toast'
 import { useAppStore } from '@/store/appStore'
 import { MA_DIVISION_NAME } from '@/lib/config'
-import { PREFECTURES, downloadCsv, cn } from '@/lib/utils'
+import { PREFECTURES, downloadCsv, cn, formatErrorDetail } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
@@ -111,7 +111,7 @@ export default function SourcingPage() {
       setRows(res.rows); setTotal(res.total); setTotalIsExact(res.totalIsExact); setHasMore(res.hasMore)
     } catch (e) {
       if (seq.current !== mySeq) return
-      setLoadError(e instanceof Error ? e.message : String(e))
+      setLoadError(formatErrorDetail(e))
     } finally {
       if (seq.current === mySeq && !steppingBack) setLoading(false)
     }
@@ -168,7 +168,7 @@ export default function SourcingPage() {
       downloadCsv(`TSRソーシング_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.csv`, headers, all.map(line))
       toast.success(`${all.length.toLocaleString()}件を出力しました${truncated ? `（上限${EXPORT_MAX.toLocaleString()}件で打ち切り。条件を絞ってください）` : ''}`, { id: t, duration: 6000 })
     } catch (e) {
-      toast.error(`出力に失敗しました: ${e instanceof Error ? e.message : String(e)}`, { id: t })
+      toast.error(`出力に失敗しました: ${formatErrorDetail(e)}`, { id: t })
     } finally {
       setExporting(false)
     }
@@ -292,8 +292,20 @@ export default function SourcingPage() {
 
       {loadError ? (
         <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-sm text-red-700">
-          読み込みに失敗しました: {loadError}
-          <p className="text-xs text-red-500 mt-1">マイグレーション053が未適用の可能性があります。管理者にご確認ください。</p>
+          {/57014|statement timeout/.test(loadError) ? (
+            <>
+              この条件の検索は時間内（8秒）に終わりませんでした。
+              <p className="text-xs text-red-500 mt-1">
+                条件を1つ減らすか、もう一度お試しください（同じ条件は2回目以降は速くなります）。
+              </p>
+              <Button size="sm" variant="secondary" className="mt-2" onClick={() => void load()}>もう一度検索</Button>
+            </>
+          ) : (
+            <>
+              読み込みに失敗しました: {loadError}
+              <p className="text-xs text-red-500 mt-1">管理者にご確認ください（マイグレーション053〜063の適用状況・権限）。</p>
+            </>
+          )}
         </div>
       ) : rows.length === 0 && !loading ? (
         <EmptyState imgSrc="/characters/char-fisher.png" title="該当する会社がありません" description="検索条件・絞り込みを変えてみてください" />
@@ -424,7 +436,7 @@ function ProspectDetailModal({ prospect: p, members, onClose, onUpdated, onOpenC
       onUpdated({ ...p, approach_type: ops.approachType || null, owner_user_id: ops.ownerUserId || null, last_contact_on: ops.lastContactOn || null, status: ops.status, memo: ops.memo.trim() || null })
       toast.success('保存しました')
     } catch (e) {
-      toast.error(`保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`)
+      toast.error(`保存に失敗しました: ${formatErrorDetail(e)}`)
     } finally {
       setSaving(false)
     }
@@ -438,7 +450,7 @@ function ProspectDetailModal({ prospect: p, members, onClose, onUpdated, onOpenC
       onUpdated({ ...p, company_id: companyId })
       toast.success('CRMに登録しました')
     } catch (e) {
-      toast.error(`登録に失敗しました: ${e instanceof Error ? e.message : String(e)}`)
+      toast.error(`登録に失敗しました: ${formatErrorDetail(e)}`)
     } finally {
       setPromoting(false)
     }
