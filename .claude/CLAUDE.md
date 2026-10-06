@@ -43,6 +43,15 @@
     数える方式に変更（年齢絞り込み時のみビュー経由）。取れなければ概算＋「約」表示。count(*) を
     索引だけで完結させるカバリング索引（division_id INCLUDE 絞り込み列）を CONCURRENTLY で追加。
     実測: 全件 0.7s、都道府県 初回 4.9s→以降 0.14s、複合条件 0.1〜0.2s
+  - 061〜063: **「読み込みに失敗しました: [object Object]」の真因＝Postgres の LIKE は leakproof
+    でないため、RLS が効く状態では LIKE を索引条件に使えず全件走査（authenticated で 4〜15s、直接
+    接続では 11ms）**。RLS の書き換え（061、InitPlan 化）だけでは解けないので、検索・件数を
+    SECURITY DEFINER の `tsr_search` / `tsr_search_count`（062）に移し、入口で所属検査→RLS の外で
+    検索。絞り込み条件は JSON（TsrFilters と同じキー）で渡し、WHERE 組み立て・検索語の正規化・
+    年齢→生年月日キー変換は `tsr_search_where()` に一本化（クライアントの applyFilters/applySort は
+    撤去）。063 で件数用カバリング索引に tsr_code を含め、年齢絞り込みの件数を索引同士の結合に。
+    **RLS 下の性能検証は `SET ROLE authenticated` ＋ `request.jwt.claims` を set_config して行う**
+    （直接接続の計測は RLS の影響を含まないので信用しない）。8 秒タイムアウト時は画面に再検索の案内
 - 残: Compute を Nano→Micro（Pro に含まれる・再起動を伴うため業務時間外に）、酒田さんへの案内、
   既存表の既定権限の棚卸し。
 
