@@ -113,8 +113,9 @@ export type TsrSortKey = 'priority' | 'sales_desc' | 'age_desc' | 'surveyed_desc
 
 export interface TsrSearchResult {
   rows: TsrProspect[]
-  total: number     // 概算を含む件数（ページ送りの表示用）
-  hasMore: boolean  // 次のページが実在するか（pageSize+1件目の有無で判定した確定値）
+  total: number        // 件数（通常は正確。正確な件数が取れなかったときは概算）
+  totalIsExact: boolean
+  hasMore: boolean     // 次のページが実在するか（pageSize+1件目の有無で判定した確定値）
 }
 
 // PostgREST の or() フィルタはカンマ・括弧・引用符を構文として解釈するため、検索語からは除く。
@@ -263,20 +264,37 @@ export async function searchTsrProspects(
 ): Promise<TsrSearchResult> {
   const pageSize = opts.pageSize ?? 50
   const from = opts.page * pageSize
-  // 件数は estimated（1,000件までは正確、それ以上は統計ベースの概算）で取る。exact は
-  // 46万行の全件カウントになり絞り込みのたびに数百msを失う。概算は実際とずれることがある
-  // ので「次のページがあるか」は件数ではなく、1件余分に取って判定する
-  let q = getSupabase().from('tsr_prospects_view').select(TSR_SELECT_FULL, { count: 'estimated' }).eq('division_id', divisionId)
+  const supabase = getSupabase()
+  // ページ本体は estimated（統計ベースの概算）付きで取る。概算は RLS の条件が絡むと大きく外れる
+  // （本番で 46万社が「116,475社」と出た）ので表示には使わず、下の正確な件数が取れなかった
+  // ときの保険にだけ使う。「次のページがあるか」は件数ではなく 1 件余分に取って判定する
+  let q = supabase.from('tsr_prospects_view').select(TSR_SELECT_FULL, { count: 'estimated' }).eq('division_id', divisionId)
   q = applyFilters(q, filters)
   q = applySort(q, opts.sort ?? 'priority', hasTextSearch(filters)).range(from, from + pageSize)
-  const { data, error, count } = await q
+
+  // 正確な件数は別リクエストで count(*) だけを取る（ページ取得と並行）。代表者情報との結合を
+  // 伴わない本体テーブル（tsr_prospects）に対して行うと索引だけで数えられて速い。年齢の
+  // 絞り込み（rep_birth_key＝代表者側の列）があるときだけビューで数える
+  const usesPersonal = filters.ageMin != null || filters.ageMax != null
+  let cq = supabase.from(usesPersonal ? 'tsr_prospects_view' : 'tsr_prospects')
+    .select('tsr_code', { count: 'exact', head: true }).eq('division_id', divisionId)
+  cq = applyFilters(cq, filters)
+
+  const [pageRes, countRes] = await Promise.all([q, cq])
+  const { data, error, count: estimated } = pageRes
   if (error) throw error
   const fetched = (data ?? []) as unknown as TsrProspect[]
   const hasMore = fetched.length > pageSize
   const rows = hasMore ? fetched.slice(0, pageSize) : fetched
-  // 最終ページに達したら実数で確定。途中なら概算と「少なくとも次ページ1件目まで」の大きい方
-  const total = hasMore ? Math.max(count ?? 0, from + pageSize + 1) : from + rows.length
-  return { rows, total, hasMore }
+
+  if (!countRes.error && countRes.count != null) {
+    return { rows, total: countRes.count, totalIsExact: true, hasMore }
+  }
+  // 正確な件数が取れなかった（8秒のタイムアウト等）: 最終ページなら実数で確定、途中なら
+  // 概算と「少なくとも次ページ1件目まで」の大きい方
+  if (countRes.error) console.warn('tsr exact count failed', countRes.error.message)
+  const total = hasMore ? Math.max(estimated ?? 0, from + pageSize + 1) : from + rows.length
+  return { rows, total, totalIsExact: !hasMore, hasMore }
 }
 
 // CSV出力用。絞り込み結果を1,000件ずつ取得し、上限（既定20,000件）で打ち切る。

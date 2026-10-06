@@ -63,6 +63,9 @@ export default function SourcingPage() {
   const [rows, setRows] = useState<TsrProspect[]>([])
   const [total, setTotal] = useState(0)
   const [hasMore, setHasMore] = useState(false)
+  // 正確な件数が取れなかったとき（タイムアウト等）は概算なので「約」を付けて表示する
+  const [totalIsExact, setTotalIsExact] = useState(true)
+  const totalLabel = `${totalIsExact ? '' : '約'}${total.toLocaleString()}`
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [industries, setIndustries] = useState<TsrIndustryOption[]>([])
@@ -105,7 +108,7 @@ export default function SourcingPage() {
       // （行き止まりで「前のページ」も出ない状態を避ける）。戻った先の再検索が終わるまで
       // 読み込み中のままにし、古いページの行が確定表示に見えないようにする
       if (res.rows.length === 0 && page > 0) { steppingBack = true; setHasMore(false); setPage((p) => p - 1); return }
-      setRows(res.rows); setTotal(res.total); setHasMore(res.hasMore)
+      setRows(res.rows); setTotal(res.total); setTotalIsExact(res.totalIsExact); setHasMore(res.hasMore)
     } catch (e) {
       if (seq.current !== mySeq) return
       setLoadError(e instanceof Error ? e.message : String(e))
@@ -194,7 +197,7 @@ export default function SourcingPage() {
         <div>
           <h1 className="text-2xl font-black text-gray-800">ソーシング</h1>
           <p className="text-sm text-gray-500">
-            {loading ? '検索中...' : `${total.toLocaleString()}社`}
+            {loading ? '検索中...' : `${totalLabel}社`}
             <span className="text-gray-400 ml-2 text-xs">TSR営業対象リスト</span>
           </p>
         </div>
@@ -345,7 +348,7 @@ export default function SourcingPage() {
             </table>
           </div>
           <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100 text-xs text-gray-500">
-            <span>{total === 0 ? '0件' : `${(page * PAGE_SIZE + 1).toLocaleString()}〜${Math.min((page + 1) * PAGE_SIZE, total).toLocaleString()}件 / ${total.toLocaleString()}件`}</span>
+            <span>{total === 0 ? '0件' : `${(page * PAGE_SIZE + 1).toLocaleString()}〜${Math.min((page + 1) * PAGE_SIZE, total).toLocaleString()}件 / ${totalLabel}件`}</span>
             <div className="flex items-center gap-1">
               <button disabled={page === 0} onClick={() => setPage((p) => p - 1)} className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30" aria-label="前のページ"><ChevronLeft size={14} /></button>
               <span>{page + 1} / {pageCount}</span>
