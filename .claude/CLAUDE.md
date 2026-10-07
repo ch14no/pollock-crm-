@@ -27,9 +27,11 @@ M&A事業部（酒田さん）の依頼: TSRリストを会社単位の基本デ
   「会社全体」→ target_type 'company'、タスクは担当者必須。会社全体の活動は localActivities に入れない）。
   `contacts/new` は `?company&companyName&return`（return は同一オリジンかつ /sourcing/ 配下のみ）。
   「CRMに登録」ボタンは廃止（担当者追加で自動登録）。
-- **Phase 4（残）**: 酒田さんに dry-run 件数を共有→ `/sourcing/merge` で「安全な分を自動で処理」→ 要確認20社の判定→
-  `navItemsForDivision` で `/sourcing`→「顧客」・`/contacts`→「顧客（旧）」（ハードコード）、一覧の見出し変更→
-  案内文。既存 lint エラー（set-state-in-effect）は `contacts/new`・`ActivityModal` の改修前からある箇所のみ。
+- **Phase 4 完了（2026-10-07）**: 酒田さんが要確認20社を判定（紐づけ13／別会社4／却下のみ3社→こちらで手動登録
+  M00000102〜104）。最終: 紐づけ92行・手動登録55行・未カバーの担当者0（会社未設定の担当者1名「才花 裕平」は
+  担当者一覧にのみ存在）。`navItemsForDivision` で M&A のみ `/sourcing`→**「顧客」**、`/contacts`→**「担当者一覧」**
+  （酒田さん原案の「顧客（旧）」ではなく役割名に。不要になったら Sidebar の1行を消す）。
+  既存 lint エラー（set-state-in-effect）は `contacts/new`・`ActivityModal` の改修前からある箇所のみ。
 - 罠: Windows の `python3` は Store のスタブ（exit 49・出力 "Python"）。パッチは `python`（Python311）で実行する。
 
 ## 2026-10-06(2): TSR 本番投入完了（461,276社）＋性能対策 054〜057 を直接接続で適用
