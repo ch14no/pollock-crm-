@@ -1,5 +1,5 @@
 import { getSupabase, chunkIdList } from './client'
-import type { Activity, DivisionMemoCategory, DivisionCounterpartType } from '@/types/database'
+import type { Activity, DivisionMemoCategory, DivisionCounterpartType, TargetType } from '@/types/database'
 
 // カテゴリ未設定の事業部向けフォールバック（020適用前・カテゴリ0件でもすぐ使えるように）
 export const DEFAULT_MEMO_CATEGORY_NAMES: string[] = ['顧客', '案件', '面談', '契約']
@@ -334,7 +334,7 @@ export async function reassignTask(activityId: string, newAssigneeId: string | n
 function toActivity(r: Record<string, unknown>): Activity {
   return {
     id: r.id as string,
-    target_type: r.target_type as 'contact' | 'deal',
+    target_type: r.target_type as TargetType,
     target_id: r.target_id as string,
     user_id: r.user_id as string | undefined,
     activity_type: r.activity_type as Activity['activity_type'],

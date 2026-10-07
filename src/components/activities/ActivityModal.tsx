@@ -16,7 +16,7 @@ import { fetchDivisionUsers } from '@/lib/db/users'
 import { useDealTerm } from '@/hooks/useDealTerm'
 import { getInitials, cn, formatErrorDetail } from '@/lib/utils'
 import toast from 'react-hot-toast'
-import type { Activity, ActivityType, User } from '@/types/database'
+import type { Activity, ActivityType, TargetType, User } from '@/types/database'
 
 const ACTIVITY_TYPES: { value: ActivityType; label: string; icon: React.ElementType; color: string }[] = [
   { value: 'call',    label: '電話',   icon: Phone,       color: 'bg-blue-100 text-blue-600 ring-blue-400' },
@@ -39,6 +39,9 @@ interface ActivityFormState {
   dueDate: string
   status: 'todo' | 'done'
 }
+
+// 会社モードで「担当者を特定しない」を表す選択値（contacts.id と衝突しない固定文字列）
+const COMPANY_WHOLE = '__company__'
 
 function todayStr() {
   return new Date().toISOString().slice(0, 16)
@@ -75,7 +78,9 @@ export function ActivityModal() {
     if (!activityModal.isOpen) return
     setForm({
       type: activityModal.prefillKanbanStageId ? 'task' : 'call', title: '', memo: '', memoCategory: '', counterpartType: '',
-      contactId: activityModal.prefillContactId ?? '',
+      // 会社モード（会社ページから）: 担当者がいれば先頭を既定に、いなければ「会社全体」
+      contactId: activityModal.prefillContactId
+        ?? (activityModal.prefillCompanyId ? (activityModal.prefillCompanyContacts?.[0]?.id ?? COMPANY_WHOLE) : ''),
       assigneeId: currentUser?.id ?? '',
       actionDate: todayStr(), endAt: '', dueDate: '', status: 'todo',
     })
@@ -120,6 +125,9 @@ export function ActivityModal() {
   }, [activityModal.isOpen])
 
   const isTask = form.type === 'task'
+  // 会社モード: 会社ページから開かれ、担当者（または会社全体）をモーダル内で選ぶ
+  const isCompanyMode = !!activityModal.prefillCompanyId && !activityModal.prefillContactId && !activityModal.prefillDealId
+  const companyWhole = isCompanyMode && form.contactId === COMPANY_WHOLE
   // 対象が商談かつタスク以外の場合のみ、件名を顧客属性選択に置き換える
   // （ユーザー確認済み。タスク作成には一切影響させない。事業部側でcounterpart_typesを
   // 設定していない限り発動しないため、既定では他事業部にも影響しない）
@@ -134,13 +142,21 @@ export function ActivityModal() {
   const handleSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault()
 
-    const targetContactId = form.contactId || activityModal.prefillContactId
+    const targetContactId = companyWhole ? undefined : (form.contactId || activityModal.prefillContactId)
     const targetDealId    = activityModal.prefillDealId
+    const targetCompanyId = companyWhole ? activityModal.prefillCompanyId : undefined
 
-    if (!targetContactId && !targetDealId) {
+    if (!targetContactId && !targetDealId && !targetCompanyId) {
       toast.error(`対象顧客または${dealTerm}を選択してください`)
       return
     }
+    if (isTask && targetCompanyId) {
+      // 会社全体のタスクはタスクカンバン（担当者の活動のみ集計）に出ないため担当者を必須にする
+      toast.error('タスクは担当者を選んでください（会社全体には登録できません）')
+      return
+    }
+    const targetType: TargetType = targetDealId ? 'deal' : targetCompanyId ? 'company' : 'contact'
+    const targetId = targetDealId ?? targetCompanyId ?? targetContactId ?? ''
     if (isTask && !form.title.trim()) {
       toast.error('タスクのタイトルを入力してください')
       return
@@ -162,8 +178,8 @@ export function ActivityModal() {
       let savedId = localId
       if (isSupabaseConfigured()) {
         const created = await createActivity({
-          targetType:   targetDealId ? 'deal' : 'contact',
-          targetId:     targetDealId ?? targetContactId ?? '',
+          targetType,
+          targetId,
           userId:       form.assigneeId || currentUser?.id,
           activityType: form.type,
           title:        titleToSave,
@@ -191,8 +207,8 @@ export function ActivityModal() {
 
       const newActivity: Activity = {
         id: savedId,
-        target_type:   targetDealId ? 'deal' : 'contact',
-        target_id:     targetDealId ?? targetContactId ?? '',
+        target_type:   targetType,
+        target_id:     targetId,
         user_id:       form.assigneeId || currentUser?.id,
         activity_type: form.type,
         title:         titleToSave,
@@ -206,7 +222,9 @@ export function ActivityModal() {
         created_at:    now,
         users:         currentUser ?? undefined,
       }
-      addActivity(newActivity)
+      // 会社全体（target_type='company'）の活動は一覧側（/activities 等）が DB から取得しないため、
+      // ローカルキャッシュに入れると対象名のない行として残り続ける。会社ページは閉じたときに再取得する
+      if (!(targetType === 'company' && !savedId.startsWith('act-local-'))) addActivity(newActivity)
 
       if (isTask) {
         setTaskMeta(savedId, { urgency: taskUrgency, importance: taskImportance, scope: taskScope })
@@ -345,8 +363,30 @@ export function ActivityModal() {
           </div>
         )}
 
-        {/* 対象顧客 */}
-        {!activityModal.prefillContactId && !activityModal.prefillDealId && (
+        {/* 対象顧客（会社モード: 会社の担当者から選ぶ。会社全体も可） */}
+        {isCompanyMode && (
+          <div>
+            <label htmlFor="activity-company-contact" className="block text-sm font-medium text-gray-700 mb-1">
+              担当者 <span className="text-red-500">*</span>
+            </label>
+            <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-orange-50 border border-orange-100 rounded-lg text-sm">
+              <span className="text-xs text-orange-400 font-medium flex-shrink-0">会社</span>
+              <span className="font-medium text-orange-700 truncate">{activityModal.prefillCompanyName ?? '会社'}</span>
+            </div>
+            <select
+              id="activity-company-contact"
+              value={form.contactId}
+              onChange={(e) => setForm((f) => ({ ...f, contactId: e.target.value }))}
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50"
+            >
+              {(activityModal.prefillCompanyContacts ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+              <option value={COMPANY_WHOLE}>会社全体（担当者を特定しない）</option>
+            </select>
+          </div>
+        )}
+        {!activityModal.prefillContactId && !activityModal.prefillDealId && !isCompanyMode && (
           <ContactPicker
             label="対象顧客"
             required

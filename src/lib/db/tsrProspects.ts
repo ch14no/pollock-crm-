@@ -61,6 +61,8 @@ export interface TsrProspect {
   status: string
   memo: string | null
   company_id: string | null
+  company_linked_at: string | null   // companies と紐づけた日時（064）
+  source: 'tsr' | 'manual'           // 'manual' = 手動登録の会社（TSR 由来の業績等は無い）（064）
   source_files: string[]
   imported_at: string
   updated_at: string
@@ -79,6 +81,7 @@ export interface TsrProspect {
   data_age_years: number | null
   priority_rank: number
   approach_priority: TsrPriority
+  contact_count: number          // 同事業部の担当者数（067）
 }
 
 // 個人情報を含めない出力で NULL になる列（CSV のヘッダ等で参照する）
@@ -99,6 +102,7 @@ export interface TsrFilters {
   ownerUserId?: string
   surveyedYear?: number
   promoted?: 'yes' | 'no'
+  source?: 'tsr' | 'manual'      // 出所（TSR / 手動登録）（064）
 }
 
 export type TsrSortKey = 'priority' | 'sales_desc' | 'age_desc' | 'surveyed_desc' | 'name'
@@ -269,15 +273,159 @@ export async function recomputeTsrPriority(
   return updated
 }
 
-// 「CRMに登録」: 会社マスタに昇格させ、リスト側と相互に紐づける。昇格済みなら既存IDを返す。
-// 「既存会社との突き合わせ→会社の作成または空欄補完→リスト側の紐づけ」は1つのトランザクション
-// でないと、同時操作で会社が二重にできたり、途中失敗で宙に浮いた会社が残ったりする
-// （035 replace_pipeline_stages・039 create_task_kanban_tab と同じくRPCに閉じ込める）。
-// 突き合わせの規則・RLSとの関係は 053 の promote_tsr_prospect() を参照
-export async function promoteTsrProspectToCompany(p: TsrProspect): Promise<string> {
-  if (p.company_id) return p.company_id
-  const { data, error } = await getSupabase().rpc('promote_tsr_prospect', { p_tsr_code: p.tsr_code })
+// ─── 会社ページ（/sourcing/[tsrCode]）用 ─────────────────────────
+// 1件取得。主キー等値（tsr_code）なので RLS 下でも索引が効く（LIKE の leakproof 問題は無関係）
+export async function fetchTsrProspect(tsrCode: string): Promise<TsrProspect | null> {
+  const { data, error } = await getSupabase().from('tsr_prospects_view').select('*').eq('tsr_code', tsrCode).maybeSingle()
+  if (error) throw error
+  return (data as TsrProspect | null) ?? null
+}
+
+export interface TsrNewContactInput {
+  name: string
+  position?: string
+  email?: string
+  phone?: string
+  mobile?: string
+  department?: string
+  notes?: string
+  assignedUserId?: string
+}
+
+// 名刺管理「＋担当者を追加」。会社行がまだ companies に無ければ RPC 側で作り（promote_tsr_prospect）、
+// 担当者と M&A 項目（contact_custom_values）を 1 トランザクションで登録する（066 tsr_add_contact）。
+// customValues は { field_id: value }
+export async function addTsrProspectContact(tsrCode: string, input: TsrNewContactInput, customValues: Record<string, string>): Promise<string> {
+  const contact: Record<string, unknown> = {
+    name: input.name, position: input.position, email: input.email, phone: input.phone,
+    department: input.department, notes: input.notes, assignedUserId: input.assignedUserId,
+    customAttributes: input.mobile ? { mobile: input.mobile } : {},
+  }
+  const { data, error } = await getSupabase().rpc('tsr_add_contact', { p_tsr_code: tsrCode, p_contact: contact, p_custom_values: customValues })
+  if (error) throw error
+  if (typeof data !== 'string' || !data) throw new Error('担当者の登録結果を受け取れませんでした')
+  return data
+}
+
+export interface TsrManualCompanyInput {
+  name: string
+  nameKana?: string
+  address?: string
+  phone?: string
+  prefecture?: string
+  representative?: string
+  representativeKana?: string
+  note?: string
+}
+
+// 「＋会社を追加」（TSR に無い会社・個人事業主）。companies 行と手動登録の行を作り、企業コード（'M…'）を返す
+export async function createManualTsrCompany(divisionId: string, input: TsrManualCompanyInput): Promise<string> {
+  const { data, error } = await getSupabase().rpc('tsr_create_manual_prospect', { p_division_id: divisionId, p_company_id: null, p_company: input, p_batch_id: null })
   if (error) throw error
   if (typeof data !== 'string' || !data) throw new Error('会社の登録結果を受け取れませんでした')
   return data
+}
+
+// 既存の会社（companies）を手動登録の行として一覧に載せる（既にあればそのコード）
+export async function ensureManualProspectForCompany(divisionId: string, companyId: string): Promise<string> {
+  const { data, error } = await getSupabase().rpc('tsr_create_manual_prospect', { p_division_id: divisionId, p_company_id: companyId, p_company: null, p_batch_id: null })
+  if (error) throw error
+  return data as string
+}
+
+// 手動登録の行のコード（会社IDから）。突合確認の「統合」で使う
+export async function fetchManualProspectCode(divisionId: string, companyId: string): Promise<string | null> {
+  const { data, error } = await getSupabase().from('tsr_prospects').select('tsr_code')
+    .eq('division_id', divisionId).eq('company_id', companyId).eq('source', 'manual').maybeSingle()
+  if (error) throw error
+  return (data?.tsr_code as string | undefined) ?? null
+}
+
+export interface CompanyContactCountByDivision { division_id: string; division_name: string; n: number }
+export async function fetchCompanyContactCountsByDivision(companyId: string): Promise<CompanyContactCountByDivision[]> {
+  const { data, error } = await getSupabase().rpc('company_contact_counts_by_division', { p_company_id: companyId })
+  if (error) throw error
+  return (data ?? []) as CompanyContactCountByDivision[]
+}
+
+// ─── 突合（顧客→会社）の確認画面用（066） ─────────────────────────
+export type TsrMergeStatus = 'pending' | 'linked' | 'rejected' | 'manual'
+export type TsrMergeReason = 'phone' | 'phone_multi' | 'name_unique_addr' | 'name_unique_pref' | 'name_only' | 'name_multi' | 'manual_dup' | 'manual_pick' | 'none'
+
+export const TSR_MERGE_REASON_LABEL: Record<TsrMergeReason, string> = {
+  phone: '電話番号が一致', phone_multi: '電話番号が一致（複数社）',
+  name_unique_addr: '商号が一意に一致＋住所一致', name_unique_pref: '商号が一意に一致＋都道府県一致',
+  name_only: '商号のみ一致（裏取りなし）', name_multi: '同名の会社が複数',
+  manual_dup: '手動登録とTSRの重複', manual_pick: '手動で紐づけ', none: 'TSRに一致なし',
+}
+
+export interface TsrMergeCandidate {
+  id: string
+  division_id: string
+  company_id: string
+  tsr_code: string | null
+  match_reason: TsrMergeReason
+  score: number
+  status: TsrMergeStatus
+  contact_count: number
+  applied_batch_id: string | null
+  decided_at: string | null
+  created_at: string
+  companies: { id: string; name: string; address: string | null; phone: string | null; prefecture: string | null } | null
+  tsr_prospects: { tsr_code: string; name: string; address: string | null; phone: string | null; prefecture: string | null; source: string } | null
+}
+
+export async function fetchTsrMergeCandidates(divisionId: string, status?: TsrMergeStatus): Promise<TsrMergeCandidate[]> {
+  let q = getSupabase().from('tsr_merge_candidates')
+    .select('id,division_id,company_id,tsr_code,match_reason,score,status,contact_count,applied_batch_id,decided_at,created_at,companies(id,name,address,phone,prefecture),tsr_prospects(tsr_code,name,address,phone,prefecture,source)')
+    .eq('division_id', divisionId)
+    .order('score', { ascending: false }).order('created_at', { ascending: true })
+  if (status) q = q.eq('status', status)
+  const { data, error } = await q
+  if (error) throw error
+  return (data ?? []) as unknown as TsrMergeCandidate[]
+}
+
+export interface TsrMergeScanResult { batch_id: string; companies_scanned: number; auto_linkable: number; needs_review: number; unmatched: number; manual_dups: number }
+export interface TsrMergeApplyResult { batch_id: string; linked: number; manualized: number; skipped: number }
+
+function firstRow<T>(data: unknown): T {
+  return (Array.isArray(data) ? data[0] : data) as T
+}
+
+export async function scanTsrMerge(divisionId: string): Promise<TsrMergeScanResult> {
+  const { data, error } = await getSupabase().rpc('tsr_merge_scan', { p_division_id: divisionId })
+  if (error) throw error
+  return firstRow<TsrMergeScanResult>(data)
+}
+export async function applyTsrMergeAuto(divisionId: string, dryRun: boolean): Promise<TsrMergeApplyResult> {
+  const { data, error } = await getSupabase().rpc('tsr_merge_apply_auto', { p_division_id: divisionId, p_dry_run: dryRun })
+  if (error) throw error
+  return firstRow<TsrMergeApplyResult>(data)
+}
+export async function linkTsrMerge(divisionId: string, companyId: string, tsrCode: string): Promise<void> {
+  const { error } = await getSupabase().rpc('tsr_merge_link', { p_division_id: divisionId, p_company_id: companyId, p_tsr_code: tsrCode, p_batch_id: null })
+  if (error) throw error
+}
+export async function unlinkTsrMerge(divisionId: string, tsrCode: string): Promise<void> {
+  const { error } = await getSupabase().rpc('tsr_merge_unlink', { p_division_id: divisionId, p_tsr_code: tsrCode })
+  if (error) throw error
+}
+export async function rejectTsrMerge(candidateId: string): Promise<void> {
+  const { error } = await getSupabase().rpc('tsr_merge_reject', { p_candidate_id: candidateId })
+  if (error) throw error
+}
+export async function markTsrMergeManual(divisionId: string, companyId: string): Promise<string> {
+  const { data, error } = await getSupabase().rpc('tsr_merge_mark_manual', { p_division_id: divisionId, p_company_id: companyId, p_batch_id: null })
+  if (error) throw error
+  return data as string
+}
+export async function mergeManualIntoTsr(divisionId: string, manualCode: string, tsrCode: string): Promise<void> {
+  const { error } = await getSupabase().rpc('tsr_merge_manual_into_tsr', { p_division_id: divisionId, p_manual_code: manualCode, p_tsr_code: tsrCode })
+  if (error) throw error
+}
+export async function rollbackTsrMerge(divisionId: string, batchId: string): Promise<{ unlinked: number; manual_deleted: number }> {
+  const { data, error } = await getSupabase().rpc('tsr_merge_rollback', { p_division_id: divisionId, p_batch_id: batchId })
+  if (error) throw error
+  return firstRow<{ unlinked: number; manual_deleted: number }>(data)
 }

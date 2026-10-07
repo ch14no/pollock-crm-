@@ -121,6 +121,21 @@ export default function NewContactPage() {
   const router    = useRouter()
   const params    = useSearchParams()
   const { activeDivision, openActivityModal } = useAppStore()
+  // 会社ページ（/sourcing/[tsrCode]）の「名刺から読み取る」から来た場合: 会社を固定し、
+  // 登録後に元のページへ戻れるようにする（return は同一サイト内のパスのみ採用）
+  const presetCompanyId = params.get('company') || null
+  const presetCompanyName = params.get('companyName') || ''
+  const returnTo = (() => {
+    const r = params.get('return') || ''
+    try {
+      const u = new URL(r, 'http://local.invalid')
+      // 相対パスとして解決され（別オリジンにならず）、会社ページ配下のときだけ採用する
+      if (u.origin !== 'http://local.invalid' || !u.pathname.startsWith('/sourcing/')) return null
+      return u.pathname + u.search
+    } catch { return null }
+  })()
+  // 会社固定で来た場合の初期値（OCR 反映・「続けて登録」でも会社は維持する）
+  const presetFields: ContactFields = { ...EMPTY_FIELDS, company: presetCompanyName }
 
   // Derive initial flow from query param
   const initialMode = params.get('mode')
@@ -146,7 +161,7 @@ export default function NewContactPage() {
 
   // Fields
   const [ocrFields,     setOcrFields]     = useState<OcrField[]>([])
-  const [fields,        setFields]        = useState<ContactFields>(EMPTY_FIELDS)
+  const [fields,        setFields]        = useState<ContactFields>(presetFields)
   const [fieldErrors,   setFieldErrors]   = useState<Partial<Record<keyof ContactFields, string>>>({})
 
   // Meta
@@ -162,10 +177,14 @@ export default function NewContactPage() {
 
   // Merge OCR results into fields (OCR results = base, manual edits = override)
   const applyOcr = useCallback((ocr: OcrField[]) => {
-    const merged = { ...EMPTY_FIELDS }
-    ocr.forEach((f) => { if (f.value) (merged as Record<string, string>)[f.key] = f.value })
+    const merged = { ...EMPTY_FIELDS, company: presetCompanyName }
+    ocr.forEach((f) => {
+      if (!f.value) return
+      if (f.key === 'company' && presetCompanyId) return   // 会社固定: OCR の社名で上書きしない（登録先と表示を一致させる）
+      ;(merged as Record<string, string>)[f.key] = f.value
+    })
     setFields(merged)
-  }, [])
+  }, [presetCompanyId, presetCompanyName])
 
   // ─── Image handling ────────────────────────────────────────────────────────
 
@@ -301,9 +320,9 @@ export default function NewContactPage() {
       }
       let strippedFields: string[] = []
       if (isSupabaseConfigured() && activeDivision) {
-        const companyId = fields.company
-          ? (await findOrCreateCompany(fields.company)) ?? undefined
-          : undefined
+        // 会社固定で来た場合は名前での検索・作成をせず、その会社IDに紐づける
+        const companyId = presetCompanyId
+          ?? (fields.company ? (await findOrCreateCompany(fields.company)) ?? undefined : undefined)
         const result = await createContact({
           divisionId: activeDivision.id,
           name: fields.name,
@@ -336,7 +355,7 @@ export default function NewContactPage() {
   }
 
   const handleContinue = () => {
-    setFields(EMPTY_FIELDS)
+    setFields(presetFields)
     setOcrFields([])
     setFrontImage(null)
     setBackImage(null)
@@ -434,8 +453,9 @@ export default function NewContactPage() {
           </Button>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          {returnTo && <Button className="min-h-11" onClick={() => router.push(returnTo)}>会社ページへ戻る</Button>}
           <Button variant="secondary" className="min-h-11" onClick={() => router.push('/contacts')}>顧客一覧へ</Button>
-          <Button className="min-h-11" onClick={handleContinue}>続けて登録</Button>
+          <Button variant={returnTo ? 'secondary' : undefined} className="min-h-11" onClick={handleContinue}>続けて登録</Button>
         </div>
       </div>
     )
@@ -745,6 +765,8 @@ export default function NewContactPage() {
                       <input
                         type={key === 'email' ? 'email' : 'text'}
                         value={fields[key]}
+                        readOnly={key === 'company' && !!presetCompanyId}
+                        title={key === 'company' && presetCompanyId ? '会社ページから来たため会社は固定です' : undefined}
                         onChange={(e) => {
                           setFields((p) => ({ ...p, [key]: e.target.value }))
                           if (fieldErrors[key]) setFieldErrors((p) => ({ ...p, [key]: undefined }))

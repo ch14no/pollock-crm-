@@ -6,6 +6,10 @@
 //   500件ずつ UPSERT する。企業コードが一致すれば上書き、運用列（status等）は保持する。
 // - --dry-run はDBに接続せず、正規化・統合の統計とサンプルだけを表示する。
 // - 接続文字列は環境変数 TSR_DB_URL でのみ受け取る（ファイルに保存しない）。
+// - 不変条件（064 以降・顧客統合）: ①行を削除しない ②運用列（approach_type/owner_user_id/
+//   last_contact_on/status/memo）と company_id/company_linked_at/source は更新しない
+//   ③手動登録の行（source='manual'、コード 'M…'）は触らない（UPSERT に WHERE source='tsr'）。
+//   アプローチ管理・名刺管理（contacts）・活動履歴（activities）は取込で消えない。
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
@@ -242,6 +246,7 @@ function buildUpsert(table, cols, updateCols, rows, returning) {
   })
   const sql = `INSERT INTO public.${table} (${cols.join(',')}) VALUES ${values.join(',')}
     ON CONFLICT (tsr_code) DO UPDATE SET ${updateCols.map((c) => `${c} = EXCLUDED.${c}`).join(', ')}${table === 'tsr_prospects' ? ', imported_at = NOW()' : ''}
+    ${table === 'tsr_prospects' ? "WHERE tsr_prospects.source = 'tsr'" : ''}
     ${returning ? 'RETURNING (xmax = 0) AS inserted' : ''}`
   return { sql, params }
 }

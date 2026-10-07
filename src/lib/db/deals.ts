@@ -1,4 +1,4 @@
-import { getSupabase } from './client'
+import { getSupabase, chunkIdList } from './client'
 import type { Deal, ReferrerType } from '@/types/database'
 
 // 021マイグレーション（紹介者）が未適用の環境でも一覧取得が壊れないよう、
@@ -71,6 +71,30 @@ export async function fetchDealsByDivision(divisionId: string): Promise<Deal[]> 
   }
   if (error) throw error
   return (data ?? []).map(toDeal)
+}
+
+// 会社ページ（/sourcing/[tsrCode]）用: その会社の担当者（複数）の商談をまとめて取る。
+// fetchDealsByContact を担当者ごとに呼ぶ N 回の往復を 1〜数回にまとめる（chunkIdList で分割）
+export async function fetchDealsByContactIds(contactIds: string[]): Promise<Deal[]> {
+  if (contactIds.length === 0) return []
+  const out: Deal[] = []
+  for (const ids of chunkIdList(contactIds)) {
+    let { data, error } = await getSupabase()
+      .from('deals')
+      .select(DEAL_SELECT_WITH_REFERRER)
+      .in('contact_id', ids)
+      .order('updated_at', { ascending: false })
+    if (error && isMissingReferrerColumn(error)) {
+      ;({ data, error } = await getSupabase()
+        .from('deals')
+        .select(DEAL_BASE_SELECT)
+        .in('contact_id', ids)
+        .order('updated_at', { ascending: false }))
+    }
+    if (error) throw error
+    out.push(...(data ?? []).map(toDeal))
+  }
+  return out.sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))
 }
 
 export async function fetchDealsByContact(contactId: string): Promise<Deal[]> {

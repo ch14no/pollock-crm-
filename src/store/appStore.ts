@@ -183,12 +183,18 @@ interface AppState {
     prefillTaskUrgency?: boolean
     prefillTaskImportance?: boolean
     prefillKanbanStageId?: string
+    // 会社ページ（/sourcing/[tsrCode]）からの記録: 会社とその担当者一覧を渡し、
+    // モーダル内で「どの担当者の活動か（または会社全体か）」を選ばせる
+    prefillCompanyId?: string
+    prefillCompanyName?: string
+    prefillCompanyContacts?: { id: string; name: string }[]
   }
   openActivityModal: (prefill?: {
     contactId?: string; contactName?: string
     dealId?: string; dealTitle?: string
     taskUrgency?: boolean; taskImportance?: boolean
     prefillKanbanStageId?: string
+    companyId?: string; companyName?: string; companyContacts?: { id: string; name: string }[]
   }) => void
   closeActivityModal: () => void
 
@@ -365,7 +371,23 @@ interface AppState {
   // 値の型は呼び出し元（contacts/page.tsxのSortKey/ViewMode）に委ねるため広めのstring型にする
   contactsListView: { query: string; sortKey: string; viewMode: string }
   setContactsListView: (view: Partial<{ query: string; sortKey: string; viewMode: string }>) => void
+  // ソーシング（会社一覧）の検索条件・並び順・ページ。詳細ページ（/sourcing/[tsrCode]）から
+  // 戻ったときに条件を保つ。値の検証は呼び出し元（sourcing/page.tsx）に委ねる
+  sourcingListView: SourcingListView
+  setSourcingListView: (view: Partial<SourcingListView>) => void
+  // 詳細ページ（/sourcing/[tsrCode]）を開いたことを示す一時フラグ（永続化しない）。
+  // 一覧はこのフラグが立っているときだけ保存済みのページ番号を復元する
+  sourcingDetailVisited: boolean
+  setSourcingDetailVisited: (v: boolean) => void
   // ─────────────────────────────────────────────────────────────────
+}
+
+export interface SourcingListView {
+  query: string
+  filters: Record<string, string | number | undefined>
+  nums: Record<string, string | undefined>
+  sort: string
+  page: number
 }
 
 export const useAppStore = create<AppState>()(
@@ -412,6 +434,9 @@ export const useAppStore = create<AppState>()(
             prefillTaskUrgency: prefill?.taskUrgency,
             prefillTaskImportance: prefill?.taskImportance,
             prefillKanbanStageId: prefill?.prefillKanbanStageId,
+            prefillCompanyId: prefill?.companyId,
+            prefillCompanyName: prefill?.companyName,
+            prefillCompanyContacts: prefill?.companyContacts,
           },
         }),
       closeActivityModal: () => set({ activityModal: { isOpen: false } }),
@@ -659,6 +684,11 @@ export const useAppStore = create<AppState>()(
         })),
 
       contactsListView: { query: '', sortKey: 'updated_desc', viewMode: 'company' },
+      sourcingListView: { query: '', filters: {}, nums: {}, sort: 'priority', page: 0 },
+      sourcingDetailVisited: false,
+      setSourcingDetailVisited: (v) => set({ sourcingDetailVisited: v }),
+      setSourcingListView: (view) =>
+        set((state) => ({ sourcingListView: { ...state.sourcingListView, ...view } })),
       setContactsListView: (view) =>
         set((state) => ({ contactsListView: { ...state.contactsListView, ...view } })),
 
@@ -705,6 +735,7 @@ export const useAppStore = create<AppState>()(
         contactStatuses: state.contactStatuses,
         localContactEdits: state.localContactEdits,
         contactsListView: state.contactsListView,
+        sourcingListView: state.sourcingListView,
         removedContactIds: state.removedContactIds,
         removedCompanyIds: state.removedCompanyIds,
         taskMeta: state.taskMeta,
