@@ -16,8 +16,10 @@ M&A事業部（酒田さん）の依頼: TSRリストを会社単位の基本デ
   reject/mark_manual/manual_into_tsr/rollback（manager/super_admin）、`tsr_add_contact`（SECURITY INVOKER、
   会社行が無ければ promote→contacts→custom_values を1トランザクション）、`company_contact_counts_by_division`。
   **067**: ビューに `contact_count`、絞り込み promoted は contacts の EXISTS。
-- **本番の状態**: スキャン済み（91社: 自動24／要確認20／TSRに無し47）、候補は pending のまま。**apply_auto は
-  未実行**（tx 内で apply→rollback の往復を検証済み: 契約92/活動44/案件14・TSR列ハッシュ不変）。
+- **本番の状態（2026-10-07 酒田さん了承後に apply_auto 実行済み）**: 紐づけ 24社／手動登録 47社（M00000050〜）／
+  要確認 20社（78候補・pending）。実行者 azuma_c（super_admin）。**ロールバック用 batch_id =
+  `a6b287e9-a48d-4031-924e-bfb9884bd7bd`**（`select * from tsr_merge_rollback(<M&A division_id>, '<batch>')`）。
+  適用前後で契約92/活動44/案件14・TSR列ハッシュ不変を確認。要確認20社は酒田さんが `/sourcing/merge` で判定する。
 - **画面**: `/sourcing/[tsrCode]`（3ペイン: 左 `ProspectInfoPanel`+`ProspectOpsPanel`、中央 `CompanyContactsPanel`
   （名刺管理）+`CompanyActivityTabs`、右 操作・サマリー）、`/sourcing/merge`（突合確認・manager以上）、一覧は
   router.push＋`appStore.sourcingListView` 永続化（ページ番号は詳細から戻ったときだけ復元＝`sourcingDetailVisited`）、
