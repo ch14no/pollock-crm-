@@ -33,13 +33,14 @@ export const NAV_ITEMS = [
   { href: '/settings',    label: '設定',         icon: Settings },
 ]
 
-// M&A事業部限定のメニュー（TSRソーシングリスト、053）。他事業部にはリンク自体を出さない
-// （ページ側・RLS側でも二重に制限している）。Sidebar・BottomNavのドロワー共通
-const SOURCING_ITEM = { href: '/sourcing', label: 'ソーシング', icon: Target }
+// M&A事業部限定のメニュー（TSRソーシングリスト、053〜067）。他事業部にはリンク自体を出さない
+// （ページ側・RLS側でも二重に制限している）。Sidebar・BottomNavのドロワー共通。
+// 2026-10-07 顧客（人）→会社の統合完了後: M&A では会社一覧（/sourcing）が「顧客」、
+// 従来の人単位の一覧（/contacts）は「担当者一覧」として当面残す（不要になったら下の1行を消す）
+const SOURCING_ITEM = { href: '/sourcing', label: '顧客', icon: Target }
 export function navItemsForDivision(divisionName: string | undefined) {
   if (divisionName !== MA_DIVISION_NAME) return NAV_ITEMS
-  const i = NAV_ITEMS.findIndex((n) => n.href === '/deals')
-  return [...NAV_ITEMS.slice(0, i + 1), SOURCING_ITEM, ...NAV_ITEMS.slice(i + 1)]
+  return NAV_ITEMS.flatMap((n) => (n.href === '/contacts' ? [SOURCING_ITEM, { ...n, label: '担当者一覧' }] : [n]))
 }
 
 // ─── グループアプリ一覧（追加はここに書くだけ）────────────────────

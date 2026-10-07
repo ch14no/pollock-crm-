@@ -201,7 +201,7 @@ export default function SourcingPage() {
     return (
       <EmptyState
         imgSrc="/characters/char-fisher.png"
-        title="ソーシングはM&A事業部専用の機能です"
+        title="この顧客（会社）一覧はM&A事業部専用の機能です"
         description="右上の事業部切替でM&A事業部を選ぶと表示されます"
       />
     )
@@ -213,10 +213,10 @@ export default function SourcingPage() {
     <div className="w-full">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-black text-gray-800">ソーシング</h1>
+          <h1 className="text-2xl font-black text-gray-800">顧客</h1>
           <p className="text-sm text-gray-500">
             {loading ? '検索中...' : `${totalLabel}社`}
-            <span className="text-gray-400 ml-2 text-xs">TSR営業対象リスト＋手動登録</span>
+            <span className="text-gray-400 ml-2 text-xs">会社一覧（TSRリスト＋手動登録）</span>
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
