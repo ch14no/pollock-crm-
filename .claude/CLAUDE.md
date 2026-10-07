@@ -1,5 +1,35 @@
 # pollock-crm 引継ぎメモ（.claude/CLAUDE.md）
 
+## 2026-10-07: 顧客（人）→ソーシング（会社）統合 Phase 1〜3 完了（064〜067 本番適用済み・画面デプロイ済み）。Phase 4（本番統合・改称）は酒田さん確認後
+
+M&A事業部（酒田さん）の依頼: TSRリストを会社単位の基本データにし、担当者単位の「顧客」（contacts 92名）を
+統合、企業詳細に「名刺管理」と活動/タスク/案件を載せ、完了後に『ソーシング』→『顧客』、旧『顧客』→『顧客（旧）』。
+設計の正は `~/.claude/plans/wobbly-riding-iverson.md`（承認済み計画）と Drive 設計書 §8。
+
+- **設計の核**: 統合＝`tsr_prospects.company_id` を書くだけ。contacts は company_id 経由で会社にぶら下がり、
+  活動・タスク・案件は contact_id 経由で会社ページから見える（データ移動なし。TSR 列も companies 行も不変）。
+- **064**: `source`（tsr/manual）・`company_linked_at`、手動登録行（'M'+8桁、`tsr_create_manual_prospect`、
+  personal 行必須＝ビューが INNER JOIN）、companies 更新/削除→手動行同期トリガー（SECURITY DEFINER）、
+  `promote_tsr_prospect` v2、`shares_division_with_activity_target` に 'company' 分岐。**ビューは p.* を定義時に
+  展開するため列追加のたびに `DROP FUNCTION tsr_search`→`DROP VIEW`→再作成が必要**（064/067 で実施）。
+- **065**: `(division_id, company_id)` 部分一意索引。**066**: `tsr_merge_candidates`＋scan/apply_auto/link/unlink/
+  reject/mark_manual/manual_into_tsr/rollback（manager/super_admin）、`tsr_add_contact`（SECURITY INVOKER、
+  会社行が無ければ promote→contacts→custom_values を1トランザクション）、`company_contact_counts_by_division`。
+  **067**: ビューに `contact_count`、絞り込み promoted は contacts の EXISTS。
+- **本番の状態**: スキャン済み（91社: 自動24／要確認20／TSRに無し47）、候補は pending のまま。**apply_auto は
+  未実行**（tx 内で apply→rollback の往復を検証済み: 契約92/活動44/案件14・TSR列ハッシュ不変）。
+- **画面**: `/sourcing/[tsrCode]`（3ペイン: 左 `ProspectInfoPanel`+`ProspectOpsPanel`、中央 `CompanyContactsPanel`
+  （名刺管理）+`CompanyActivityTabs`、右 操作・サマリー）、`/sourcing/merge`（突合確認・manager以上）、一覧は
+  router.push＋`appStore.sourcingListView` 永続化（ページ番号は詳細から戻ったときだけ復元＝`sourcingDetailVisited`）、
+  「会社を追加」（`ManualCompanyModal`）。`ActivityModal` 会社モード（`prefillCompanyId/Name/Contacts`、担当者select＋
+  「会社全体」→ target_type 'company'、タスクは担当者必須。会社全体の活動は localActivities に入れない）。
+  `contacts/new` は `?company&companyName&return`（return は同一オリジンかつ /sourcing/ 配下のみ）。
+  「CRMに登録」ボタンは廃止（担当者追加で自動登録）。
+- **Phase 4（残）**: 酒田さんに dry-run 件数を共有→ `/sourcing/merge` で「安全な分を自動で処理」→ 要確認20社の判定→
+  `navItemsForDivision` で `/sourcing`→「顧客」・`/contacts`→「顧客（旧）」（ハードコード）、一覧の見出し変更→
+  案内文。既存 lint エラー（set-state-in-effect）は `contacts/new`・`ActivityModal` の改修前からある箇所のみ。
+- 罠: Windows の `python3` は Store のスタブ（exit 49・出力 "Python"）。パッチは `python`（Python311）で実行する。
+
 ## 2026-10-06(2): TSR 本番投入完了（461,276社）＋性能対策 054〜057 を直接接続で適用
 
 - **053〜057 はすべて本番適用済み**（SQL Editor ではなく、ユーザーから預かった Direct 接続文字列で
