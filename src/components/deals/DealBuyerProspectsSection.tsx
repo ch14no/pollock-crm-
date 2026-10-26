@@ -5,9 +5,10 @@ import { Handshake, Trash2, Download } from 'lucide-react'
 import {
   fetchDealBuyerProspects, createBuyerProspect, updateBuyerProspect, deleteBuyerProspect,
 } from '@/lib/db/buyerProspects'
-import { CompanyPicker } from '@/components/ui/CompanyPicker'
+import { ensureCompanyForProspect, type TsrProspect } from '@/lib/db/tsrProspects'
+import { ProspectPicker } from '@/components/ui/ProspectPicker'
 import { useAppStore } from '@/store/appStore'
-import { downloadCsv, extractPrefecture } from '@/lib/utils'
+import { downloadCsv, extractPrefecture, formatErrorDetail } from '@/lib/utils'
 import type { DealBuyerProspect, NameClearStatus } from '@/types/database'
 import toast from 'react-hot-toast'
 
@@ -72,14 +73,20 @@ export function DealBuyerProspectsSection({ dealId, divisionId, dealTitle }: Dea
     void loadData()
   }, [loadData])
 
-  const handleAdd = useCallback(async (companyId: string) => {
+  // 顧客（ソーシング一覧）から選んだ会社を追加する。まだ companies に会社行が無い顧客は
+  // ここで会社行を作って紐づけてから打診リストに入れる。失敗時は例外を投げ直して
+  // ポップアップを開いたままにする（ProspectPicker の約束）
+  const handleAdd = useCallback(async (prospect: TsrProspect) => {
     try {
+      const companyId = await ensureCompanyForProspect(prospect)
       await createBuyerProspect({ dealId, divisionId, companyId, createdBy: currentUser?.id })
       await loadData()
       setAdding(false)
-      toast.success('買手候補を追加しました')
+      toast.success(`「${prospect.name}」を買手候補に追加しました`)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '買手候補の追加に失敗しました')
+      console.error('buyer prospect add failed', e)
+      toast.error(`買手候補の追加に失敗しました: ${e instanceof Error ? e.message : formatErrorDetail(e)}`, { duration: 8000 })
+      throw e
     }
   }, [dealId, divisionId, currentUser, loadData])
 
@@ -218,11 +225,11 @@ export function DealBuyerProspectsSection({ dealId, divisionId, dealTitle }: Dea
 
       {adding ? (
         <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2">
-          <CompanyPicker
-            onSelect={(id) => handleAdd(id)}
-            excludeIds={excludeIds}
+          <ProspectPicker
+            onSelect={handleAdd}
+            excludeCompanyIds={excludeIds}
             divisionId={divisionId}
-            placeholder="買手候補の会社を検索..."
+            placeholder="顧客から買手候補を検索..."
           />
           <button
             type="button"

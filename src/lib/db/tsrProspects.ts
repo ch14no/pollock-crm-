@@ -127,7 +127,9 @@ function toRpcFilters(f: TsrFilters): Record<string, string | number> {
 export async function searchTsrProspects(
   divisionId: string,
   filters: TsrFilters,
-  opts: { page: number; pageSize?: number; sort?: TsrSortKey },
+  // skipCount: 件数を数えない（検索ポップアップのように hasMore だけ分かれば足りる用途。
+  // 件数クエリは冷えていると数秒かかるため、1文字ごとに投げない）
+  opts: { page: number; pageSize?: number; sort?: TsrSortKey; skipCount?: boolean },
 ): Promise<TsrSearchResult> {
   const pageSize = opts.pageSize ?? 50
   const from = opts.page * pageSize
@@ -136,13 +138,16 @@ export async function searchTsrProspects(
   // 「次のページがあるか」は件数ではなく 1 件余分に取って判定する。件数は別の関数で並行して数える
   const [pageRes, countRes] = await Promise.all([
     supabase.rpc('tsr_search', { p_division_id: divisionId, p_filters: f, p_sort: opts.sort ?? 'priority', p_limit: pageSize + 1, p_offset: from, p_include_personal: true }),
-    supabase.rpc('tsr_search_count', { p_division_id: divisionId, p_filters: f }),
+    opts.skipCount ? null : supabase.rpc('tsr_search_count', { p_division_id: divisionId, p_filters: f }),
   ])
   if (pageRes.error) throw pageRes.error
   const fetched = (pageRes.data ?? []) as unknown as TsrProspect[]
   const hasMore = fetched.length > pageSize
   const rows = hasMore ? fetched.slice(0, pageSize) : fetched
 
+  if (!countRes) {
+    return { rows, total: hasMore ? from + pageSize + 1 : from + rows.length, totalIsExact: !hasMore, hasMore }
+  }
   const exact = countRes.error ? null : Number(countRes.data)
   if (exact != null && Number.isFinite(exact)) {
     return { rows, total: exact, totalIsExact: true, hasMore }
@@ -279,6 +284,17 @@ export async function fetchTsrProspect(tsrCode: string): Promise<TsrProspect | n
   const { data, error } = await getSupabase().from('tsr_prospects_view').select('*').eq('tsr_code', tsrCode).maybeSingle()
   if (error) throw error
   return (data as TsrProspect | null) ?? null
+}
+
+// 顧客（TSR/手動行）に対応する companies の行IDを返す。まだ無ければ作って紐づける
+// （053/064 promote_tsr_prospect。FOR UPDATE で同時操作でも会社が二重にできない）。
+// 買手打診リストは companies を参照するため、顧客から選んだ会社をここで会社行にする
+export async function ensureCompanyForProspect(prospect: Pick<TsrProspect, 'tsr_code' | 'company_id'>): Promise<string> {
+  if (prospect.company_id) return prospect.company_id
+  const { data, error } = await getSupabase().rpc('promote_tsr_prospect', { p_tsr_code: prospect.tsr_code })
+  if (error) throw error
+  if (typeof data !== 'string' || !data) throw new Error('会社情報の登録結果を受け取れませんでした')
+  return data
 }
 
 export interface TsrNewContactInput {

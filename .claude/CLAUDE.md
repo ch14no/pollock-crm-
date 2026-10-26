@@ -1,5 +1,17 @@
 # pollock-crm 引継ぎメモ（.claude/CLAUDE.md）
 
+## 2026-10-26: 買手打診リストの追加元を「顧客」（ソーシング）に変更（DB変更なし）
+
+酒田さん依頼「案件の買手を『担当者』ではなく『顧客』から検索して紐づけたい（担当者検索は廃止）」。
+対象は売主タブ案件の「買手候補を追加」。旧 `CompanyPicker` は companies 全件のうち「M&A の担当者がいる会社」
+（`fetchCompanyIdsByDivision`、contacts 経由）に絞る方式で 79 社しか出なかった。
+- 新 `src/components/ui/ProspectPicker.tsx`: `tsr_search`（`searchTsrProspects(..., { skipCount: true })`）で
+  TSR 46万社＋手動登録を検索。選択時 `ensureCompanyForProspect`（`promote_tsr_prospect` RPC）で companies 行を
+  用意してから `deal_buyer_prospects` に追加（テーブルは従来どおり company_id 参照）。追加済みは「追加済み」で選択不可。
+- `CompanyPicker` から事業部トグルと `fetchCompanyIdsByDivision` を削除（グループ会社紐づけは従来どおり全社検索）。
+- 既知の割り切り: 顧客一覧に無い companies（他事業部の会社など）は選べない→「会社を追加」で手動登録してもらう。
+  売主タブを M&A 以外が持つと検索は 0 件（現状 M&A のみ）。Esc で案件モーダルごと閉じるのは旧ピッカーと同じ既存挙動。
+
 ## 2026-10-07: 顧客（人）→ソーシング（会社）統合 Phase 1〜3 完了（064〜067 本番適用済み・画面デプロイ済み）。Phase 4（本番統合・改称）は酒田さん確認後
 
 M&A事業部（酒田さん）の依頼: TSRリストを会社単位の基本データにし、担当者単位の「顧客」（contacts 92名）を
